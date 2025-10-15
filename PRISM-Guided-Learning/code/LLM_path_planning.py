@@ -20,13 +20,25 @@ logging.basicConfig(level=logging.DEBUG,
                     handlers=[
                         logging.FileHandler("logs/debug.log"),
                         logging.StreamHandler()
-                    ],
-                    filemode='w')
+                    ])
+
+with open("logs/debug.log", "w") as f:
+    f.write("")  # Clear the log file at the start of each run
 
 logger = logging.getLogger(__name__)
 
 
-GRID_SIZE = 4
+GRID_SIZE = 2
+
+GOALS = {
+    1: (1, 1),
+}
+# Static obstacles
+STATIC_OBSTACLES = [(1, 0)]
+
+# Moving obstacle positions in sequence
+MOVING_OBSTACLES = []
+
 
 # TODO: make model avoid future goals
 
@@ -58,11 +70,11 @@ PROMPT_TEMPLATE = PromptTemplate(
 def get_prompt(size: int, s_obstacles: List[Tuple[int]], f_goals: List[Tuple[int]], k_obstacles: List[List[Tuple[int]]], goal: Tuple[int]):
     size_str = str(size)
     s_obs_str = str(s_obstacles)
-    f_obs_str = str(f_goals)
+    f_goals_str = str(f_goals)
     k_obs_str = str(k_obstacles)
     goal_str = str(goal)
 
-    return PROMPT_TEMPLATE.format(size=size_str, s_obstacles=s_obs_str, f_obstacles=f_obs_str, k_obstacles=k_obs_str, goal=goal_str)
+    return PROMPT_TEMPLATE.format(size=size_str, s_obstacles=s_obs_str, f_goals=f_goals_str, k_obstacles=k_obs_str, goal=goal_str)
 
 
 class StateQ(BaseModel):
@@ -75,6 +87,7 @@ class QTables(BaseModel):
     states: List[StateQ]
 
 
+# all q-values initialized to 1
 class BaselinePlanner:
     def __init__(self, size):
         self.size = size
@@ -116,13 +129,6 @@ class BaselinePlanner:
         logger.info(f"LTL Score (BASELINE): {ltl_score}")
         return ltl_score
     
-
-
-
-
-
-
-
 
 
 class LLMPlanner:
@@ -193,7 +199,7 @@ class LLMPlanner:
                 get_prompt(
                     self.size,
                     self.env.static_obstacles,
-                    self.env.goals[i + 1:],
+                    [self.env.goals[k] for k in self.env.goals.keys() if k > i],
                     self.env.moving_obstacle_positions,
                     self.env.goals[i]
                 )

@@ -1,21 +1,13 @@
 import logging
 import numpy as np
 from typing import Dict, Tuple
+from . import GridWorldEnv
 
 
 class PrismModelGenerator:
-    def __init__(self, size: int):
-        self.size = size
+    def __init__(self, gridWorld: GridWorldEnv):
         self.logger = logging.getLogger(__name__)
-        self.static_obstacles = [(1, 1), (2, 1)]  # Match GridWorldEnv
-        self.moving_obstacle_positions = [
-            (3, 0), (3, 1), (3, 2), (3, 3), (3, 2)  # Match GridWorldEnv
-        ]
-        self.goals = {
-            1: (2, 2),   # Match GridWorldEnv
-            2: (3, 3),   # Match GridWorldEnv
-            3: (0, 3)    # Match GridWorldEnv
-        }
+        self.gridWorld = gridWorld
         self.debug_transitions = set()
     def _generate_transitions(self, x: int, y: int, g1: bool, g2: bool, g3: bool, 
                            q_values: np.ndarray) -> list:
@@ -41,14 +33,14 @@ class PrismModelGenerator:
         
         for i, (dx, dy) in enumerate(moves):
             if int_probs[i] > 0:
-                new_x = max(0, min(self.size - 1, x + dx))
-                new_y = max(0, min(self.size - 1, y + dy))
-                
+                new_x = max(0, min(self.gridWorld.size - 1, x + dx))
+                new_y = max(0, min(self.gridWorld.size - 1, y + dy))
+
                 # Handle moving obstacle with more precise sequence transitions
-                for obs_idx, current_obs_pos in enumerate(self.moving_obstacle_positions):
-                    next_obs_idx = (obs_idx + 1) % len(self.moving_obstacle_positions)
-                    next_obs_pos = self.moving_obstacle_positions[next_obs_idx]
-                    
+                for obs_idx, current_obs_pos in enumerate(self.gridWorld.moving_obstacle_positions):
+                    next_obs_idx = (obs_idx + 1) % len(self.gridWorld.moving_obstacle_positions)
+                    next_obs_pos = self.gridWorld.moving_obstacle_positions[next_obs_idx]
+
                     if (new_x, new_y) == current_obs_pos:
                         # Calculate transition probabilities based on sequence
                         # Higher probability for next position in sequence
@@ -79,10 +71,10 @@ class PrismModelGenerator:
                                     f" & (g3'={str(g3).lower()})")
                     else:
                         # Regular movement
-                        new_g1 = g1 or ((new_x, new_y) == self.goals[1])
-                        new_g2 = g2 or (g1 and (new_x, new_y) == self.goals[2])
-                        new_g3 = g3 or (g2 and (new_x, new_y) == self.goals[3])
-                        
+                        new_g1 = g1 or ((new_x, new_y) == self.gridWorld.goals[1])
+                        new_g2 = g2 or (g1 and (new_x, new_y) == self.gridWorld.goals[2])
+                        new_g3 = g3 or (g2 and (new_x, new_y) == self.gridWorld.goals[3])
+
                         updates.append(f"{int_probs[i]/1000}:(x'={new_x})"
                                     f" & (y'={new_y})"
                                     f" & (g1'={str(new_g1).lower()})"
@@ -99,21 +91,20 @@ class PrismModelGenerator:
         """Generate PRISM model string with moving obstacle labels"""
         self.debug_transitions = set()
         
-        model = ["dtmc", "", f"const int N = {self.size};", ""]
+        model = ["dtmc", "", f"const int N = {self.gridWorld.size};", ""]
         
         # Module definition
         model.append("module gridworld")
-        model.append(f"  x : [0..{self.size-1}] init 0;")
-        model.append(f"  y : [0..{self.size-1}] init 0;")
-        model.append("  g1 : bool init false;")
-        model.append("  g2 : bool init false;")
-        model.append("  g3 : bool init false;")
+        model.append(f"  x : [0..{self.gridWorld.size-1}] init 0;")
+        model.append(f"  y : [0..{self.gridWorld.size-1}] init 0;")
+        for goal in self.gridWorld.goals:
+            model.append(f"  g{goal} : bool init false;")
         model.append("")
         
         total_states = 0
-        
-        for x in range(self.size):
-            for y in range(self.size):
+
+        for x in range(self.gridWorld.size):
+            for y in range(self.gridWorld.size):
                 for g1 in [False, True]:
                     for g2 in [False, True]:
                         for g3 in [False, True]:
@@ -131,17 +122,18 @@ class PrismModelGenerator:
 
         # Labels for properties
         model.append("// Labels for properties")
-        model.append(f'label "at_goal1" = x={self.goals[1][0]} & y={self.goals[1][1]};')
-        model.append(f'label "at_goal2" = x={self.goals[2][0]} & y={self.goals[2][1]};')
-        model.append(f'label "at_goal3" = x={self.goals[3][0]} & y={self.goals[3][1]};')
-        
+        for goal in self.gridWorld.goals:
+            model.append(f'label "at_goal{goal}" = x={self.gridWorld.goals[goal][0]} & y={self.gridWorld.goals[goal][1]};')
+
         # Generate moving obstacle positions label
         moving_obstacle_label = " | ".join([f"(x={x} & y={y})" 
-                                          for x, y in self.moving_obstacle_positions])
+                                          for x, y in self.gridWorld.moving_obstacle_positions])
         static_obstacle_label = " | ".join([f"(x={x} & y={y})" 
-                                          for x, y in self.static_obstacles])
+                                          for x, y in self.gridWorld.static_obstacles])
         
-        model.append(f'label "at_obstacle" = ({moving_obstacle_label}) | ({static_obstacle_label});')
-        
+        at_obstacle_label = f"({moving_obstacle_label}) | ({static_obstacle_label})" if moving_obstacle_label else static_obstacle_label
+
+        model.append(f'label "at_obstacle" = {at_obstacle_label};')
+
         model_str = "\n".join(model)
         return model_str
