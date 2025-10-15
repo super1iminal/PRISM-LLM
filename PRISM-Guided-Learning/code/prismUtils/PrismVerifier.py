@@ -44,7 +44,7 @@ class PrismVerifier:
                 "-maxiters", "1000000",  
                 "-power", 
                 "-verbose",
-                "-exportstates", "states.txt"  
+                "-exportstates", "logs/states.txt"  
             ]
 
             # Run PRISM
