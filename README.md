@@ -18,11 +18,17 @@ All three implementations address the problem of navigating in a grid model with
 
 ## Requirements:
 
--Python 3.6+
+-Python 3.6+ (I use 3.13)
 
 -Numpy
 
 -Matpotlib
+
+-Seaborn
+
+-langchain and langchain-openai
+
+-an openai api key
 
 -PRISM Model Checker (for PMC integration)
 
@@ -37,3 +43,5 @@ All three implementations address the problem of navigating in a grid model with
 4.Put the closest directory to bin prism-xxx-xxx in the repo's root and rename it to prism-4.9
 
 5.Update the PRISM path in the code (in the 'get_prism_path()' functions and in `/prism-4.9/bin/prism` executable)
+
+6.Set your OPENAI_API_KEY environment variable to your openai key (I do it in .bashrc, not sure how to do it on windows)
