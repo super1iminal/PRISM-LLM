@@ -18,11 +18,13 @@ import time
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[
-                        logging.FileHandler("debug.log"),
+                        logging.FileHandler("logs/debug.log"),
                         logging.StreamHandler()
-                    ])
+                    ],
+                    filemode='w')
 
 logger = logging.getLogger(__name__)
+
 
 GRID_SIZE = 4
 
@@ -36,7 +38,9 @@ Your job is to determine the best policy to reach a goal from any starting state
 
 There are static obstacles at positions {s_obstacles}.
 
-There may be moving obstacles. If there are any, their current and future motions will be presented below:
+There are future goals at positions {f_goals}. You should *avoid* these as if they were obstacles.
+
+There may be moving obstacles. If there are any, their current and future motions will be presented below in a nested list structure:
 {k_obstacles}. They move when you move with 90% probability.
 
 Your goal is {goal}.
@@ -48,16 +52,17 @@ If the path is not correct or if you do not cover the entire grid, then you will
 
 PROMPT_TEMPLATE = PromptTemplate(
     template = PROMPT_TEXT,
-    input_variables=["size", "s_obstacles", "k_obstacles", "goal"]
+    input_variables=["size", "s_obstacles", "f_goals", "k_obstacles", "goal"]
 )
 
-def get_prompt(size: int, s_obstacles: List[Tuple[int]], k_obstacles: List[List[Tuple[int]]], goal: Tuple[int]):
+def get_prompt(size: int, s_obstacles: List[Tuple[int]], f_goals: List[Tuple[int]], k_obstacles: List[List[Tuple[int]]], goal: Tuple[int]):
     size_str = str(size)
     s_obs_str = str(s_obstacles)
+    f_obs_str = str(f_goals)
     k_obs_str = str(k_obstacles)
     goal_str = str(goal)
-    
-    return PROMPT_TEMPLATE.format(size=size_str, s_obstacles=s_obs_str, k_obstacles=k_obs_str, goal=goal_str)
+
+    return PROMPT_TEMPLATE.format(size=size_str, s_obstacles=s_obs_str, f_obstacles=f_obs_str, k_obstacles=k_obs_str, goal=goal_str)
 
 
 class StateQ(BaseModel):
@@ -186,9 +191,10 @@ class LLMPlanner:
             logger.info(f"Planning for goal {i} at position {goal}")
             response = self.model.invoke(
                 get_prompt(
-                    self.size, 
-                    self.env.static_obstacles, 
-                    self.env.moving_obstacle_positions, 
+                    self.size,
+                    self.env.static_obstacles,
+                    self.env.goals[i + 1:],
+                    self.env.moving_obstacle_positions,
                     self.env.goals[i]
                 )
             )
