@@ -34,4 +34,6 @@ All three implementations address the problem of navigating in a grid model with
 
 3.Install PRISM (https://www.prismmodelchecker.org/download.php)
 
-4.Update the PRISM path in the code (in the 'get_prism_path()' functions and in `/prism-4.9/bin/prism` executable)
+4.Put the closest directory to bin prism-xxx-xxx in the repo's root and rename it to prism-4.9
+
+5.Update the PRISM path in the code (in the 'get_prism_path()' functions and in `/prism-4.9/bin/prism` executable)
