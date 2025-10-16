@@ -49,6 +49,7 @@ All three implementations address the problem of navigating in a grid model with
 # Problem Description
 
 [Visual example of 2x2 grid with 1 goal and 1 obstacle](https://excalidraw.com/#json=MjBL7CyFVRjrzrOSkrB2H,USHNMvlESIBBMSa9X4yFmQ)
+[Github](https://github.com/super1iminal/PRISM-LLM?tab=readme-ov-file)
 
 ## Input
 
