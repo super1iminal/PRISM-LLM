@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 from typing import Dict, Tuple
+from itertools import product
 from . import GridWorldEnv
 
 
@@ -9,9 +10,17 @@ class PrismModelGenerator:
         self.logger = logging.getLogger(__name__)
         self.gridWorld = gridWorld
         self.debug_transitions = set()
-    def _generate_transitions(self, x: int, y: int, g1: bool, g2: bool, g3: bool, 
+        self.num_goals = len(gridWorld.goals)
+    
+    def _generate_transitions(self, x: int, y: int, goal_states: tuple, 
                            q_values: np.ndarray) -> list:
-        """Generate transitions with sequential moving obstacle"""
+        """Generate transitions with sequential moving obstacle
+        
+        Args:
+            x, y: Current position
+            goal_states: Tuple of booleans indicating which goals have been reached
+            q_values: Q-values for actions from this state
+        """
         
         # softmax on q values
         q_exp = np.exp((q_values - np.max(q_values)) / 0.1)
@@ -24,10 +33,10 @@ class PrismModelGenerator:
         moves = [(-1, 0), (0, 1), (1, 0), (0, -1)]
         transitions = []
         
-        guard = (f"  [] (x={x} & y={y}"
-                f" & g1={str(g1).lower()}"
-                f" & g2={str(g2).lower()}"
-                f" & g3={str(g3).lower()}) ->")
+        # Build guard with variable goals
+        goal_guard_parts = " & ".join([f"g{i+1}={str(goal_states[i]).lower()}" 
+                                       for i in range(self.num_goals)])
+        guard = f"  [] (x={x} & y={y} & {goal_guard_parts}) ->"
         
         updates = []
         
@@ -43,43 +52,51 @@ class PrismModelGenerator:
 
                     if (new_x, new_y) == current_obs_pos:
                         # Calculate transition probabilities based on sequence
-                        # Higher probability for next position in sequence
                         transition_prob = 0.9  # 90% chance to move to next position
                         stay_prob = 0.1  # 10% chance to stay in current position
                         
+                        # Build goal update string
+                        goal_update = " & ".join([f"(g{i+1}'={str(goal_states[i]).lower()})" 
+                                                  for i in range(self.num_goals)])
+                        
                         # Stay in current position with small probability
                         updates.append(f"{(int_probs[i]/1000) * stay_prob}:(x'={x})"
-                                    f" & (y'={y})"
-                                    f" & (g1'={str(g1).lower()})"
-                                    f" & (g2'={str(g2).lower()})"
-                                    f" & (g3'={str(g3).lower()})")
+                                    f" & (y'={y}) & {goal_update}")
                         
                         # Move to next position in sequence with higher probability
                         updates.append(f"{(int_probs[i]/1000) * transition_prob}:(x'={next_obs_pos[0]})"
-                                    f" & (y'={next_obs_pos[1]})"
-                                    f" & (g1'={str(g1).lower()})"
-                                    f" & (g2'={str(g2).lower()})"
-                                    f" & (g3'={str(g3).lower()})")
+                                    f" & (y'={next_obs_pos[1]}) & {goal_update}")
                         break
                 else:
                     # Handle static obstacles
-                    if (new_x, new_y) in self.static_obstacles:
+                    if (new_x, new_y) in self.gridWorld.static_obstacles:
+                        goal_update = " & ".join([f"(g{i+1}'={str(goal_states[i]).lower()})" 
+                                                  for i in range(self.num_goals)])
                         updates.append(f"{int_probs[i]/1000}:(x'={x})"
-                                    f" & (y'={y})"
-                                    f" & (g1'={str(g1).lower()})"
-                                    f" & (g2'={str(g2).lower()})"
-                                    f" & (g3'={str(g3).lower()})")
+                                    f" & (y'={y}) & {goal_update}")
                     else:
-                        # Regular movement
-                        new_g1 = g1 or ((new_x, new_y) == self.gridWorld.goals[1])
-                        new_g2 = g2 or (g1 and (new_x, new_y) == self.gridWorld.goals[2])
-                        new_g3 = g3 or (g2 and (new_x, new_y) == self.gridWorld.goals[3])
-
+                        # Regular movement - update goals sequentially
+                        new_goal_states = list(goal_states)
+                        
+                        # Check each goal in sequence
+                        for goal_idx in range(self.num_goals):
+                            goal_num = goal_idx + 1  # Goals are numbered starting from 1
+                            
+                            if goal_idx == 0:
+                                # First goal can be reached directly
+                                if (new_x, new_y) == self.gridWorld.goals[goal_num]:
+                                    new_goal_states[goal_idx] = True
+                            else:
+                                # Subsequent goals require previous goal to be reached
+                                prev_goal_reached = new_goal_states[goal_idx - 1]
+                                if prev_goal_reached and (new_x, new_y) == self.gridWorld.goals[goal_num]:
+                                    new_goal_states[goal_idx] = True
+                        
+                        goal_update = " & ".join([f"(g{i+1}'={str(new_goal_states[i]).lower()})" 
+                                                  for i in range(self.num_goals)])
+                        
                         updates.append(f"{int_probs[i]/1000}:(x'={new_x})"
-                                    f" & (y'={new_y})"
-                                    f" & (g1'={str(new_g1).lower()})"
-                                    f" & (g2'={str(new_g2).lower()})"
-                                    f" & (g3'={str(new_g3).lower()})")
+                                    f" & (y'={new_y}) & {goal_update}")
         
         if updates:
             transition = f"{guard} " + " + ".join(updates) + ";"
@@ -87,8 +104,13 @@ class PrismModelGenerator:
         
         return transitions
 
-    def generate_prism_model(self, q_table: Dict[Tuple[int, int, bool, bool, bool], np.ndarray]) -> str:
-        """Generate PRISM model string with moving obstacle labels"""
+    def generate_prism_model(self, q_table: Dict[Tuple, np.ndarray]) -> str:
+        """Generate PRISM model string with moving obstacle labels
+        
+        Args:
+            q_table: Dictionary mapping states to Q-values
+                    State format: (x, y, g1, g2, ..., gN) where N is number of goals
+        """
         self.debug_transitions = set()
         
         model = ["dtmc", "", f"const int N = {self.gridWorld.size};", ""]
@@ -97,43 +119,52 @@ class PrismModelGenerator:
         model.append("module gridworld")
         model.append(f"  x : [0..{self.gridWorld.size-1}] init 0;")
         model.append(f"  y : [0..{self.gridWorld.size-1}] init 0;")
-        for goal in self.gridWorld.goals:
-            model.append(f"  g{goal} : bool init false;")
+        for goal_num in self.gridWorld.goals:
+            model.append(f"  g{goal_num} : bool init false;")
         model.append("")
         
         total_states = 0
 
+        # Generate all combinations of goal states
+        goal_combinations = list(product([False, True], repeat=self.num_goals))
+        
         for x in range(self.gridWorld.size):
             for y in range(self.gridWorld.size):
-                for g1 in [False, True]:
-                    for g2 in [False, True]:
-                        for g3 in [False, True]:
-                            state = (x, y, g1, g2, g3)
-                            if state in q_table:
-                                total_states += 1 # ASH: lol this will always be true and is unecessary, i think 
-                                                    # they prob used it for logging
-                                transitions = self._generate_transitions(
-                                    x, y, g1, g2, g3, q_table[state]
-                                )
-                                model.extend(transitions)
+                for goal_combo in goal_combinations:
+                    state = (x, y) + goal_combo
+                    if state in q_table:
+                        total_states += 1
+                        transitions = self._generate_transitions(
+                            x, y, goal_combo, q_table[state]
+                        )
+                        model.extend(transitions)
         
         model.append("endmodule")
         model.append("")
 
         # Labels for properties
         model.append("// Labels for properties")
-        for goal in self.gridWorld.goals:
-            model.append(f'label "at_goal{goal}" = x={self.gridWorld.goals[goal][0]} & y={self.gridWorld.goals[goal][1]};')
+        for goal_num in self.gridWorld.goals:
+            model.append(f'label "at_goal{goal_num}" = x={self.gridWorld.goals[goal_num][0]} & y={self.gridWorld.goals[goal_num][1]};')
 
-        # Generate moving obstacle positions label
-        moving_obstacle_label = " | ".join([f"(x={x} & y={y})" 
-                                          for x, y in self.gridWorld.moving_obstacle_positions])
-        static_obstacle_label = " | ".join([f"(x={x} & y={y})" 
-                                          for x, y in self.gridWorld.static_obstacles])
+        # Generate obstacle labels
+        obstacle_positions = []
         
-        at_obstacle_label = f"({moving_obstacle_label}) | ({static_obstacle_label})" if moving_obstacle_label else static_obstacle_label
-
-        model.append(f'label "at_obstacle" = {at_obstacle_label};')
+        # Add moving obstacles
+        for x, y in self.gridWorld.moving_obstacle_positions:
+            obstacle_positions.append(f"(x={x} & y={y})")
+        
+        # Add static obstacles
+        for x, y in self.gridWorld.static_obstacles:
+            obstacle_positions.append(f"(x={x} & y={y})")
+        
+        # Only add obstacle label if there are any obstacles
+        if obstacle_positions:
+            at_obstacle_label = " | ".join(obstacle_positions)
+            model.append(f'label "at_obstacle" = {at_obstacle_label};')
+        else:
+            # No obstacles - use a label that's always false
+            model.append('label "at_obstacle" = false;')
 
         model_str = "\n".join(model)
         return model_str

@@ -7,6 +7,7 @@ import logging
 import os
 import numpy as np
 from typing import List, Optional, Dict, Tuple
+from itertools import product
 
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
@@ -40,46 +41,144 @@ STATIC_OBSTACLES = [(1, 0)]
 MOVING_OBSTACLES = []
 
 
-# TODO: make model avoid future goals
-
 PROMPT_TEXT = """You are an expert path planner working on formulating paths that meet formal requirements.
 
-The grid world is {size} x {size}. (0, 0) is in the top left.
+The grid world is {size} x {size}. Here is the visual layout:
 
-Your job is to determine the best policy to reach a goal from any starting state. To do this, you will set the "best move" direction to 100, and the other moves to 0. Index 0 is up, 1 is right, 2 is down, and 3 is left.
+{grid_visual}
 
-There are static obstacles at positions {s_obstacles}.
+Legend:
+- 'S' = Start position (0,0) - the initial state
+- 'G' = Current goal position you must reach
+- 'X' = Static obstacle (CANNOT enter - you will bounce back)
+- 'F' = Future goal (treat as obstacle for now - avoid it)
+- 'M' = Moving obstacle position (avoid if possible)
+- '.' = Empty cell you can move through
 
-There are future goals at positions {f_goals}. You should *avoid* these as if they were obstacles.
+COORDINATE SYSTEM:
+- Position format: (row, col) where row is Y-axis, col is X-axis
+- (0,0) is in the TOP-LEFT corner
+- Row increases DOWNWARD (0 → 1 → 2...)
+- Column increases RIGHTWARD (0 → 1 → 2...)
 
-There may be moving obstacles. If there are any, their current and future motions will be presented below in a nested list structure:
-{k_obstacles}. They move when you move with 90% probability.
+ACTIONS:
+You must provide Q-values for 4 directional actions at each state:
+- Index 0 = UP: Move to (row-1, col) - DECREASES row
+- Index 1 = RIGHT: Move to (row, col+1) - INCREASES column  
+- Index 2 = DOWN: Move to (row+1, col) - INCREASES row
+- Index 3 = LEFT: Move to (row, col-1) - DECREASES column
 
-Your goal is {goal}.
+ACTION EXAMPLES:
+From (0,0): UP→boundary, RIGHT→(0,1), DOWN→(1,0), LEFT→boundary
+From (0,1): UP→boundary, RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
+From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→boundary
 
-You must avoid all obstacles, including moving obstacles, as best you can. If you hit an obstacle, you should do your best to exit the obstacle, meaning you can assign a non-zero value to more than one direction.
+Q-VALUE ENCODING:
+- Set the BEST action to 100
+- Set other actions to 0
+- If multiple good actions exist (e.g., escaping obstacle), assign non-zero to multiple
+- If at obstacle, prioritize escaping back to valid cells
 
-If the path is not correct or if you do not cover the entire grid, then you will be fired.
+TASK DETAILS:
+- Static obstacles: {s_obstacles} (marked as 'X')
+- Future goals to avoid: {f_goals} (marked as 'F')
+- Moving obstacles: {k_obstacles} (marked as 'M', move with 90% probability)
+- Your current goal: {goal} (marked as 'G')
+
+CRITICAL REQUIREMENTS:
+1. You MUST provide Q-values for ALL {total_states} states in the {size}x{size} grid
+2. Never plan a path through obstacles (X) or future goals (F)
+3. The best action should create a path from ANY position to the goal
+4. If a cell is an obstacle, provide escape Q-values (how to exit if accidentally there)
+
+EXAMPLE for a 2x2 grid with goal at (1,1) and obstacle at (1,0):
+
+Grid:
+  0 1
+0 S .
+1 X G
+
+Correct solution:
+- State (0,0): [0, 100, 0, 0] → Go RIGHT toward goal
+- State (0,1): [0, 0, 100, 0] → Go DOWN to reach goal  
+- State (1,0): [100, 0, 0, 0] → Go UP to escape obstacle
+- State (1,1): [0, 0, 0, 0] → At goal, any action is fine
+
+Now provide Q-values for your grid.
 """
 
 PROMPT_TEMPLATE = PromptTemplate(
-    template = PROMPT_TEXT,
-    input_variables=["size", "s_obstacles", "f_goals", "k_obstacles", "goal"]
+    template=PROMPT_TEXT,
+    input_variables=["size", "grid_visual", "s_obstacles", "f_goals", "k_obstacles", "goal", "total_states"]
 )
 
-def get_prompt(size: int, s_obstacles: List[Tuple[int]], f_goals: List[Tuple[int]], k_obstacles: List[List[Tuple[int]]], goal: Tuple[int]):
-    size_str = str(size)
-    s_obs_str = str(s_obstacles)
-    f_goals_str = str(f_goals)
-    k_obs_str = str(k_obstacles)
-    goal_str = str(goal)
+def generate_grid_visual(size: int, goal: Tuple[int, int], s_obstacles: List[Tuple[int, int]], 
+                         f_goals: List[Tuple[int, int]], k_obstacles: List[Tuple[int, int]]) -> str:
+    """Generate ASCII visual representation of the grid"""
+    # Initialize grid with empty cells
+    grid = [['.' for _ in range(size)] for _ in range(size)]
+    
+    # Place elements (order matters - later placements override)
+    # Start with moving obstacles
+    for obs in k_obstacles:
+        if 0 <= obs[0] < size and 0 <= obs[1] < size:
+            grid[obs[0]][obs[1]] = 'M'
+    
+    # Future goals
+    for fg in f_goals:
+        if 0 <= fg[0] < size and 0 <= fg[1] < size:
+            grid[fg[0]][fg[1]] = 'F'
+    
+    # Static obstacles (higher priority)
+    for obs in s_obstacles:
+        if 0 <= obs[0] < size and 0 <= obs[1] < size:
+            grid[obs[0]][obs[1]] = 'X'
+    
+    # Current goal (even higher priority)
+    if 0 <= goal[0] < size and 0 <= goal[1] < size:
+        grid[goal[0]][goal[1]] = 'G'
+    
+    # Start position (highest priority - but don't override goal if they're the same)
+    if grid[0][0] not in ['G']:
+        grid[0][0] = 'S'
+    
+    # Format as string with column headers
+    header = '  ' + ' '.join(str(i) for i in range(size))
+    rows = [f"{i} " + ' '.join(row) for i, row in enumerate(grid)]
+    visual = header + '\n' + '\n'.join(rows)
+    
+    return visual
 
-    return PROMPT_TEMPLATE.format(size=size_str, s_obstacles=s_obs_str, f_goals=f_goals_str, k_obstacles=k_obs_str, goal=goal_str)
+def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]], 
+               k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int]) -> str:
+    """Generate the complete prompt with visual grid"""
+    
+    # Flatten k_obstacles if it's nested
+    flat_k_obstacles = []
+    if k_obstacles:
+        for item in k_obstacles:
+            if isinstance(item, list):
+                flat_k_obstacles.extend(item)
+            else:
+                flat_k_obstacles.append(item)
+    
+    grid_visual = generate_grid_visual(size, goal, s_obstacles, f_goals, flat_k_obstacles)
+    total_states = size * size
+    
+    return PROMPT_TEMPLATE.format(
+        size=size,
+        grid_visual=grid_visual,
+        s_obstacles=str(s_obstacles),
+        f_goals=str(f_goals),
+        k_obstacles=str(k_obstacles),
+        goal=str(goal),
+        total_states=total_states
+    )
 
 
 class StateQ(BaseModel):
-    x: int = Field(..., description="x coordinate (0-indexed)")
-    y: int = Field(..., description="y coordinate (0-indexed)")
+    x: int = Field(..., description="x coordinate (row, 0-indexed)")
+    y: int = Field(..., description="y coordinate (column, 0-indexed)")
     q_values: List[int] = Field(..., description="Action Q-values for this state. Higher is better.")
     
 class QTables(BaseModel):
@@ -89,13 +188,14 @@ class QTables(BaseModel):
 
 # all q-values initialized to 1
 class BaselinePlanner:
-    def __init__(self, size):
+    def __init__(self, size, goals, static_obstacles, moving_obstacles):
         self.size = size
-        self.env: GridWorldEnv = GridWorldEnv(size)
-        self.model_generator = PrismModelGenerator(size)
+        self.env = GridWorldEnv(size, goals, static_obstacles, moving_obstacles)
+        self.model_generator = PrismModelGenerator(self.env)
         self.prism_verifier = PrismVerifier(self.get_prism_path())
-        self.simplified_verifier = SimplifiedVerifier(self.prism_verifier)
+        self.simplified_verifier = SimplifiedVerifier(self.prism_verifier, self.env)
         self.action_space = 4
+        self.num_goals = len(goals)
         self.q_table = self.initialize_q_table()
                 
         logger.info("Baseline Planner initialized.")
@@ -109,16 +209,19 @@ class BaselinePlanner:
             raise FileNotFoundError(f"PRISM executable not found or not executable at {prism_path}")
         
     def initialize_q_table(self):
-        """Initialize Q-table"""
+        """Initialize Q-table with variable number of goals"""
         q_table = {}
-        for x in range(GRID_SIZE):
-            for y in range(GRID_SIZE):
-                for g1 in [False, True]:
-                    for g2 in [False, True]:
-                        for g3 in [False, True]:
-                            state = (x, y, g1, g2, g3)
-                            q_table[state] = np.ones(self.action_space) * 1.0
-        logger.info("Q-table initialized.")
+        
+        # Generate all combinations of goal states
+        goal_combinations = list(product([False, True], repeat=self.num_goals))
+        
+        for x in range(self.size):
+            for y in range(self.size):
+                for goal_combo in goal_combinations:
+                    state = (x, y) + goal_combo
+                    q_table[state] = np.ones(self.action_space) * 1.0
+        
+        logger.info(f"Q-table initialized with {len(q_table)} states.")
         return q_table
             
     def step(self):
@@ -132,24 +235,16 @@ class BaselinePlanner:
 
 
 class LLMPlanner:
-    def __init__(self, size):
+    def __init__(self, size, goals, static_obstacles, moving_obstacles):
         self.size = size
-        self.env: GridWorldEnv = GridWorldEnv(size)
-        self.model_generator = PrismModelGenerator(size)
+        self.env = GridWorldEnv(size, goals, static_obstacles, moving_obstacles)
+        self.model_generator = PrismModelGenerator(self.env)
         self.prism_verifier = PrismVerifier(self.get_prism_path())
-        self.simplified_verifier = SimplifiedVerifier(self.prism_verifier)
+        self.simplified_verifier = SimplifiedVerifier(self.prism_verifier, self.env)
         self.action_space = 4
+        self.num_goals = len(goals)
         self.q_table = self.initialize_q_table()
-        self.prism_probs = {
-            'goal1': 0.0,
-            'goal2': 0.0,
-            'goal3': 0.0,
-            'seq1': 0.0,
-            'seq2': 0.0,
-            'seq3': 0.0,
-            'avoid_obstacle': 0.0,
-            'path_exists': 0.0
-        }
+        self.prism_probs = {}  # Will be populated dynamically
         
         self.model = ChatOpenAI(model_name="gpt-5-mini-2025-08-07", temperature=0).with_structured_output(QTables)
         
@@ -164,72 +259,124 @@ class LLMPlanner:
             raise FileNotFoundError(f"PRISM executable not found or not executable at {prism_path}")
         
     def initialize_q_table(self):
-        """Initialize Q-table"""
+        """Initialize Q-table with variable number of goals"""
         q_table = {}
-        for x in range(GRID_SIZE):
-            for y in range(GRID_SIZE):
-                for g1 in [False, True]:
-                    for g2 in [False, True]:
-                        for g3 in [False, True]:
-                            state = (x, y, g1, g2, g3)
-                            q_table[state] = np.ones(self.action_space) * 1.0
-        logger.info("Q-table initialized.")
+        
+        # Generate all combinations of goal states
+        goal_combinations = list(product([False, True], repeat=self.num_goals))
+        
+        for x in range(self.size):
+            for y in range(self.size):
+                for goal_combo in goal_combinations:
+                    state = (x, y) + goal_combo
+                    q_table[state] = np.ones(self.action_space) * 1.0
+        
+        logger.info(f"Q-table initialized with {len(q_table)} states.")
         return q_table
 
     def _update_prism_probabilities(self, probabilities: List[float]):
-        """Update PMC verification probabilities"""
-        if len(probabilities) >= 8:
-            self.prism_probs = {
-                'goal1': probabilities[0],
-                'goal2': probabilities[1],
-                'goal3': probabilities[2],
-                'seq1': probabilities[3],
-                'seq2': probabilities[4],
-                'seq3': probabilities[5],
-                'avoid_obstacle': probabilities[6],
-                'path_exists': probabilities[7]
-            }
+        """Update PMC verification probabilities dynamically"""
+        goal_nums = sorted(self.env.goals.keys())
+        
+        idx = 0
+        # Goal reachability probabilities
+        for goal_num in goal_nums:
+            if idx < len(probabilities):
+                self.prism_probs[f'goal{goal_num}'] = probabilities[idx]
+                idx += 1
+        
+        # Sequence probabilities
+        for i in range(len(goal_nums) - 1):
+            if idx < len(probabilities):
+                self.prism_probs[f'seq_{goal_nums[i]}_before_{goal_nums[i+1]}'] = probabilities[idx]
+                idx += 1
+        
+        # Complete sequence
+        if idx < len(probabilities):
+            self.prism_probs['complete_sequence'] = probabilities[idx]
+            idx += 1
+        
+        # Obstacle avoidance
+        if idx < len(probabilities):
+            self.prism_probs['avoid_obstacle'] = probabilities[idx]
+            idx += 1
+    
+    def _get_applicable_goal_states(self, goal_idx: int) -> List[List[bool]]:
+        """Get the goal state combinations applicable for planning to reach goal i
+        
+        For goal at index i (0-indexed):
+        - Goals 0 to i-1: must all be True (already reached)
+        - Goal i: must be False (trying to reach it)
+        - Goals i+1 to N-1: must all be False (haven't reached them yet)
+        
+        Returns a list with single element since there's only one valid state
+        """
+        goal_state = []
+        
+        for j in range(self.num_goals):
+            if j < goal_idx:
+                # Previous goals must be reached
+                goal_state.append(True)
+            elif j == goal_idx:
+                # Current goal not yet reached
+                goal_state.append(False)
+            else:
+                # Future goals not yet reached
+                goal_state.append(False)
+        
+        return [goal_state]
             
     def step(self):
-        # separate out non-positional state (mutually independent states)
-        for i in self.env.goals.keys():
-            goal = self.env.goals[i]
-            logger.info(f"Planning for goal {i} at position {goal}")
+        # Plan for each goal separately
+        goal_nums = sorted(self.env.goals.keys())
+        
+        for idx, goal_num in enumerate(goal_nums):
+            goal = self.env.goals[goal_num]
+            logger.info(f"Planning for goal {goal_num} at position {goal}")
+            
+            # Get future goals to avoid
+            future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
+            
             response = self.model.invoke(
                 get_prompt(
                     self.size,
                     self.env.static_obstacles,
-                    [self.env.goals[k] for k in self.env.goals.keys() if k > i],
+                    future_goals,
                     self.env.moving_obstacle_positions,
-                    self.env.goals[i]
+                    goal
                 )
             )
             logger.info("LLM Response received.")
-            
             logger.info(response.states)
+            
+            # Get applicable goal state combinations for this goal
+            applicable_goals = self._get_applicable_goal_states(idx)
+            
             for stateQ in response.states:
                 x, y = stateQ.x, stateQ.y
-                if i == 1:
-                    applicable_goals = [[False, False, False], [False, True, False], [False, False, True], [False, True, True]]
-                if i == 2:
-                    applicable_goals = [[True, False, False], [True, False, True]]
-                if i == 3:
-                    applicable_goals = [[True, True, False],]
                 
-                for applicable_goal in applicable_goals:
-                    g1, g2, g3 = applicable_goal
-                    state = (x, y, g1, g2, g3)
-                    assert(len(stateQ.q_values) == self.action_space)
+                for goal_state_list in applicable_goals:
+                    goal_state_tuple = tuple(goal_state_list)
+                    state = (x, y) + goal_state_tuple
+                    
+                    assert len(stateQ.q_values) == self.action_space, \
+                        f"Expected {self.action_space} Q-values, got {len(stateQ.q_values)}"
+                    
                     if state in self.q_table:
                         logger.info(f"Updating Q-values for state {state} with {stateQ.q_values}")
                         for q_idx in range(len(self.q_table[state])):
-                            self.q_table[state][q_idx] = self.q_table[state][q_idx] * 0.3 + stateQ.q_values[q_idx] * 0.7 # TODO: change to moving average
+                            # Exponential moving average
+                            self.q_table[state][q_idx] = self.q_table[state][q_idx] * 0.3 + stateQ.q_values[q_idx] * 0.7
                     else:
                         logger.warning(f"State {state} from LLM not in Q-table.")
                 
-        # after updated q-table
+        # After updated q-table, verify the policy
         model_str = self.model_generator.generate_prism_model(self.q_table)
         ltl_score = self.simplified_verifier.verify_policy(model_str)
+        
+        # Update probabilities from verification
+        if self.simplified_verifier.ltl_probabilities:
+            self._update_prism_probabilities(self.simplified_verifier.ltl_probabilities[-1])
         
         logger.info(f"LTL Score (LLM): {ltl_score}")
         return ltl_score
@@ -239,14 +386,14 @@ class LLMPlanner:
 
 def main():
     logger.info("Initializing LLM Planner...")
-    llmPlanner = LLMPlanner(GRID_SIZE)
+    llmPlanner = LLMPlanner(GRID_SIZE, GOALS, STATIC_OBSTACLES, MOVING_OBSTACLES)
     logger.info("LLM Planner ready. Stepping...")
     start_time = time.time()
     llm_ltl = llmPlanner.step()        
     end_time = time.time()
     logger.info("LLM Planner step complete.")
     logger.info("Computing baseline for comparison...")
-    baselinePlanner = BaselinePlanner(GRID_SIZE)
+    baselinePlanner = BaselinePlanner(GRID_SIZE, GOALS, STATIC_OBSTACLES, MOVING_OBSTACLES)
     baseline_ltl = baselinePlanner.step()
     logger.info(f"Baseline finished")
     
@@ -257,6 +404,8 @@ def main():
         logger.warning("LLM Planner does not outperform baseline.")
     logger.info(f"LLM Planner step took {end_time - start_time:.2f} seconds.")
 
+    llmPlanner.simplified_verifier.save_probabilities_to_file(filename="llm_probabilities_and_rewards.txt")
+    baselinePlanner.simplified_verifier.save_probabilities_to_file(filename="baseline_probabilities_and_rewards.txt")
 
 logger.info("Starting LLM Planner...")
 if __name__ == "__main__":

@@ -5,12 +5,11 @@ import subprocess
 import os
 import traceback
 
-
 class PrismVerifier:
     def __init__(self, prism_bin_path: str):
         self.prism_bin_path = prism_bin_path
         self.logger = logging.getLogger(__name__)
-        self.temp_files = [] 
+        self.temp_files = []
 
     def verify_property(self, model_str: str, property_str: str) -> List[float]:
         model_path = None
