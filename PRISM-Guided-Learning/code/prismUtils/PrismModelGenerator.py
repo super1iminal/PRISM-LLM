@@ -68,6 +68,8 @@ class PrismModelGenerator:
                                     f" & (y'={next_obs_pos[1]}) & {goal_update}")
                         break
                 else:
+                    # TODO: don't override LLM decisions
+                    # TODO: try to do this in PRISM instead
                     # Handle static obstacles
                     if (new_x, new_y) in self.gridWorld.static_obstacles:
                         goal_update = " & ".join([f"(g{i+1}'={str(goal_states[i]).lower()})" 

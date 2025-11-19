@@ -35,7 +35,7 @@ GOALS = {
     1: (1, 1),
 }
 # Static obstacles
-STATIC_OBSTACLES = [(1, 0)]
+STATIC_OBSTACLES = [(0, 1)]
 
 # Moving obstacle positions in sequence
 MOVING_OBSTACLES = []
@@ -69,9 +69,9 @@ You must provide Q-values for 4 directional actions at each state:
 - Index 3 = LEFT: Move to (row, col-1) - DECREASES column
 
 ACTION EXAMPLES:
-From (0,0): UP→boundary, RIGHT→(0,1), DOWN→(1,0), LEFT→boundary
-From (0,1): UP→boundary, RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
-From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→boundary
+From (0,0): UP→(0,0), RIGHT→(0,1), DOWN→(1,0), LEFT→(0,0)
+From (0,1): UP→(0,1), RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
+From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
 
 Q-VALUE ENCODING:
 - Set the BEST action to 100
@@ -90,19 +90,6 @@ CRITICAL REQUIREMENTS:
 2. Never plan a path through obstacles (X) or future goals (F)
 3. The best action should create a path from ANY position to the goal
 4. If a cell is an obstacle, provide escape Q-values (how to exit if accidentally there)
-
-EXAMPLE for a 2x2 grid with goal at (1,1) and obstacle at (1,0):
-
-Grid:
-  0 1
-0 S .
-1 X G
-
-Correct solution:
-- State (0,0): [0, 100, 0, 0] → Go RIGHT toward goal
-- State (0,1): [0, 0, 100, 0] → Go DOWN to reach goal  
-- State (1,0): [100, 0, 0, 0] → Go UP to escape obstacle
-- State (1,1): [0, 0, 0, 0] → At goal, any action is fine
 
 Now provide Q-values for your grid.
 """
