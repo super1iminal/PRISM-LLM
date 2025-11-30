@@ -71,7 +71,7 @@ class VanillaLLMPlanner:
         self.action_space = 4
         self.prism_probs = {}  # Will be populated dynamically
         
-        self.model = ChatOpenAI(model_name="gpt-4o-mini-2024-08-07", temperature=1).with_structured_output(QTables)
+        self.model = ChatOpenAI(model_name="gpt-5-mini-2025-08-07", temperature=1).with_structured_output(QTables)
         
         
     def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
@@ -296,7 +296,7 @@ class VanillaLLMPlanner:
         
         for idx, goal_num in enumerate(goal_nums):
             goal = self.env.goals[goal_num]
-            self.logger.info(f"Planning for goal {goal_num} at position {goal}")
+            self.logger.info(f"LLM planning for goal {goal_num} at position {goal}")
             
             # Get future goals to avoid
             future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]

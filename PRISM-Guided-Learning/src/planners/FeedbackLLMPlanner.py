@@ -180,7 +180,7 @@ class FeedbackLLMPlanner:
         self.target_threshold = target_threshold
         
         self.model = ChatOpenAI(
-            model_name="gpt-4o-mini-2024-08-07", 
+            model_name="gpt-5-mini-2025-08-07", 
             temperature=1
         ).with_structured_output(QTables)
         

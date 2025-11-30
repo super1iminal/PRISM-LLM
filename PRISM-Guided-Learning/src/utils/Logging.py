@@ -1,4 +1,4 @@
-from config.Settings import LOGGING_PATH
+from config.Settings import LOGGING_PATH, EVAL_PATH
 import os
 import logging
 from datetime import datetime
@@ -22,7 +22,7 @@ def create_run_directory(prefix: str = "run") -> str:
 
 
 def setup_logger(log_filename: str, run_dir: Optional[str] = None, 
-                 include_timestamp: bool = True, console_output: bool = False):
+                 include_timestamp: bool = True, console_output: bool = False, log_path = LOGGING_PATH):
     """
     Setup a logger with file and console handlers.
     
@@ -30,6 +30,7 @@ def setup_logger(log_filename: str, run_dir: Optional[str] = None,
         log_filename: Name for the log file (without extension)
         run_dir: Optional shared directory for the log file. If None, uses LOGGING_PATH directly.
         include_timestamp: Whether to include timestamp in filename (default True for backward compatibility)
+        log_path: Base path for log files (default is LOGGING_PATH)
         
     Returns:
         Configured logger instance
@@ -43,7 +44,7 @@ def setup_logger(log_filename: str, run_dir: Optional[str] = None,
     if run_dir:
         log_path = os.path.join(run_dir, filename)
     else:
-        log_path = os.path.join(LOGGING_PATH, filename)
+        log_path = os.path.join(log_path, filename)
     
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     
