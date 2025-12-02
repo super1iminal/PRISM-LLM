@@ -27,10 +27,10 @@ class EvalModel(Enum):
 def main():
     logger = setup_logger("eval", console_output=False, log_path=EVAL_PATH) 
     
-    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_100_samples.csv")
+    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_1_sample.csv")
     dataloader.load_data()
     
-    models = [EvalModel.RL, EvalModel.LLM_VANILLA, EvalModel.LLM_FEEDBACK]
+    models = [EvalModel.LLM_FEEDBACK]
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
     run_dir = os.path.join(RESULTS_PATH, f"{len(dataloader.data)}_{timestamp}")
