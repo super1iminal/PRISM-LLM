@@ -2,10 +2,9 @@ from verification.PrismVerifier import PrismVerifier
 from verification.SimplifiedVerifier import SimplifiedVerifier
 from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
-from utils.LLMPrompting import get_prompt, QTables, StateQ, generate_grid_visual
+from utils.LLMPrompting import get_prompt, ActionPolicy, StateAction, generate_grid_visual
 
 import os
-import numpy as np
 from typing import List, Optional, Dict, Tuple
 from itertools import product
 import pandas as pd
@@ -47,22 +46,17 @@ COORDINATE SYSTEM:
 - Row increases DOWNWARD (0 → 1 → 2...)
 - Column increases RIGHTWARD (0 → 1 → 2...)
 
-ACTIONS:
-- Index 0 = UP: Move to (row-1, col) - DECREASES row
-- Index 1 = RIGHT: Move to (row, col+1) - INCREASES column  
-- Index 2 = DOWN: Move to (row+1, col) - INCREASES row
-- Index 3 = LEFT: Move to (row, col-1) - DECREASES column
+ACTIONS - pick ONE best action per state:
+- 0 = UP: Move to (row-1, col) - DECREASES row
+- 1 = RIGHT: Move to (row, col+1) - INCREASES column
+- 2 = DOWN: Move to (row+1, col) - INCREASES row
+- 3 = LEFT: Move to (row, col-1) - DECREASES column
 
-YOUR PREVIOUS Q-VALUES (that need improvement):
-{previous_q_values}
+YOUR PREVIOUS ACTIONS (that need improvement):
+{previous_actions}
 
 PROBLEMS TO FIX:
 {problems}
-
-Q-VALUE ENCODING:
-- Set the BEST action to 100
-- Set other actions to 0
-- If multiple good actions exist, assign non-zero to multiple
 
 TASK DETAILS:
 - Static obstacles: {s_obstacles} (marked as 'X')
@@ -70,22 +64,34 @@ TASK DETAILS:
 - Moving obstacles: {k_obstacles} (marked as 'M')
 - Your current goal: {goal} (marked as 'G')
 
-CRITICAL: Fix the issues identified above. Provide IMPROVED Q-values for ALL {total_states} states.
+STOCHASTIC EXECUTION:
+When you choose an action, the agent executes it with uncertainty:
+- {prob_forward_pct}% probability: Moves in the intended direction
+- {prob_slip_left_pct}% probability: Slips 90° LEFT of intended direction
+- {prob_slip_right_pct}% probability: Slips 90° RIGHT of intended direction
+
+This means paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+
+CRITICAL: Fix the issues identified above. Provide IMPROVED best action (0-3) for ALL {total_states} states.
 """
 
 FEEDBACK_TEMPLATE = PromptTemplate(
     template=FEEDBACK_PROMPT_TEXT,
-    input_variables=["probability_summary", "size", "grid_visual", "s_obstacles", 
-                     "f_goals", "k_obstacles", "goal", "total_states", 
-                     "previous_q_values", "problems"]
+    input_variables=["probability_summary", "size", "grid_visual", "s_obstacles",
+                     "f_goals", "k_obstacles", "goal", "total_states",
+                     "previous_actions", "problems",
+                     "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct"]
 )
 
 
-def format_previous_q_values(states: List[StateQ]) -> str:
-    """Format previous Q-values for feedback prompt"""
+ACTION_NAMES = {0: "UP", 1: "RIGHT", 2: "DOWN", 3: "LEFT"}
+
+def format_previous_actions(states: List[StateAction]) -> str:
+    """Format previous actions for feedback prompt"""
     lines = []
     for state in states[:20]:  # Limit to avoid token overflow
-        lines.append(f"  ({state.x}, {state.y}): {state.q_values}")
+        action_name = ACTION_NAMES.get(state.best_action, str(state.best_action))
+        lines.append(f"  ({state.x}, {state.y}): {action_name}")
     if len(states) > 20:
         lines.append(f"  ... and {len(states) - 20} more states")
     return "\n".join(lines)
@@ -141,8 +147,8 @@ def _evaluate_single_gridworld_feedback(args: Tuple) -> Dict:
     
     # Create a new planner instance for this worker
     planner = FeedbackLLMPlanner(
-        max_iterations=config.get('max_iterations', 3),
-        target_threshold=config.get('target_threshold', 0.99)
+        max_attempts=config.get('max_attempts', 3),
+        target_threshold=config.get('target_threshold', 0.9)
     )
     
     # Setup logger for this worker in the shared directory
@@ -173,16 +179,16 @@ def _evaluate_single_gridworld_feedback(args: Tuple) -> Dict:
 
 
 class FeedbackLLMPlanner:
-    def __init__(self, max_iterations: int = 3, target_threshold: float = 0.99):
+    def __init__(self, max_attempts: int = 3, target_threshold: float = 0.9):
         self.action_space = 4
         self.prism_probs = {}
-        self.max_iterations = max_iterations
+        self.max_attempts = max_attempts  # Total LLM attempts per goal (1 initial + N-1 feedback)
         self.target_threshold = target_threshold
         
         self.model = ChatOpenAI(
-            model_name="gpt-5-mini-2025-08-07", 
+            model_name="gpt-5-nano-2025-08-07",
             temperature=1
-        ).with_structured_output(QTables)
+        ).with_structured_output(ActionPolicy)
         
     def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
                  use_threads: bool = True):
@@ -270,7 +276,7 @@ class FeedbackLLMPlanner:
         
         # Prepare arguments with shared run directory
         config = {
-            'max_iterations': self.max_iterations,
+            'max_attempts': self.max_attempts,
             'target_threshold': self.target_threshold,
             'run_dir': run_dir  # Pass shared directory to workers
         }
@@ -338,18 +344,18 @@ class FeedbackLLMPlanner:
             raise FileNotFoundError(f"PRISM executable not found or not executable at {prism_path}")
         
     def initialize_q_table(self):
-        """Initialize Q-table with variable number of goals"""
-        q_table = {}
+        """Initialize policy table with default action (DOWN toward typical goal)"""
+        policy = {}
         goal_combinations = list(product([False, True], repeat=self.num_goals))
-        
+
         for x in range(self.size):
             for y in range(self.size):
                 for goal_combo in goal_combinations:
                     state = (x, y) + goal_combo
-                    q_table[state] = np.ones(self.action_space) * 1.0
-        
-        self.logger.info(f"Q-table initialized with {len(q_table)} states.")
-        return q_table
+                    policy[state] = 2  # Default: DOWN
+
+        self.logger.info(f"Policy initialized with {len(policy)} states.")
+        return policy
 
     def _update_prism_probabilities(self, probabilities: List[float]):
         """Update PMC verification probabilities dynamically"""
@@ -394,11 +400,11 @@ class FeedbackLLMPlanner:
             return False
         return all(prob >= self.target_threshold for prob in self.prism_probs.values())
     
-    def _get_feedback_prompt(self, goal_num: int, goal: Tuple[int, int], 
-                              future_goals: List[Tuple[int, int]], 
-                              previous_response: QTables) -> str:
+    def _get_feedback_prompt(self, goal_num: int, goal: Tuple[int, int],
+                              future_goals: List[Tuple[int, int]],
+                              previous_response: ActionPolicy) -> str:
         """Generate feedback prompt for correction iteration"""
-        
+
         flat_k_obstacles = []
         if self.env.moving_obstacle_positions:
             for item in self.env.moving_obstacle_positions:
@@ -406,16 +412,16 @@ class FeedbackLLMPlanner:
                     flat_k_obstacles.extend(item)
                 else:
                     flat_k_obstacles.append(item)
-        
+
         grid_visual = generate_grid_visual(
-            self.size, goal, self.env.static_obstacles, 
+            self.size, goal, self.env.static_obstacles,
             future_goals, flat_k_obstacles
         )
-        
+
         probability_summary = format_probability_summary(self.prism_probs)
-        previous_q_values = format_previous_q_values(previous_response.states)
+        previous_actions = format_previous_actions(previous_response.states)
         problems = identify_problems(self.prism_probs, self.target_threshold)
-        
+
         return FEEDBACK_TEMPLATE.format(
             probability_summary=probability_summary,
             size=self.size,
@@ -425,30 +431,29 @@ class FeedbackLLMPlanner:
             k_obstacles=str(self.env.moving_obstacle_positions),
             goal=str(goal),
             total_states=self.size * self.size,
-            previous_q_values=previous_q_values,
-            problems=problems
+            previous_actions=previous_actions,
+            problems=problems,
+            prob_forward_pct=int(self.env.prob_forward * 100),
+            prob_slip_left_pct=int(self.env.prob_slip_left * 100),
+            prob_slip_right_pct=int(self.env.prob_slip_right * 100)
         )
     
-    def _apply_response_to_q_table(self, response: QTables, goal_idx: int):
-        """Apply LLM response to Q-table"""
+    def _apply_response_to_q_table(self, response: ActionPolicy, goal_idx: int):
+        """Apply LLM response to policy table"""
         applicable_goals = self._get_applicable_goal_states(goal_idx)
-        
-        for stateQ in response.states:
-            x, y = stateQ.x, stateQ.y
-            
+
+        for state_action in response.states:
+            x, y = state_action.x, state_action.y
+
             for goal_state_list in applicable_goals:
                 goal_state_tuple = tuple(goal_state_list)
                 state = (x, y) + goal_state_tuple
-                
-                assert len(stateQ.q_values) == self.action_space, \
-                    f"Expected {self.action_space} Q-values, got {len(stateQ.q_values)}"
-                
+
                 if state in self.q_table:
-                    self.logger.info(f"Updating Q-values for state {state} with {stateQ.q_values}")
-                    for q_idx in range(len(self.q_table[state])):
-                        self.q_table[state][q_idx] = self.q_table[state][q_idx] * 0.3 + stateQ.q_values[q_idx] * 0.7
+                    self.logger.info(f"Setting action for state {state} to {state_action.best_action}")
+                    self.q_table[state] = state_action.best_action
                 else:
-                    self.logger.warning(f"State {state} from LLM not in Q-table.")
+                    self.logger.warning(f"State {state} from LLM not in policy.")
     
     def _verify_current_policy(self) -> float:
         """Verify current policy and update probabilities"""
@@ -465,7 +470,7 @@ class FeedbackLLMPlanner:
         goal_nums = sorted(self.env.goals.keys())
         
         # Store responses for potential feedback iterations
-        goal_responses: Dict[int, QTables] = {}
+        goal_responses: Dict[int, ActionPolicy] = {}
         
         # Initial pass - get Q-values for each goal
         for idx, goal_num in enumerate(goal_nums):
@@ -473,14 +478,18 @@ class FeedbackLLMPlanner:
             self.logger.info(f"Planning for goal {goal_num} at position {goal}")
             
             future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
-            
+
+            self.logger.info(f"Calling LLM for goal {goal_num}...")
             response = self.model.invoke(
                 get_prompt(
                     self.size,
                     self.env.static_obstacles,
                     future_goals,
                     self.env.moving_obstacle_positions,
-                    goal
+                    goal,
+                    self.env.prob_forward,
+                    self.env.prob_slip_left,
+                    self.env.prob_slip_right
                 )
             )
             self.logger.info("LLM Response received.")
@@ -493,10 +502,11 @@ class FeedbackLLMPlanner:
         ltl_score = self._verify_current_policy()
         self.logger.info(f"Initial LTL Score: {ltl_score}")
         
-        # Feedback loop
-        iteration = 1
-        while iteration < self.max_iterations and not self._check_all_probabilities_meet_threshold():
-            self.logger.info(f"=== Feedback Iteration {iteration} ===")
+        # Feedback loop - attempt counts: 1 = initial, 2+ = feedback iterations
+        attempt = 1  # We've completed attempt 1 (initial)
+        while attempt < self.max_attempts and not self._check_all_probabilities_meet_threshold():
+            attempt += 1
+            self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback) ===")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
             
             # Re-query for each goal with feedback
@@ -518,14 +528,12 @@ class FeedbackLLMPlanner:
             
             # Re-verify
             ltl_score = self._verify_current_policy()
-            self.logger.info(f"LTL Score after iteration {iteration}: {ltl_score}")
-            
-            iteration += 1
-        
+            self.logger.info(f"LTL Score after attempt {attempt}: {ltl_score}")
+
         if self._check_all_probabilities_meet_threshold():
-            self.logger.info(f"All probabilities meet threshold after {iteration} iterations!")
+            self.logger.info(f"All probabilities meet threshold after {attempt} attempts")
         else:
-            self.logger.warning(f"Max iterations ({self.max_iterations}) reached. Final probabilities: {self.prism_probs}")
-        
+            self.logger.warning(f"Max attempts ({self.max_attempts}) reached. Final probabilities: {self.prism_probs}")
+
         self.logger.info(f"Final LTL Score (Feedback LLM): {ltl_score}")
-        return ltl_score, iteration
+        return ltl_score, attempt

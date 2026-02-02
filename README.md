@@ -40,11 +40,9 @@ All three implementations address the problem of navigating in a grid model with
 
 3.Install PRISM (https://www.prismmodelchecker.org/download.php)
 
-4.Put the closest directory to bin prism-xxx-xxx in the repo's root and rename it to prism-4.9
+4.Update the PRISM path in the code (in the 'get_prism_path()' functions and in `/prism-4.9/bin/prism` executable)
 
-5.Update the PRISM path in the code (in the 'get_prism_path()' functions and in `/prism-4.9/bin/prism` executable)
-
-6.Set your OPENAI_API_KEY environment variable to your openai key (I do it in .bashrc, not sure how to do it on windows)
+5.Set your OPENAI_API_KEY environment variable to your openai key (I do it in .bashrc, not sure how to do it on windows)
 
 # Problem Description
 

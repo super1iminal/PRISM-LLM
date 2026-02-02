@@ -16,7 +16,7 @@ from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
 
 from environment.GridWorldStepper import GridWorldMover
-from config.Settings import PRISM_PATH
+from config.Settings import PRISM_PATH, RL_MAX_EPISODES, RL_CONVERGENCE_EPSILON, RL_PROBABILITY_THRESHOLD, RL_MIN_EPISODES_BEFORE_CONVERGENCE
 from utils.Logging import setup_logger, create_run_directory
 
 
@@ -38,7 +38,10 @@ def _evaluate_single_gridworld(args: Tuple) -> Dict:
     
     # Create a new agent instance for this process
     agent = LTLGuidedQLearningWithObstacle()
-    agent.episodes = config.get('episodes', 200)
+    agent.max_episodes = config.get('max_episodes', RL_MAX_EPISODES)
+    agent.convergence_epsilon = config.get('convergence_epsilon', RL_CONVERGENCE_EPSILON)
+    agent.probability_threshold = config.get('probability_threshold', RL_PROBABILITY_THRESHOLD)
+    agent.min_episodes_before_convergence = config.get('min_episodes_before_convergence', RL_MIN_EPISODES_BEFORE_CONVERGENCE)
     agent.verify_interval = config.get('verify_interval', 1)
     
     # Setup logger for this process in the shared directory
@@ -59,7 +62,6 @@ def _evaluate_single_gridworld(args: Tuple) -> Dict:
     
     # Train the agent
     best_policy, best_ltl_score = agent.train(
-        episodes=agent.episodes, 
         verify_interval=agent.verify_interval
     )
     
@@ -99,8 +101,12 @@ class LTLGuidedQLearningWithObstacle:
         self.K = 5  # Counterfactual depth
         
         # Training configuration
-        self.episodes = 200
+        self.max_episodes = RL_MAX_EPISODES  # 500
+        self.convergence_epsilon = RL_CONVERGENCE_EPSILON  # 0.001
+        self.probability_threshold = RL_PROBABILITY_THRESHOLD  # 0.9
+        self.min_episodes_before_convergence = RL_MIN_EPISODES_BEFORE_CONVERGENCE  # 50
         self.verify_interval = 1
+        self.previous_probs = None
         
     def _get_prism_path(self):
         """Get PRISM executable path"""
@@ -153,7 +159,6 @@ class LTLGuidedQLearningWithObstacle:
             
             # Train the agent
             best_policy, best_ltl_score = self.train(
-                episodes=self.episodes, 
                 verify_interval=self.verify_interval
             )
             
@@ -198,7 +203,10 @@ class LTLGuidedQLearningWithObstacle:
         
         # Prepare arguments for parallel execution
         config = {
-            'episodes': self.episodes,
+            'max_episodes': self.max_episodes,
+            'convergence_epsilon': self.convergence_epsilon,
+            'probability_threshold': self.probability_threshold,
+            'min_episodes_before_convergence': self.min_episodes_before_convergence,
             'verify_interval': self.verify_interval,
             'run_dir': run_dir  # Pass shared directory to workers
         }
@@ -278,7 +286,8 @@ class LTLGuidedQLearningWithObstacle:
         
         # Initialize PRISM probabilities
         self.prism_probs = self._init_prism_probs()
-        
+        self.previous_probs = None  # Reset for convergence tracking
+
         # Performance tracking
         self.episode_rewards = []
         self.ltl_scores = []
@@ -549,44 +558,85 @@ class LTLGuidedQLearningWithObstacle:
 
     def get_current_policy(self) -> Dict[tuple, int]:
         """Extract current greedy policy from Q-table"""
-        return {state: int(np.argmax(q_values)) 
+        return {state: int(np.argmax(q_values))
                 for state, q_values in self.q_table.items()}
 
-    def train(self, episodes: int, verify_interval: int = 100):
+    def _check_termination(self, episode: int) -> Optional[str]:
+        """Check termination conditions. Returns reason string or None."""
+        # Condition 1: All probabilities meet threshold (can trigger anytime)
+        if self._all_probs_meet_threshold():
+            return "all probabilities >= threshold"
+
+        # Condition 2: Convergence (only after minimum episodes to allow learning)
+        if episode >= self.min_episodes_before_convergence:
+            if self._check_convergence():
+                return "probabilities converged (change < epsilon)"
+        else:
+            # Still track previous probs for when we do start checking
+            self._update_previous_probs()
+
+        return None
+
+    def _update_previous_probs(self):
+        """Update previous_probs without checking convergence."""
+        self.previous_probs = self.prism_probs.copy()
+
+    def _all_probs_meet_threshold(self) -> bool:
+        """Check if all probabilities >= threshold."""
+        if not self.prism_probs:
+            return False
+        return all(prob >= self.probability_threshold
+                   for prob in self.prism_probs.values())
+
+    def _check_convergence(self) -> bool:
+        """Check if probability changes are below epsilon (single check)."""
+        if self.previous_probs is None:
+            self.previous_probs = self.prism_probs.copy()
+            return False
+
+        # Calculate max change across all probabilities
+        max_change = max(
+            abs(self.prism_probs.get(k, 0) - self.previous_probs.get(k, 0))
+            for k in self.prism_probs.keys()
+        )
+
+        self.previous_probs = self.prism_probs.copy()
+        return max_change < self.convergence_epsilon
+
+    def train(self, verify_interval: int = 1):
         """
         Train the Q-learning agent with PRISM verification guidance.
-        
+
+        Termination conditions (checked after each verification):
+        1. All probabilities >= threshold
+        2. Probability changes < epsilon (convergence)
+        3. Max episodes reached
+
         Args:
-            episodes: Number of training episodes
             verify_interval: Frequency of PRISM verification
-            
+
         Returns:
             Tuple of (best_policy, best_ltl_score)
         """
         try:
             start_time = time()
             best_episode = 0
-            
-            for episode in range(episodes):
-                state = self.stepper.reset()
-                total_reward = 0
-                done = False
-                k = 0
-                steps = 0
-                
-                # Periodic verification
+            episode = 0
+
+            while episode < self.max_episodes:
+                # Periodic verification (before episode training)
                 if episode % verify_interval == 0:
                     try:
-                        model_str = self.model_generator.generate_prism_model(self.q_table)
+                        model_str = self.model_generator.generate_prism_model(self.get_current_policy())
                         ltl_score = self.simplified_verifier.verify_policy(model_str)
-                        
+
                         if self.simplified_verifier.ltl_probabilities:
                             latest_probs = self.simplified_verifier.ltl_probabilities[-1]
                             self._update_prism_probabilities(latest_probs)
-                        
+
                         self.ltl_scores.append(ltl_score)
                         self._adjust_parameters(ltl_score)
-                        
+
                         self.logger.info(
                             f"Episode {episode}: LTL Score = {ltl_score:.4f}, "
                             f"Epsilon = {self.epsilon:.3f}, "
@@ -594,20 +644,33 @@ class LTLGuidedQLearningWithObstacle:
                             f"Best Score = {self.best_ltl_score:.4f}, "
                             f"Time = {(time() - start_time)/60:.1f}m"
                         )
-                        
+
                         if ltl_score > self.best_ltl_score:
                             best_episode = episode
-                            
+
+                        # Check termination conditions after verification
+                        termination_reason = self._check_termination(episode)
+                        if termination_reason:
+                            self.logger.info(f"Early termination at episode {episode}: {termination_reason}")
+                            break
+
                     except Exception as e:
                         self.logger.error(f"Verification error in episode {episode}: {str(e)}")
+                        episode += 1
                         continue
-                
-                # Episode loop
+
+                # Episode training loop
+                state = self.stepper.reset()
+                total_reward = 0
+                done = False
+                k = 0
+                steps = 0
+
                 while not done:
                     action = self._get_action(state)
                     next_state, experiences, done, next_k = self._step_with_counterfactuals(
                         state, action, k)
-                    
+
                     # Update Q-values from all experiences
                     for exp_state, exp_action, exp_next_state, exp_reward in experiences:
                         if exp_state in self.q_table and exp_next_state in self.q_table:
@@ -617,24 +680,26 @@ class LTLGuidedQLearningWithObstacle:
                                 exp_reward + self.gamma * next_max_q - current_q
                             )
                             self.q_table[exp_state][exp_action] = new_q
-                    
+
                     state = next_state
                     k = next_k
                     total_reward += experiences[0][3]
                     steps += 1
-                    
+
                     if steps >= self.stepper.max_steps:
                         done = True
-                
+
                 self.episode_rewards.append(total_reward)
-                
+
                 if episode % 10 == 0:
                     self.logger.info(f"Episode {episode}: Steps = {steps}, "
                                     f"Total Reward = {total_reward:.2f}")
+
+                episode += 1
             
             # Final verification
             try:
-                model_str = self.model_generator.generate_prism_model(self.q_table)
+                model_str = self.model_generator.generate_prism_model(self.get_current_policy())
                 final_score = self.simplified_verifier.verify_policy(model_str)
                 self.logger.info(f"\nFinal LTL Score: {final_score:.4f}")
             except Exception as e:

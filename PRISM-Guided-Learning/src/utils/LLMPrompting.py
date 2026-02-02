@@ -22,23 +22,16 @@ COORDINATE SYSTEM:
 - Row increases DOWNWARD (0 → 1 → 2...)
 - Column increases RIGHTWARD (0 → 1 → 2...)
 
-ACTIONS:
-You must provide Q-values for 4 directional actions at each state:
-- Index 0 = UP: Move to (row-1, col) - DECREASES row
-- Index 1 = RIGHT: Move to (row, col+1) - INCREASES column  
-- Index 2 = DOWN: Move to (row+1, col) - INCREASES row
-- Index 3 = LEFT: Move to (row, col-1) - DECREASES column
+ACTIONS - pick ONE best action per state:
+- 0 = UP: Move to (row-1, col) - DECREASES row
+- 1 = RIGHT: Move to (row, col+1) - INCREASES column
+- 2 = DOWN: Move to (row+1, col) - INCREASES row
+- 3 = LEFT: Move to (row, col-1) - DECREASES column
 
 ACTION EXAMPLES:
 From (0,0): UP→(0,0), RIGHT→(0,1), DOWN→(1,0), LEFT→(0,0)
 From (0,1): UP→(0,1), RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
 From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
-
-Q-VALUE ENCODING:
-- Set the BEST action to 100
-- Set other actions to 0
-- If multiple good actions exist (e.g., escaping obstacle), assign non-zero to multiple
-- If at obstacle, prioritize escaping back to valid cells
 
 TASK DETAILS:
 - Static obstacles: {s_obstacles} (marked as 'X')
@@ -46,18 +39,28 @@ TASK DETAILS:
 - Moving obstacles: {k_obstacles} (marked as 'M', move with 90% probability)
 - Your current goal: {goal} (marked as 'G')
 
+STOCHASTIC EXECUTION:
+When you choose an action, the agent executes it with uncertainty:
+- {prob_forward_pct}% probability: Moves in the intended direction
+- {prob_slip_left_pct}% probability: Slips 90° LEFT of intended direction
+- {prob_slip_right_pct}% probability: Slips 90° RIGHT of intended direction
+
+Example: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.
+This means your paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+
 CRITICAL REQUIREMENTS:
-1. You MUST provide Q-values for ALL {total_states} states in the {size}x{size} grid
+1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid
 2. Never plan a path through obstacles (X) or future goals (F)
 3. The best action should create a path from ANY position to the goal
-4. If a cell is an obstacle, provide escape Q-values (how to exit if accidentally there)
+4. If a cell is an obstacle, provide an escape action (how to exit if accidentally there)
 
-Now provide Q-values for your grid.
+Now provide the best action (0-3) for each state.
 """
 
 PROMPT_TEMPLATE = PromptTemplate(
     template=PROMPT_TEXT,
-    input_variables=["size", "grid_visual", "s_obstacles", "f_goals", "k_obstacles", "goal", "total_states"]
+    input_variables=["size", "grid_visual", "s_obstacles", "f_goals", "k_obstacles", "goal", "total_states",
+                     "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct"]
 )
 
 def generate_grid_visual(size: int, goal: Tuple[int, int], s_obstacles: List[Tuple[int, int]], 
@@ -97,10 +100,12 @@ def generate_grid_visual(size: int, goal: Tuple[int, int], s_obstacles: List[Tup
     
     return visual
 
-def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]], 
-               k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int]) -> str:
+def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]],
+               k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int],
+               prob_forward: float = 0.7, prob_slip_left: float = 0.15,
+               prob_slip_right: float = 0.15) -> str:
     """Generate the complete prompt with visual grid"""
-    
+
     # Flatten k_obstacles if it's nested
     flat_k_obstacles = []
     if k_obstacles:
@@ -109,10 +114,10 @@ def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tupl
                 flat_k_obstacles.extend(item)
             else:
                 flat_k_obstacles.append(item)
-    
+
     grid_visual = generate_grid_visual(size, goal, s_obstacles, f_goals, flat_k_obstacles)
     total_states = size * size
-    
+
     return PROMPT_TEMPLATE.format(
         size=size,
         grid_visual=grid_visual,
@@ -120,15 +125,22 @@ def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tupl
         f_goals=str(f_goals),
         k_obstacles=str(k_obstacles),
         goal=str(goal),
-        total_states=total_states
+        total_states=total_states,
+        prob_forward_pct=int(prob_forward * 100),
+        prob_slip_left_pct=int(prob_slip_left * 100),
+        prob_slip_right_pct=int(prob_slip_right * 100)
     )
 
 
-class StateQ(BaseModel):
+class StateAction(BaseModel):
     x: int = Field(..., description="x coordinate (row, 0-indexed)")
     y: int = Field(..., description="y coordinate (column, 0-indexed)")
-    q_values: List[int] = Field(..., description="Action Q-values for this state. Higher is better.")
-    
-class QTables(BaseModel):
-    """A set of Q-values for **each state**"""
-    states: List[StateQ] 
+    best_action: int = Field(..., description="Best action: 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT")
+
+class ActionPolicy(BaseModel):
+    """Best action for each state in the grid"""
+    states: List[StateAction]
+
+# Keep old names as aliases for backwards compatibility during transition
+StateQ = StateAction
+QTables = ActionPolicy

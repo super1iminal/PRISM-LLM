@@ -9,6 +9,11 @@ class GridWorld:
 
         # Moving obstacle positions in sequence
         self.moving_obstacle_positions = moving_obstacle_positions
+
+        # Stochastic transition probabilities (slip model)
+        self.prob_forward = 0.7      # Probability of moving in intended direction
+        self.prob_slip_left = 0.15   # Probability of slipping 90° left
+        self.prob_slip_right = 0.15  # Probability of slipping 90° right
         
     def _update_moving_obstacle(self):
         """Update moving obstacle position sequentially"""

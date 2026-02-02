@@ -2,10 +2,9 @@ from verification.PrismVerifier import PrismVerifier
 from verification.SimplifiedVerifier import SimplifiedVerifier
 from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
-from utils.LLMPrompting import get_prompt, QTables
+from utils.LLMPrompting import get_prompt, ActionPolicy
 
 import os
-import numpy as np
 from typing import List, Optional, Dict, Tuple
 from itertools import product
 import pandas as pd
@@ -71,7 +70,7 @@ class VanillaLLMPlanner:
         self.action_space = 4
         self.prism_probs = {}  # Will be populated dynamically
         
-        self.model = ChatOpenAI(model_name="gpt-5-mini-2025-08-07", temperature=1).with_structured_output(QTables)
+        self.model = ChatOpenAI(model_name="gpt-5-mini-2025-08-07", temperature=1).with_structured_output(ActionPolicy)
         
         
     def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
@@ -223,20 +222,20 @@ class VanillaLLMPlanner:
             raise FileNotFoundError(f"PRISM executable not found or not executable at {prism_path}")
         
     def initialize_q_table(self):
-        """Initialize Q-table with variable number of goals"""
-        q_table = {}
-        
+        """Initialize policy table with default action (DOWN toward typical goal)"""
+        policy = {}
+
         # Generate all combinations of goal states
         goal_combinations = list(product([False, True], repeat=self.num_goals))
-        
+
         for x in range(self.size):
             for y in range(self.size):
                 for goal_combo in goal_combinations:
                     state = (x, y) + goal_combo
-                    q_table[state] = np.ones(self.action_space) * 1.0
-        
-        self.logger.info(f"Q-table initialized with {len(q_table)} states.")
-        return q_table
+                    policy[state] = 2  # Default: DOWN
+
+        self.logger.info(f"Policy initialized with {len(policy)} states.")
+        return policy
 
     def _update_prism_probabilities(self, probabilities: List[float]):
         """Update PMC verification probabilities dynamically"""
@@ -307,7 +306,10 @@ class VanillaLLMPlanner:
                     self.env.static_obstacles,
                     future_goals,
                     self.env.moving_obstacle_positions,
-                    goal
+                    goal,
+                    self.env.prob_forward,
+                    self.env.prob_slip_left,
+                    self.env.prob_slip_right
                 )
             )
             self.logger.info("LLM Response received.")
@@ -316,23 +318,18 @@ class VanillaLLMPlanner:
             # Get applicable goal state combinations for this goal
             applicable_goals = self._get_applicable_goal_states(idx)
             
-            for stateQ in response.states:
-                x, y = stateQ.x, stateQ.y
-                
+            for state_action in response.states:
+                x, y = state_action.x, state_action.y
+
                 for goal_state_list in applicable_goals:
                     goal_state_tuple = tuple(goal_state_list)
                     state = (x, y) + goal_state_tuple
-                    
-                    assert len(stateQ.q_values) == self.action_space, \
-                        f"Expected {self.action_space} Q-values, got {len(stateQ.q_values)}"
-                    
+
                     if state in self.q_table:
-                        self.logger.info(f"Updating Q-values for state {state} with {stateQ.q_values}")
-                        for q_idx in range(len(self.q_table[state])):
-                            # Exponential moving average
-                            self.q_table[state][q_idx] = self.q_table[state][q_idx] * 0.3 + stateQ.q_values[q_idx] * 0.7
+                        self.logger.info(f"Setting action for state {state} to {state_action.best_action}")
+                        self.q_table[state] = state_action.best_action
                     else:
-                        self.logger.warning(f"State {state} from LLM not in Q-table.")
+                        self.logger.warning(f"State {state} from LLM not in policy.")
                 
         # After updated q-table, verify the policy
         model_str = self.model_generator.generate_prism_model(self.q_table)

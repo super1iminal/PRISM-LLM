@@ -17,7 +17,7 @@ conda activate prism3
 export OPENAI_API_KEY="your-api-key"
 
 # Update PRISM path in src/config/Settings.py
-# Windows: "C:\\Program Files\\prism-4.9\\bin\\prism.bat"
+# Windows: "C:\\Program Files\\prism-4.10\\bin\\prism.bat"
 # Linux: "/path/to/prism/bin/prism"
 ```
 
@@ -54,7 +54,7 @@ Evaluator.py (entry point)
         └── SimplifiedVerifier  → extracts LTL score from output
 ```
 
-**Q-values to transition probabilities**: Uses softmax with temperature τ=0.1
+**Q-values to transition probabilities**: Uses stochastic slip model with deterministic policy (argmax of Q-values) and stochastic execution: 0.7 forward, 0.15 left, 0.15 right
 
 **LTL Score**: Weighted combination of individual goal probabilities, sequential goal achievement, and obstacle avoidance probabilities.
 
