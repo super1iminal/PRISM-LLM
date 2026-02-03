@@ -6,6 +6,7 @@ from typing import Dict, List
 
 import pandas as pd
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from utils.DataLoader import DataLoader
 from utils.Logging import setup_logger
@@ -18,11 +19,18 @@ from config.Settings import EVAL_PATH, RESULTS_PATH
 
 
 class EvalModel(Enum):
-    LLM_VANILLA = 1
-    LLM_FEEDBACK = 2
-    RL = 3
-    RANDOM = 4
-    UNIFORM = 5
+    # Vanilla LLM planners
+    LLM_VANILLA_GPT5_NANO = 1
+    LLM_VANILLA_GPT5_MINI = 2
+    LLM_VANILLA_GEMINI_FLASH = 3
+    # Feedback LLM planners
+    LLM_FEEDBACK_GPT5_NANO = 4
+    LLM_FEEDBACK_GPT5_MINI = 5
+    LLM_FEEDBACK_GEMINI_FLASH = 6
+    # Other planners
+    RL = 7
+    RANDOM = 8
+    UNIFORM = 9
 
 
 def main():
@@ -32,7 +40,7 @@ def main():
     dataloader = DataLoader("PRISM-Guided-Learning/data/grid_20_samples.csv")
     dataloader.load_data()
 
-    models = [EvalModel.LLM_FEEDBACK]
+    models = [EvalModel.LLM_FEEDBACK_GPT5_NANO]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
     run_dir = os.path.join(RESULTS_PATH, f"{len(dataloader.data)}_{timestamp}")
@@ -85,14 +93,33 @@ def evaluate_models(
 
 def get_model(model_type: EvalModel):
     """Factory function to create model instances."""
-    if model_type == EvalModel.LLM_VANILLA:
+    # Vanilla LLM planners
+    if model_type == EvalModel.LLM_VANILLA_GPT5_NANO:
+        model_name = "gpt-5-nano-2025-08-07"
+        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        return VanillaLLMPlanner(model=model, model_name=model_name)
+    elif model_type == EvalModel.LLM_VANILLA_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
         return VanillaLLMPlanner(model=model, model_name=model_name)
-    elif model_type == EvalModel.LLM_FEEDBACK:
+    elif model_type == EvalModel.LLM_VANILLA_GEMINI_FLASH:
+        model_name = "gemini-1.5-flash"
+        model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
+        return VanillaLLMPlanner(model=model, model_name=model_name)
+    # Feedback LLM planners
+    elif model_type == EvalModel.LLM_FEEDBACK_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
         model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
         return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=10)
+    elif model_type == EvalModel.LLM_FEEDBACK_GPT5_MINI:
+        model_name = "gpt-5-mini-2025-08-07"
+        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=10)
+    elif model_type == EvalModel.LLM_FEEDBACK_GEMINI_FLASH:
+        model_name = "gemini-1.5-flash"
+        model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
+        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=10)
+    # Other planners
     elif model_type == EvalModel.RL:
         return LTLGuidedQLearningWithObstacle()
     else:

@@ -78,3 +78,53 @@ CSV files in `data/` with columns: `n`, `goals`, `static`, `BFS_steps`
 - `goals`: `"[{1: (2, 2)}, {2: (3, 3)}]"` (ordered dict of goal positions)
 - `static`: `"[(1,1), (2,2)]"` (static obstacle positions)
 - `BFS_steps`: optimal path length
+
+## Data Collection by Planner
+
+### VanillaLLMPlanner
+| Field | Type | Description |
+|-------|------|-------------|
+| `LTL_Score` | float | Final LTL verification score |
+| `Prism_Probabilities` | dict | Individual probabilities (goal reachability, sequences, obstacle avoidance) |
+| `Evaluation_Time` | float | Time taken in seconds |
+
+### FeedbackLLMPlanner
+| Field | Type | Description |
+|-------|------|-------------|
+| `LTL_Score` | float | Final LTL verification score |
+| `Prism_Probabilities` | dict | Individual probabilities |
+| `Evaluation_Time` | float | Time taken in seconds |
+| `Iterations_Used` | int | Number of LLM feedback iterations (1 = initial only, 2+ = with feedback) |
+
+### RLCounterfactual
+| Field | Type | Description |
+|-------|------|-------------|
+| `LTL_Score` | float | Best LTL verification score achieved |
+| `Prism_Probabilities` | dict | Individual probabilities |
+| `Evaluation_Time` | float | Time taken in seconds |
+| `Episode_Rewards` | list | Rewards per episode during training |
+| `Training_Stats` | dict | Additional training statistics |
+
+### Prism_Probabilities Dict Structure
+```python
+{
+    'goal1': float,              # P(reach goal 1)
+    'goal2': float,              # P(reach goal 2)
+    'seq_1_before_2': float,     # P(goal 1 before goal 2)
+    'complete_sequence': float,  # P(all goals in order)
+    'avoid_obstacle': float      # P(never hit obstacle)
+}
+```
+
+### Data Saved to CSV (Evaluator.py)
+| Column | Source |
+|--------|--------|
+| `ltl_score` | `result['LTL_Score']` |
+| `prism_probabilities` | `result['Prism_Probabilities']` |
+| `evaluation_time` | `result['Evaluation_Time']` |
+| `size` | `gridworld.size` |
+| `goals` | `len(gridworld.goals)` |
+| `obstacles` | `len(gridworld.static_obstacles)` |
+| `complexity` | `expected_steps` (BFS optimal path length) |
+
+**Note:** `Iterations_Used` (Feedback) and `Episode_Rewards`/`Training_Stats` (RL) are returned but not currently saved to CSV.
