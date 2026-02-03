@@ -5,9 +5,11 @@ from time import time
 from typing import Dict, List
 
 import pandas as pd
+from langchain_openai import ChatOpenAI
 
 from utils.DataLoader import DataLoader
 from utils.Logging import setup_logger
+from utils.LLMPrompting import ActionPolicy
 from planners.VanillaLLMPlanner import VanillaLLMPlanner
 from planners.UniformPlanner import BaselinePlanner
 from planners.RLCounterfactual import LTLGuidedQLearningWithObstacle
@@ -84,9 +86,13 @@ def evaluate_models(
 def get_model(model_type: EvalModel):
     """Factory function to create model instances."""
     if model_type == EvalModel.LLM_VANILLA:
-        return VanillaLLMPlanner()
+        model_name = "gpt-5-mini-2025-08-07"
+        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        return VanillaLLMPlanner(model=model, model_name=model_name)
     elif model_type == EvalModel.LLM_FEEDBACK:
-        return FeedbackLLMPlanner(max_attempts=10)
+        model_name = "gpt-5-nano-2025-08-07"
+        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=10)
     elif model_type == EvalModel.RL:
         return LTLGuidedQLearningWithObstacle()
     else:

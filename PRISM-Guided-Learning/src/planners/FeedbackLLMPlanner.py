@@ -133,20 +133,24 @@ def _evaluate_single_gridworld_feedback(args: Tuple) -> Dict:
     """
     Standalone function to evaluate a single gridworld with Feedback LLM planner.
     This function is designed to be called in a separate process/thread.
-    
+
     Args:
         args: Tuple of (idx, gridworld, expected_steps, config)
-        
+
     Returns:
         Dictionary containing evaluation results
     """
     idx, gridworld, expected_steps, config = args
-    
+
     # Get shared run directory from config
     run_dir = config.get('run_dir', None)
-    
+    model = config.get('model')
+    model_name = config.get('model_name')
+
     # Create a new planner instance for this worker
     planner = FeedbackLLMPlanner(
+        model=model,
+        model_name=model_name,
         max_attempts=config.get('max_attempts', 3),
         target_threshold=config.get('target_threshold', 0.9)
     )
@@ -179,16 +183,13 @@ def _evaluate_single_gridworld_feedback(args: Tuple) -> Dict:
 
 
 class FeedbackLLMPlanner:
-    def __init__(self, max_attempts: int = 3, target_threshold: float = 0.9):
+    def __init__(self, model, model_name: str, max_attempts: int = 3, target_threshold: float = 0.9):
         self.action_space = 4
         self.prism_probs = {}
         self.max_attempts = max_attempts  # Total LLM attempts per goal (1 initial + N-1 feedback)
         self.target_threshold = target_threshold
-        
-        self.model = ChatOpenAI(
-            model_name="gpt-5-nano-2025-08-07",
-            temperature=1
-        ).with_structured_output(ActionPolicy)
+        self.model = model
+        self.model_name = model_name
         
     def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
                  use_threads: bool = True):
@@ -214,7 +215,7 @@ class FeedbackLLMPlanner:
     def _evaluate_sequential(self, dataloader) -> List[Dict]:
         """Sequential evaluation of all gridworlds"""
         # Create a run directory for this evaluation
-        run_dir = create_run_directory("feedback_LLM_sequential")
+        run_dir = create_run_directory(f"feedback_LLM_{self.model_name}_sequential")
         
         self.logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
         self.prism_verifier = PrismVerifier(self.get_prism_path(), self.logger)
@@ -259,7 +260,7 @@ class FeedbackLLMPlanner:
             List of results containing LTL scores and evaluation statistics
         """
         # Create a shared run directory for all workers
-        run_dir = create_run_directory("feedback_LLM_parallel")
+        run_dir = create_run_directory(f"feedback_LLM_{self.model_name}_parallel")
         
         # Setup main logger in the shared directory
         main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
@@ -278,7 +279,9 @@ class FeedbackLLMPlanner:
         config = {
             'max_attempts': self.max_attempts,
             'target_threshold': self.target_threshold,
-            'run_dir': run_dir  # Pass shared directory to workers
+            'run_dir': run_dir,  # Pass shared directory to workers
+            'model': self.model,
+            'model_name': self.model_name
         }
         data_list = list(dataloader)
         args_list = [

@@ -24,20 +24,22 @@ def _evaluate_single_gridworld_vanilla(args: Tuple) -> Dict:
     """
     Standalone function to evaluate a single gridworld with Vanilla LLM planner.
     This function is designed to be called in a separate process/thread.
-    
+
     Args:
         args: Tuple of (idx, gridworld, expected_steps, config)
-        
+
     Returns:
         Dictionary containing evaluation results
     """
     idx, gridworld, expected_steps, config = args
-    
+
     # Get shared run directory from config
     run_dir = config.get('run_dir', None)
-    
+    model = config.get('model')
+    model_name = config.get('model_name')
+
     # Create a new planner instance for this worker
-    planner = VanillaLLMPlanner()
+    planner = VanillaLLMPlanner(model=model, model_name=model_name)
     
     # Setup logger for this worker in the shared directory
     planner.logger = setup_logger(f"worker_{idx}", run_dir=run_dir, include_timestamp=False)
@@ -66,11 +68,11 @@ def _evaluate_single_gridworld_vanilla(args: Tuple) -> Dict:
 
 
 class VanillaLLMPlanner:
-    def __init__(self):
+    def __init__(self, model, model_name: str):
         self.action_space = 4
         self.prism_probs = {}  # Will be populated dynamically
-        
-        self.model = ChatOpenAI(model_name="gpt-5-mini-2025-08-07", temperature=1).with_structured_output(ActionPolicy)
+        self.model = model
+        self.model_name = model_name
         
         
     def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
@@ -97,7 +99,7 @@ class VanillaLLMPlanner:
     def _evaluate_sequential(self, dataloader) -> List[Dict]:
         """Sequential evaluation of all gridworlds"""
         # Create a run directory for this evaluation
-        run_dir = create_run_directory("vanilla_LLM_sequential")
+        run_dir = create_run_directory(f"vanilla_LLM_{self.model_name}_sequential")
         
         self.logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
         self.prism_verifier = PrismVerifier(self.get_prism_path(), self.logger)
@@ -141,7 +143,7 @@ class VanillaLLMPlanner:
             List of results containing LTL scores and evaluation statistics
         """
         # Create a shared run directory for all workers
-        run_dir = create_run_directory("vanilla_LLM_parallel")
+        run_dir = create_run_directory(f"vanilla_LLM_{self.model_name}_parallel")
         
         # Setup main logger in the shared directory
         main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
@@ -158,7 +160,9 @@ class VanillaLLMPlanner:
         
         # Prepare arguments with shared run directory
         config = {
-            'run_dir': run_dir  # Pass shared directory to workers
+            'run_dir': run_dir,  # Pass shared directory to workers
+            'model': self.model,
+            'model_name': self.model_name
         }
         data_list = list(dataloader)
         args_list = [
@@ -289,55 +293,68 @@ class VanillaLLMPlanner:
         
         return [goal_state]
             
-    def step(self):
-        # Plan for each goal separately
+    def _invoke_llm_for_goal(self, goal_num: int, idx: int) -> Tuple[int, int, ActionPolicy]:
+        """Invoke LLM for a single goal. Returns (goal_num, idx, response)."""
+        goal = self.env.goals[goal_num]
         goal_nums = sorted(self.env.goals.keys())
-        
-        for idx, goal_num in enumerate(goal_nums):
-            goal = self.env.goals[goal_num]
-            self.logger.info(f"LLM planning for goal {goal_num} at position {goal}")
-            
-            # Get future goals to avoid
-            future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
-            
-            response = self.model.invoke(
-                get_prompt(
-                    self.size,
-                    self.env.static_obstacles,
-                    future_goals,
-                    self.env.moving_obstacle_positions,
-                    goal,
-                    self.env.prob_forward,
-                    self.env.prob_slip_left,
-                    self.env.prob_slip_right
-                )
+        future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
+
+        self.logger.info(f"LLM planning for goal {goal_num} at position {goal}")
+        response = self.model.invoke(
+            get_prompt(
+                self.size,
+                self.env.static_obstacles,
+                future_goals,
+                self.env.moving_obstacle_positions,
+                goal,
+                self.env.prob_forward,
+                self.env.prob_slip_left,
+                self.env.prob_slip_right
             )
-            self.logger.info("LLM Response received.")
-            self.logger.info(response.states)
-            
-            # Get applicable goal state combinations for this goal
-            applicable_goals = self._get_applicable_goal_states(idx)
-            
-            for state_action in response.states:
-                x, y = state_action.x, state_action.y
+        )
+        self.logger.info(f"LLM Response received for goal {goal_num}.")
+        return goal_num, idx, response
 
-                for goal_state_list in applicable_goals:
-                    goal_state_tuple = tuple(goal_state_list)
-                    state = (x, y) + goal_state_tuple
+    def _apply_response(self, idx: int, response: ActionPolicy):
+        """Apply LLM response to policy table."""
+        applicable_goals = self._get_applicable_goal_states(idx)
 
-                    if state in self.q_table:
-                        self.logger.info(f"Setting action for state {state} to {state_action.best_action}")
-                        self.q_table[state] = state_action.best_action
-                    else:
-                        self.logger.warning(f"State {state} from LLM not in policy.")
-                
-        # After updated q-table, verify the policy
+        for state_action in response.states:
+            x, y = state_action.x, state_action.y
+
+            for goal_state_list in applicable_goals:
+                goal_state_tuple = tuple(goal_state_list)
+                state = (x, y) + goal_state_tuple
+
+                if state in self.q_table:
+                    self.q_table[state] = state_action.best_action
+                else:
+                    self.logger.warning(f"State {state} from LLM not in policy.")
+
+    def step(self):
+        """Plan for all goals in parallel."""
+        goal_nums = sorted(self.env.goals.keys())
+
+        # Parallel LLM calls for all goals
+        with ThreadPoolExecutor(max_workers=len(goal_nums)) as executor:
+            futures = [
+                executor.submit(self._invoke_llm_for_goal, goal_num, idx)
+                for idx, goal_num in enumerate(goal_nums)
+            ]
+            responses = [future.result() for future in futures]
+
+        # Apply all responses to policy table
+        for goal_num, idx, response in responses:
+            self.logger.info(f"Applying response for goal {goal_num}")
+            self._apply_response(idx, response)
+
+        # Verify the policy
         model_str = self.model_generator.generate_prism_model(self.q_table)
         ltl_score = self.simplified_verifier.verify_policy(model_str)
-        
+
         # Update probabilities from verification
         if self.simplified_verifier.ltl_probabilities:
             self._update_prism_probabilities(self.simplified_verifier.ltl_probabilities[-1])
-        
+
         self.logger.info(f"LTL Score (LLM): {ltl_score}")
         return ltl_score
