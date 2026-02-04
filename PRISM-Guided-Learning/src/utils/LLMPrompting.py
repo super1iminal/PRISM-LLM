@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 
@@ -52,7 +52,7 @@ CRITICAL REQUIREMENTS:
 1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid
 2. Never plan a path through obstacles (X) or future goals (F)
 3. The best action should create a path from ANY position to the goal
-4. If a cell is an obstacle, provide an escape action (how to exit if accidentally there)
+4. If a cell is an obstacle (X) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)
 
 Now provide the best action (0-3) for each state.
 """
@@ -99,6 +99,59 @@ def generate_grid_visual(size: int, goal: Tuple[int, int], s_obstacles: List[Tup
     visual = header + '\n' + '\n'.join(rows)
     
     return visual
+
+
+def generate_policy_visual(size: int, policy: Dict[Tuple, int],
+                           goal_state: Tuple[bool, ...],
+                           goal: Tuple[int, int],
+                           s_obstacles: List[Tuple[int, int]],
+                           f_goals: List[Tuple[int, int]]) -> str:
+    """Generate ASCII visual of the policy actions.
+
+    Args:
+        size: Grid size
+        policy: Dict mapping (x, y, goal_flags...) -> action
+        goal_state: Current goal state tuple to filter relevant states
+        goal: Current goal position
+        s_obstacles: List of static obstacle positions
+        f_goals: List of future goal positions
+
+    Returns:
+        ASCII grid showing arrows for actions, with markers for special cells.
+        Format uses 2-char cells: " →" for normal, "X↓" for obstacle+action, "F→" for future goal+action.
+    """
+    ACTION_ARROWS = {0: '↑', 1: '→', 2: '↓', 3: '←'}
+
+    # Create sets for quick lookup
+    obstacle_set = set((obs[0], obs[1]) for obs in s_obstacles if 0 <= obs[0] < size and 0 <= obs[1] < size)
+    future_goal_set = set((fg[0], fg[1]) for fg in f_goals if 0 <= fg[0] < size and 0 <= fg[1] < size)
+
+    # Build grid with 2-char cells
+    grid = [[' ?' for _ in range(size)] for _ in range(size)]
+
+    for x in range(size):
+        for y in range(size):
+            state = (x, y) + goal_state
+            action_arrow = ACTION_ARROWS.get(policy.get(state), '?')
+
+            if (x, y) == goal:
+                # Current goal - just show G
+                grid[x][y] = ' G'
+            elif (x, y) in obstacle_set:
+                # Obstacle with escape action
+                grid[x][y] = 'X' + action_arrow
+            elif (x, y) in future_goal_set:
+                # Future goal with escape action
+                grid[x][y] = 'F' + action_arrow
+            else:
+                # Normal cell with action
+                grid[x][y] = ' ' + action_arrow
+
+    # Format with headers (2-char width per column)
+    header = '  ' + ' '.join(f'{i:>2}' for i in range(size))
+    rows = [f"{i} " + ' '.join(row) for i, row in enumerate(grid)]
+    return header + '\n' + '\n'.join(rows)
+
 
 def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]],
                k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int],

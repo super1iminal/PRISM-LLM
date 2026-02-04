@@ -65,6 +65,39 @@ Evaluator.py (entry point)
 - **State representation**: `(x, y, goal1_reached, goal2_reached, ...)`
 - **Goals must be reached in sequence**
 
+## Visualization Utilities
+
+Located in `src/utils/LLMPrompting.py`:
+
+### `generate_grid_visual()`
+Creates ASCII grid showing the environment layout:
+```
+  0 1 2 3 4
+0 S . . . .
+1 . X . . .
+2 . . G . .
+3 . . . F .
+4 . . . . .
+```
+- `S` = Start (0,0), `G` = Current goal, `X` = Static obstacle, `F` = Future goal, `M` = Moving obstacle, `.` = Empty
+
+### `generate_policy_visual()`
+Creates ASCII grid showing policy actions as arrows, with escape actions visible at obstacles/future goals:
+```
+    0  1  2  3  4
+0   →  → X↓  ↓  ↓
+1   →  →  ↓  ←  ↓
+2   ↑  →  G  ←  ↓
+3   ↑  →  → F↓  ↓
+4   ↑  ↑  ↑  ↑  ←
+```
+- ` →` = Normal cell with action (↑=UP, →=RIGHT, ↓=DOWN, ←=LEFT)
+- `X↓` = Static obstacle with escape action (here: escape DOWN)
+- `F↓` = Future goal with escape action
+- ` G` = Current goal (destination)
+
+Used by `FeedbackLLMPlanner` to show the LLM its previous policy visually, enabling spatial reasoning about where actions lead toward obstacles or away from goals.
+
 ## Output Locations
 
 - `out/logs/` - execution logs per worker
@@ -86,15 +119,29 @@ CSV files in `data/` with columns: `n`, `goals`, `static`, `BFS_steps`
 |-------|------|-------------|
 | `LTL_Score` | float | Final LTL verification score |
 | `Prism_Probabilities` | dict | Individual probabilities (goal reachability, sequences, obstacle avoidance) |
-| `Evaluation_Time` | float | Time taken in seconds |
+| `Evaluation_Time` | float | Total wall-clock time in seconds |
+| `Total_PRISM_Time` | float | Time spent on PRISM verification (seconds) |
+| `Total_LLM_Time` | float | Time spent on LLM inference (seconds) |
+| `Total_Mistakes` | int | Count of probabilities below threshold (default 0.9) |
+| `Total_Cost` | float | Sum of (1.0 - prob) for all probs < 1.0 |
+| `Success` | bool | True if all probabilities meet threshold |
 
 ### FeedbackLLMPlanner
 | Field | Type | Description |
 |-------|------|-------------|
 | `LTL_Score` | float | Final LTL verification score |
 | `Prism_Probabilities` | dict | Individual probabilities |
-| `Evaluation_Time` | float | Time taken in seconds |
+| `Evaluation_Time` | float | Total wall-clock time in seconds |
 | `Iterations_Used` | int | Number of LLM feedback iterations (1 = initial only, 2+ = with feedback) |
+| `Total_PRISM_Time` | float | Total time spent on PRISM verification (seconds) |
+| `Total_LLM_Time` | float | Total time spent on LLM inference (seconds) |
+| `Iteration_Times` | list[float] | Time taken per iteration (seconds) |
+| `Avg_Iteration_Time` | float | Average time per iteration (seconds) |
+| `Total_Mistakes` | int | Cumulative count of probabilities below threshold across all iterations |
+| `Total_Cost` | float | Cumulative sum of (1.0 - prob) for all probs < 1.0 across all iterations |
+| `Iteration_Mistakes` | list[int] | Number of probabilities below threshold per iteration |
+| `Iteration_Costs` | list[float] | Cost value (sum of 1.0 - prob) per iteration |
+| `Success` | bool | True if all probabilities meet threshold at end |
 
 ### RLCounterfactual
 | Field | Type | Description |

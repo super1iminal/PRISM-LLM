@@ -54,25 +54,31 @@ def _evaluate_single_gridworld_vanilla(args: Tuple) -> Dict:
     planner.q_table = planner.initialize_q_table()
     planner.prism_probs = {}
     
-    ltl_score = planner.step()
-    planner.logger.info(f"Evaluation {idx+1}: LTL Score = {ltl_score}")
+    step_result = planner.step()
+    planner.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']}")
     end_time = time()
     delta_time = end_time - start_time
-    
+
     return {
         "index": idx,
-        "LTL_Score": ltl_score,
+        "LTL_Score": step_result["ltl_score"],
         "Prism_Probabilities": planner.prism_probs.copy(),
-        "Evaluation_Time": delta_time
+        "Evaluation_Time": delta_time,
+        "Total_PRISM_Time": step_result["total_prism_time"],
+        "Total_LLM_Time": step_result["total_llm_time"],
+        "Total_Mistakes": step_result["total_mistakes"],
+        "Total_Cost": step_result["total_cost"],
+        "Success": step_result["success"]
     }
 
 
 class VanillaLLMPlanner:
-    def __init__(self, model, model_name: str):
+    def __init__(self, model, model_name: str, target_threshold: float = 0.9):
         self.action_space = 4
         self.prism_probs = {}  # Will be populated dynamically
         self.model = model
         self.model_name = model_name
+        self.target_threshold = target_threshold
         
         
     def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
@@ -117,14 +123,19 @@ class VanillaLLMPlanner:
             self.q_table = self.initialize_q_table()
             self.prism_probs = {}
             
-            ltl_score = self.step()
-            self.logger.info(f"Evaluation {idx+1}: LTL Score = {ltl_score}")
+            step_result = self.step()
+            self.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']}")
             end_time = time()
             delta_time = end_time - start_time
             results_list.append({
-                "LTL_Score": ltl_score,
+                "LTL_Score": step_result["ltl_score"],
                 "Prism_Probabilities": self.prism_probs.copy(),
-                "Evaluation_Time": delta_time
+                "Evaluation_Time": delta_time,
+                "Total_PRISM_Time": step_result["total_prism_time"],
+                "Total_LLM_Time": step_result["total_llm_time"],
+                "Total_Mistakes": step_result["total_mistakes"],
+                "Total_Cost": step_result["total_cost"],
+                "Success": step_result["success"]
             })
             
         return results_list
@@ -197,6 +208,11 @@ class VanillaLLMPlanner:
                         "LTL_Score": 0.0,
                         "Prism_Probabilities": {},
                         "Evaluation_Time": 0.0,
+                        "Total_PRISM_Time": 0.0,
+                        "Total_LLM_Time": 0.0,
+                        "Total_Mistakes": 0,
+                        "Total_Cost": 0.0,
+                        "Success": False,
                         "error": str(e)
                     }
         
@@ -209,7 +225,12 @@ class VanillaLLMPlanner:
             result = results_dict.get(idx, {
                 "LTL_Score": 0.0,
                 "Prism_Probabilities": {},
-                "Evaluation_Time": 0.0
+                "Evaluation_Time": 0.0,
+                "Total_PRISM_Time": 0.0,
+                "Total_LLM_Time": 0.0,
+                "Total_Mistakes": 0,
+                "Total_Cost": 0.0,
+                "Success": False
             })
             result.pop("index", None)
             results_list.append(result)
@@ -240,6 +261,18 @@ class VanillaLLMPlanner:
 
         self.logger.info(f"Policy initialized with {len(policy)} states.")
         return policy
+
+    def _compute_mistakes_and_cost(self) -> Tuple[int, float]:
+        """Compute mistakes and cost from current probabilities.
+
+        Returns:
+            Tuple of (mistakes, cost) where:
+            - mistakes: count of probabilities below target_threshold
+            - cost: sum of (1.0 - prob) for all probs < 1.0
+        """
+        mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
+        cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
+        return mistakes, cost
 
     def _update_prism_probabilities(self, probabilities: List[float]):
         """Update PMC verification probabilities dynamically"""
@@ -331,30 +364,55 @@ class VanillaLLMPlanner:
                 else:
                     self.logger.warning(f"State {state} from LLM not in policy.")
 
-    def step(self):
-        """Plan for all goals in parallel."""
+    def step(self) -> Dict:
+        """Plan for all goals in parallel.
+
+        Returns:
+            Dict containing:
+            - ltl_score: Final LTL verification score
+            - total_prism_time: Time spent on PRISM verification (seconds)
+            - total_llm_time: Time spent on LLM inference (seconds)
+            - total_mistakes: Count of probabilities below target_threshold
+            - total_cost: Sum of (1.0 - prob) for all probs < 1.0
+            - success: True if all probabilities meet target_threshold
+        """
         goal_nums = sorted(self.env.goals.keys())
 
-        # Parallel LLM calls for all goals
+        # Time LLM calls
+        llm_start = time()
         with ThreadPoolExecutor(max_workers=len(goal_nums)) as executor:
             futures = [
                 executor.submit(self._invoke_llm_for_goal, goal_num, idx)
                 for idx, goal_num in enumerate(goal_nums)
             ]
             responses = [future.result() for future in futures]
+        total_llm_time = time() - llm_start
 
         # Apply all responses to policy table
         for goal_num, idx, response in responses:
             self.logger.info(f"Applying response for goal {goal_num}")
             self._apply_response(idx, response)
 
-        # Verify the policy
+        # Time PRISM verification
+        prism_start = time()
         model_str = self.model_generator.generate_prism_model(self.q_table)
         ltl_score = self.simplified_verifier.verify_policy(model_str)
+        total_prism_time = time() - prism_start
 
         # Update probabilities from verification
         if self.simplified_verifier.ltl_probabilities:
             self._update_prism_probabilities(self.simplified_verifier.ltl_probabilities[-1])
 
+        # Compute metrics
+        mistakes, cost = self._compute_mistakes_and_cost()
+        success = all(p >= self.target_threshold for p in self.prism_probs.values()) if self.prism_probs else False
+
         self.logger.info(f"LTL Score (LLM): {ltl_score}")
-        return ltl_score
+        return {
+            "ltl_score": ltl_score,
+            "total_prism_time": total_prism_time,
+            "total_llm_time": total_llm_time,
+            "total_mistakes": mistakes,
+            "total_cost": cost,
+            "success": success
+        }

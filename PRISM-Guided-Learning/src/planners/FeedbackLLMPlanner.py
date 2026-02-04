@@ -2,7 +2,7 @@ from verification.PrismVerifier import PrismVerifier
 from verification.SimplifiedVerifier import SimplifiedVerifier
 from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
-from utils.LLMPrompting import get_prompt, ActionPolicy, StateAction, generate_grid_visual
+from utils.LLMPrompting import get_prompt, ActionPolicy, StateAction, generate_grid_visual, generate_policy_visual
 
 import os
 from typing import List, Optional, Dict, Tuple
@@ -32,13 +32,24 @@ The grid world is {size} x {size}. Here is the visual layout:
 
 {grid_visual}
 
-Legend:
+Grid Legend:
 - 'S' = Start position (0,0) - the initial state
 - 'G' = Current goal position you must reach
 - 'X' = Static obstacle (CANNOT enter - you will bounce back)
 - 'F' = Future goal (treat as obstacle for now - avoid it)
 - 'M' = Moving obstacle position (avoid if possible)
 - '.' = Empty cell you can move through
+
+YOUR PREVIOUS POLICY (visualized as arrows):
+{policy_visual}
+
+Policy Legend:
+- ↑ = UP (action 0), → = RIGHT (action 1), ↓ = DOWN (action 2), ← = LEFT (action 3)
+- X↓ = Static obstacle with escape action (e.g., X↓ means obstacle, escape by going DOWN)
+- F→ = Future goal with escape action (e.g., F→ means future goal, escape by going RIGHT)
+- G = Current goal (destination)
+
+Compare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.
 
 COORDINATE SYSTEM:
 - Position format: (row, col) where row is Y-axis, col is X-axis
@@ -51,9 +62,6 @@ ACTIONS - pick ONE best action per state:
 - 1 = RIGHT: Move to (row, col+1) - INCREASES column
 - 2 = DOWN: Move to (row+1, col) - INCREASES row
 - 3 = LEFT: Move to (row, col-1) - DECREASES column
-
-YOUR PREVIOUS ACTIONS (that need improvement):
-{previous_actions}
 
 PROBLEMS TO FIX:
 {problems}
@@ -73,28 +81,16 @@ When you choose an action, the agent executes it with uncertainty:
 This means paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
 
 CRITICAL: Fix the issues identified above. Provide IMPROVED best action (0-3) for ALL {total_states} states.
+Remember: obstacles (X) and future goals (F) also need escape actions (how to exit if accidentally there due to stochastic slip).
+You may not be the cause of this problem. If you think all or a subset of your actions are optimally configured to satisfy the requirements, you may repeat them.
 """
 
 FEEDBACK_TEMPLATE = PromptTemplate(
     template=FEEDBACK_PROMPT_TEXT,
-    input_variables=["probability_summary", "size", "grid_visual", "s_obstacles",
-                     "f_goals", "k_obstacles", "goal", "total_states",
-                     "previous_actions", "problems",
-                     "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct"]
+    input_variables=["probability_summary", "size", "grid_visual", "policy_visual",
+                     "s_obstacles", "f_goals", "k_obstacles", "goal", "total_states",
+                     "problems", "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct"]
 )
-
-
-ACTION_NAMES = {0: "UP", 1: "RIGHT", 2: "DOWN", 3: "LEFT"}
-
-def format_previous_actions(states: List[StateAction]) -> str:
-    """Format previous actions for feedback prompt"""
-    lines = []
-    for state in states[:20]:  # Limit to avoid token overflow
-        action_name = ACTION_NAMES.get(state.best_action, str(state.best_action))
-        lines.append(f"  ({state.x}, {state.y}): {action_name}")
-    if len(states) > 20:
-        lines.append(f"  ... and {len(states) - 20} more states")
-    return "\n".join(lines)
 
 
 def identify_problems(prism_probs: Dict[str, float], threshold: float = 1.0) -> str:
@@ -168,17 +164,26 @@ def _evaluate_single_gridworld_feedback(args: Tuple) -> Dict:
     planner.q_table = planner.initialize_q_table()
     planner.prism_probs = {}
     
-    ltl_score, iterations_used = planner.step()
-    planner.logger.info(f"Evaluation {idx+1}: LTL Score = {ltl_score} (iterations: {iterations_used})")
+    step_result = planner.step()
+    planner.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']} (iterations: {step_result['iterations']})")
     end_time = time()
     delta_time = end_time - start_time
-    
+
     return {
         "index": idx,
-        "LTL_Score": ltl_score,
+        "LTL_Score": step_result["ltl_score"],
         "Prism_Probabilities": planner.prism_probs.copy(),
         "Evaluation_Time": delta_time,
-        "Iterations_Used": iterations_used
+        "Iterations_Used": step_result["iterations"],
+        "Total_PRISM_Time": step_result["total_prism_time"],
+        "Total_LLM_Time": step_result["total_llm_time"],
+        "Iteration_Times": step_result["iteration_times"],
+        "Avg_Iteration_Time": step_result["avg_iteration_time"],
+        "Total_Mistakes": step_result["total_mistakes"],
+        "Total_Cost": step_result["total_cost"],
+        "Iteration_Mistakes": step_result["iteration_mistakes"],
+        "Iteration_Costs": step_result["iteration_costs"],
+        "Success": step_result["success"]
     }
 
 
@@ -233,15 +238,24 @@ class FeedbackLLMPlanner:
             self.q_table = self.initialize_q_table()
             self.prism_probs = {}
             
-            ltl_score, iterations_used = self.step()
-            self.logger.info(f"Evaluation {idx+1}: LTL Score = {ltl_score} (iterations: {iterations_used})")
+            step_result = self.step()
+            self.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']} (iterations: {step_result['iterations']})")
             end_time = time()
             delta_time = end_time - start_time
             results_list.append({
-                "LTL_Score": ltl_score,
+                "LTL_Score": step_result["ltl_score"],
                 "Prism_Probabilities": self.prism_probs.copy(),
                 "Evaluation_Time": delta_time,
-                "Iterations_Used": iterations_used
+                "Iterations_Used": step_result["iterations"],
+                "Total_PRISM_Time": step_result["total_prism_time"],
+                "Total_LLM_Time": step_result["total_llm_time"],
+                "Iteration_Times": step_result["iteration_times"],
+                "Avg_Iteration_Time": step_result["avg_iteration_time"],
+                "Total_Mistakes": step_result["total_mistakes"],
+                "Total_Cost": step_result["total_cost"],
+                "Iteration_Mistakes": step_result["iteration_mistakes"],
+                "Iteration_Costs": step_result["iteration_costs"],
+                "Success": step_result["success"]
             })
             
         return results_list
@@ -318,6 +332,15 @@ class FeedbackLLMPlanner:
                         "Prism_Probabilities": {},
                         "Evaluation_Time": 0.0,
                         "Iterations_Used": 0,
+                        "Total_PRISM_Time": 0.0,
+                        "Total_LLM_Time": 0.0,
+                        "Iteration_Times": [],
+                        "Avg_Iteration_Time": 0.0,
+                        "Total_Mistakes": 0,
+                        "Total_Cost": 0.0,
+                        "Iteration_Mistakes": [],
+                        "Iteration_Costs": [],
+                        "Success": False,
                         "error": str(e)
                     }
         
@@ -331,7 +354,16 @@ class FeedbackLLMPlanner:
                 "LTL_Score": 0.0,
                 "Prism_Probabilities": {},
                 "Evaluation_Time": 0.0,
-                "Iterations_Used": 0
+                "Iterations_Used": 0,
+                "Total_PRISM_Time": 0.0,
+                "Total_LLM_Time": 0.0,
+                "Iteration_Times": [],
+                "Avg_Iteration_Time": 0.0,
+                "Total_Mistakes": 0,
+                "Total_Cost": 0.0,
+                "Iteration_Mistakes": [],
+                "Iteration_Costs": [],
+                "Success": False
             })
             result.pop("index", None)
             results_list.append(result)
@@ -403,9 +435,8 @@ class FeedbackLLMPlanner:
             return False
         return all(prob >= self.target_threshold for prob in self.prism_probs.values())
     
-    def _get_feedback_prompt(self, goal_num: int, goal: Tuple[int, int],
-                              future_goals: List[Tuple[int, int]],
-                              previous_response: ActionPolicy) -> str:
+    def _get_feedback_prompt(self, goal_idx: int, goal: Tuple[int, int],
+                              future_goals: List[Tuple[int, int]]) -> str:
         """Generate feedback prompt for correction iteration"""
 
         flat_k_obstacles = []
@@ -421,20 +452,28 @@ class FeedbackLLMPlanner:
             future_goals, flat_k_obstacles
         )
 
+        # Get the applicable goal state for this goal index
+        goal_state_list = self._get_applicable_goal_states(goal_idx)[0]
+        goal_state = tuple(goal_state_list)
+
+        policy_visual = generate_policy_visual(
+            self.size, self.q_table, goal_state,
+            goal, self.env.static_obstacles, future_goals
+        )
+
         probability_summary = format_probability_summary(self.prism_probs)
-        previous_actions = format_previous_actions(previous_response.states)
         problems = identify_problems(self.prism_probs, self.target_threshold)
 
         return FEEDBACK_TEMPLATE.format(
             probability_summary=probability_summary,
             size=self.size,
             grid_visual=grid_visual,
+            policy_visual=policy_visual,
             s_obstacles=str(self.env.static_obstacles),
             f_goals=str(future_goals),
             k_obstacles=str(self.env.moving_obstacle_positions),
             goal=str(goal),
             total_states=self.size * self.size,
-            previous_actions=previous_actions,
             problems=problems,
             prob_forward_pct=int(self.env.prob_forward * 100),
             prob_slip_left_pct=int(self.env.prob_slip_left * 100),
@@ -468,21 +507,58 @@ class FeedbackLLMPlanner:
         
         return ltl_score
             
-    def step(self) -> Tuple[float, int]:
-        """Main planning step with feedback loop"""
+    def _compute_mistakes_and_cost(self) -> Tuple[int, float]:
+        """Compute mistakes (count of probs below threshold) and cost (sum of 1.0 - prob for probs < 1.0)"""
+        mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
+        cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
+        return mistakes, cost
+
+    def step(self) -> Dict:
+        """Main planning step with feedback loop
+
+        Returns:
+            Dictionary containing:
+            - ltl_score: Final LTL verification score
+            - iterations: Number of iterations used (1 = initial only)
+            - total_prism_time: Total time spent on PRISM verification
+            - total_llm_time: Total time spent on LLM inference
+            - iteration_times: List of time per iteration
+            - avg_iteration_time: Average time per iteration
+            - total_mistakes: Cumulative count of probabilities below threshold
+            - total_cost: Cumulative sum of (1.0 - prob) for all probs < 1.0
+            - iteration_mistakes: List of mistake counts per iteration
+            - iteration_costs: List of cost values per iteration
+            - success: Boolean indicating if all probabilities meet threshold
+        """
         goal_nums = sorted(self.env.goals.keys())
-        
+
+        # Timing accumulators
+        total_prism_time = 0.0
+        total_llm_time = 0.0
+        iteration_times = []  # List of time per iteration
+
+        # Metrics accumulators (cumulative)
+        total_mistakes = 0
+        total_cost = 0.0
+
+        # Per-iteration tracking
+        iteration_mistakes = []  # mistakes per iteration
+        iteration_costs = []     # cost per iteration
+
         # Store responses for potential feedback iterations
         goal_responses: Dict[int, ActionPolicy] = {}
-        
-        # Initial pass - get Q-values for each goal
+
+        # Initial pass - get Q-values for each goal (iteration 1)
+        iteration_start = time()
+
         for idx, goal_num in enumerate(goal_nums):
             goal = self.env.goals[goal_num]
             self.logger.info(f"Planning for goal {goal_num} at position {goal}")
-            
+
             future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
             self.logger.info(f"Calling LLM for goal {goal_num}...")
+            llm_start = time()
             response = self.model.invoke(
                 get_prompt(
                     self.size,
@@ -495,48 +571,87 @@ class FeedbackLLMPlanner:
                     self.env.prob_slip_right
                 )
             )
+            total_llm_time += time() - llm_start
             self.logger.info("LLM Response received.")
             self.logger.info(response.states)
-            
+
             goal_responses[goal_num] = response
             self._apply_response_to_q_table(response, idx)
-        
+
         # Initial verification
+        prism_start = time()
         ltl_score = self._verify_current_policy()
+        total_prism_time += time() - prism_start
         self.logger.info(f"Initial LTL Score: {ltl_score}")
-        
+
+        # Track metrics for initial iteration
+        mistakes, cost = self._compute_mistakes_and_cost()
+        total_mistakes += mistakes
+        total_cost += cost
+        iteration_mistakes.append(mistakes)
+        iteration_costs.append(cost)
+        iteration_times.append(time() - iteration_start)
+
         # Feedback loop - attempt counts: 1 = initial, 2+ = feedback iterations
         attempt = 1  # We've completed attempt 1 (initial)
         while attempt < self.max_attempts and not self._check_all_probabilities_meet_threshold():
             attempt += 1
+            iteration_start = time()
             self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback) ===")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
-            
+
             # Re-query for each goal with feedback
             for idx, goal_num in enumerate(goal_nums):
                 goal = self.env.goals[goal_num]
                 future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
-                
+
                 self.logger.info(f"Re-planning goal {goal_num} with feedback")
-                
+
                 feedback_prompt = self._get_feedback_prompt(
-                    goal_num, goal, future_goals, goal_responses[goal_num]
+                    idx, goal, future_goals
                 )
-                
+
+                llm_start = time()
                 response = self.model.invoke(feedback_prompt)
+                total_llm_time += time() - llm_start
                 self.logger.info("Feedback LLM Response received.")
-                
+
                 goal_responses[goal_num] = response
                 self._apply_response_to_q_table(response, idx)
-            
+
             # Re-verify
+            prism_start = time()
             ltl_score = self._verify_current_policy()
+            total_prism_time += time() - prism_start
             self.logger.info(f"LTL Score after attempt {attempt}: {ltl_score}")
 
-        if self._check_all_probabilities_meet_threshold():
+            # Track metrics for this iteration
+            mistakes, cost = self._compute_mistakes_and_cost()
+            total_mistakes += mistakes
+            total_cost += cost
+            iteration_mistakes.append(mistakes)
+            iteration_costs.append(cost)
+            iteration_times.append(time() - iteration_start)
+
+        success = self._check_all_probabilities_meet_threshold()
+        if success:
             self.logger.info(f"All probabilities meet threshold after {attempt} attempts")
         else:
             self.logger.warning(f"Max attempts ({self.max_attempts}) reached. Final probabilities: {self.prism_probs}")
 
         self.logger.info(f"Final LTL Score (Feedback LLM): {ltl_score}")
-        return ltl_score, attempt
+        self.logger.info(f"Total PRISM time: {total_prism_time:.2f}s, Total LLM time: {total_llm_time:.2f}s")
+
+        return {
+            "ltl_score": ltl_score,
+            "iterations": attempt,
+            "total_prism_time": total_prism_time,
+            "total_llm_time": total_llm_time,
+            "iteration_times": iteration_times,
+            "avg_iteration_time": sum(iteration_times) / len(iteration_times) if iteration_times else 0.0,
+            "total_mistakes": total_mistakes,
+            "total_cost": total_cost,
+            "iteration_mistakes": iteration_mistakes,
+            "iteration_costs": iteration_costs,
+            "success": success
+        }
