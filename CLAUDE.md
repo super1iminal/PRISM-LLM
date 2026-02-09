@@ -102,7 +102,7 @@ Used by `FeedbackLLMPlanner` to show the LLM its previous policy visually, enabl
 
 - `out/logs/` - execution logs per worker
 - `out/eval_results/` - evaluation metrics
-- `out/results/{timestamp}/` - CSV results and PNG plots
+- `out/results/{timestamp}/` - Parquet results and PNG plots
 
 ## Data Format
 
@@ -114,34 +114,22 @@ CSV files in `data/` with columns: `n`, `goals`, `static`, `BFS_steps`
 
 ## Data Collection by Planner
 
-### VanillaLLMPlanner
-| Field | Type | Description |
-|-------|------|-------------|
-| `LTL_Score` | float | Final LTL verification score |
-| `Prism_Probabilities` | dict | Individual probabilities (goal reachability, sequences, obstacle avoidance) |
-| `Evaluation_Time` | float | Total wall-clock time in seconds |
-| `Total_PRISM_Time` | float | Time spent on PRISM verification (seconds) |
-| `Total_LLM_Time` | float | Time spent on LLM inference (seconds) |
-| `Total_Mistakes` | int | Count of probabilities below threshold (default 0.9) |
-| `Total_Cost` | float | Sum of (1.0 - prob) for all probs < 1.0 |
-| `Success` | bool | True if all probabilities meet threshold |
+Both VanillaLLMPlanner and FeedbackLLMPlanner return per-iteration data in a unified format for consistency.
 
-### FeedbackLLMPlanner
+### VanillaLLMPlanner & FeedbackLLMPlanner (Unified Format)
 | Field | Type | Description |
 |-------|------|-------------|
 | `LTL_Score` | float | Final LTL verification score |
-| `Prism_Probabilities` | dict | Individual probabilities |
+| `Prism_Probabilities` | dict | Final probabilities (goal reachability, sequences, obstacle avoidance) |
 | `Evaluation_Time` | float | Total wall-clock time in seconds |
-| `Iterations_Used` | int | Number of LLM feedback iterations (1 = initial only, 2+ = with feedback) |
-| `Total_PRISM_Time` | float | Total time spent on PRISM verification (seconds) |
-| `Total_LLM_Time` | float | Total time spent on LLM inference (seconds) |
-| `Iteration_Times` | list[float] | Time taken per iteration (seconds) |
-| `Avg_Iteration_Time` | float | Average time per iteration (seconds) |
-| `Total_Mistakes` | int | Cumulative count of probabilities below threshold across all iterations |
-| `Total_Cost` | float | Cumulative sum of (1.0 - prob) for all probs < 1.0 across all iterations |
-| `Iteration_Mistakes` | list[int] | Number of probabilities below threshold per iteration |
-| `Iteration_Costs` | list[float] | Cost value (sum of 1.0 - prob) per iteration |
-| `Success` | bool | True if all probabilities meet threshold at end |
+| `Iterations_Used` | int | Number of iterations (always 1 for Vanilla, 1+ for Feedback) |
+| `Iteration_Times` | list[float] | Total time per iteration (seconds) |
+| `Iteration_PRISM_Times` | list[float] | PRISM verification time per iteration (seconds) |
+| `Iteration_LLM_Times` | list[float] | LLM inference time per iteration (seconds) |
+| `Iteration_Prism_Probs` | list[dict] | Full probability dict at each iteration |
+| `Iteration_Mistakes` | list[int] | Count of probabilities below threshold per iteration |
+| `Iteration_Costs` | list[float] | Sum of (1.0 - prob) for probs < 1.0 per iteration |
+| `Success` | bool | True if all probabilities meet threshold |
 
 ### RLCounterfactual
 | Field | Type | Description |
@@ -163,15 +151,42 @@ CSV files in `data/` with columns: `n`, `goals`, `static`, `BFS_steps`
 }
 ```
 
-### Data Saved to CSV (Evaluator.py)
-| Column | Source |
-|--------|--------|
-| `ltl_score` | `result['LTL_Score']` |
-| `prism_probabilities` | `result['Prism_Probabilities']` |
-| `evaluation_time` | `result['Evaluation_Time']` |
-| `size` | `gridworld.size` |
-| `goals` | `len(gridworld.goals)` |
-| `obstacles` | `len(gridworld.static_obstacles)` |
-| `complexity` | `expected_steps` (BFS optimal path length) |
+### Data Saved to Parquet (Evaluator.py)
 
-**Note:** `Iterations_Used` (Feedback) and `Episode_Rewards`/`Training_Stats` (RL) are returned but not currently saved to CSV.
+Results are saved as Parquet files with a MultiIndex DataFrame structure `(sample_id, iteration)`:
+
+| Column | Description |
+|--------|-------------|
+| `sample_id` | Index of the gridworld sample (0-indexed) |
+| `iteration` | Iteration number (1-indexed, 1 = initial) |
+| `size` | Grid size |
+| `goals` | Number of goals |
+| `obstacles` | Number of static obstacles |
+| `complexity` | BFS optimal path length |
+| `iteration_time` | Total time for this iteration (seconds) |
+| `prism_time` | PRISM verification time for this iteration (seconds) |
+| `llm_time` | LLM inference time for this iteration (seconds) |
+| `mistakes` | Count of probabilities below threshold at this iteration |
+| `cost` | Sum of (1.0 - prob) for probs < 1.0 at this iteration |
+| `prob_goal1`, `prob_goal2`, ... | Individual goal reachability probabilities |
+| `prob_seq_1_before_2`, ... | Sequence ordering probabilities |
+| `prob_complete_sequence` | Complete sequence probability |
+| `prob_avoid_obstacle` | Obstacle avoidance probability |
+| `is_final` | True if this is the final iteration |
+| `final_ltl_score` | Final LTL score (same for all iterations of a sample) |
+| `success` | True if all probabilities meet threshold (same for all iterations) |
+
+**Example Analysis:**
+```python
+import pandas as pd
+df = pd.read_parquet("results.parquet")
+
+# Get final iterations only
+finals = df[df["is_final"]]
+
+# Average metrics by iteration number
+df.groupby("iteration").mean()
+
+# Compare first vs final iteration probabilities
+first_iters = df.xs(1, level="iteration")
+```

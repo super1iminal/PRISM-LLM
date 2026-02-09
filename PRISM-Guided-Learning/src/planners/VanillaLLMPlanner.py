@@ -64,10 +64,13 @@ def _evaluate_single_gridworld_vanilla(args: Tuple) -> Dict:
         "LTL_Score": step_result["ltl_score"],
         "Prism_Probabilities": planner.prism_probs.copy(),
         "Evaluation_Time": delta_time,
-        "Total_PRISM_Time": step_result["total_prism_time"],
-        "Total_LLM_Time": step_result["total_llm_time"],
-        "Total_Mistakes": step_result["total_mistakes"],
-        "Total_Cost": step_result["total_cost"],
+        "Iterations_Used": step_result["iterations"],
+        "Iteration_Times": step_result["iteration_times"],
+        "Iteration_PRISM_Times": step_result["iteration_prism_times"],
+        "Iteration_LLM_Times": step_result["iteration_llm_times"],
+        "Iteration_Prism_Probs": step_result["iteration_prism_probs"],
+        "Iteration_Mistakes": step_result["iteration_mistakes"],
+        "Iteration_Costs": step_result["iteration_costs"],
         "Success": step_result["success"]
     }
 
@@ -131,10 +134,13 @@ class VanillaLLMPlanner:
                 "LTL_Score": step_result["ltl_score"],
                 "Prism_Probabilities": self.prism_probs.copy(),
                 "Evaluation_Time": delta_time,
-                "Total_PRISM_Time": step_result["total_prism_time"],
-                "Total_LLM_Time": step_result["total_llm_time"],
-                "Total_Mistakes": step_result["total_mistakes"],
-                "Total_Cost": step_result["total_cost"],
+                "Iterations_Used": step_result["iterations"],
+                "Iteration_Times": step_result["iteration_times"],
+                "Iteration_PRISM_Times": step_result["iteration_prism_times"],
+                "Iteration_LLM_Times": step_result["iteration_llm_times"],
+                "Iteration_Prism_Probs": step_result["iteration_prism_probs"],
+                "Iteration_Mistakes": step_result["iteration_mistakes"],
+                "Iteration_Costs": step_result["iteration_costs"],
                 "Success": step_result["success"]
             })
             
@@ -208,10 +214,13 @@ class VanillaLLMPlanner:
                         "LTL_Score": 0.0,
                         "Prism_Probabilities": {},
                         "Evaluation_Time": 0.0,
-                        "Total_PRISM_Time": 0.0,
-                        "Total_LLM_Time": 0.0,
-                        "Total_Mistakes": 0,
-                        "Total_Cost": 0.0,
+                        "Iterations_Used": 0,
+                        "Iteration_Times": [],
+                        "Iteration_PRISM_Times": [],
+                        "Iteration_LLM_Times": [],
+                        "Iteration_Prism_Probs": [],
+                        "Iteration_Mistakes": [],
+                        "Iteration_Costs": [],
                         "Success": False,
                         "error": str(e)
                     }
@@ -226,10 +235,13 @@ class VanillaLLMPlanner:
                 "LTL_Score": 0.0,
                 "Prism_Probabilities": {},
                 "Evaluation_Time": 0.0,
-                "Total_PRISM_Time": 0.0,
-                "Total_LLM_Time": 0.0,
-                "Total_Mistakes": 0,
-                "Total_Cost": 0.0,
+                "Iterations_Used": 0,
+                "Iteration_Times": [],
+                "Iteration_PRISM_Times": [],
+                "Iteration_LLM_Times": [],
+                "Iteration_Prism_Probs": [],
+                "Iteration_Mistakes": [],
+                "Iteration_Costs": [],
                 "Success": False
             })
             result.pop("index", None)
@@ -261,18 +273,6 @@ class VanillaLLMPlanner:
 
         self.logger.info(f"Policy initialized with {len(policy)} states.")
         return policy
-
-    def _compute_mistakes_and_cost(self) -> Tuple[int, float]:
-        """Compute mistakes and cost from current probabilities.
-
-        Returns:
-            Tuple of (mistakes, cost) where:
-            - mistakes: count of probabilities below target_threshold
-            - cost: sum of (1.0 - prob) for all probs < 1.0
-        """
-        mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
-        cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
-        return mistakes, cost
 
     def _update_prism_probabilities(self, probabilities: List[float]):
         """Update PMC verification probabilities dynamically"""
@@ -333,18 +333,22 @@ class VanillaLLMPlanner:
         future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
         self.logger.info(f"LLM planning for goal {goal_num} at position {goal}")
-        response = self.model.invoke(
-            get_prompt(
-                self.size,
-                self.env.static_obstacles,
-                future_goals,
-                self.env.moving_obstacle_positions,
-                goal,
-                self.env.prob_forward,
-                self.env.prob_slip_left,
-                self.env.prob_slip_right
+        try:
+            response = self.model.invoke(
+                get_prompt(
+                    self.size,
+                    self.env.static_obstacles,
+                    future_goals,
+                    self.env.moving_obstacle_positions,
+                    goal,
+                    self.env.prob_forward,
+                    self.env.prob_slip_left,
+                    self.env.prob_slip_right
+                )
             )
-        )
+        except Exception as e:
+            self.logger.error(f"LLM invoke failed for goal {goal_num}: {type(e).__name__}: {e}")
+            raise
         self.logger.info(f"LLM Response received for goal {goal_num}.")
         return goal_num, idx, response
 
@@ -368,14 +372,18 @@ class VanillaLLMPlanner:
         """Plan for all goals in parallel.
 
         Returns:
-            Dict containing:
+            Dict containing (single-element lists for consistency with FeedbackLLMPlanner):
             - ltl_score: Final LTL verification score
-            - total_prism_time: Time spent on PRISM verification (seconds)
-            - total_llm_time: Time spent on LLM inference (seconds)
-            - total_mistakes: Count of probabilities below target_threshold
-            - total_cost: Sum of (1.0 - prob) for all probs < 1.0
+            - iterations: Always 1
+            - iteration_times: List with single total time
+            - iteration_prism_times: List with single PRISM time
+            - iteration_llm_times: List with single LLM time
+            - iteration_prism_probs: List with single probability dict
+            - iteration_mistakes: List with single mistake count
+            - iteration_costs: List with single cost value
             - success: True if all probabilities meet target_threshold
         """
+        iteration_start = time()
         goal_nums = sorted(self.env.goals.keys())
 
         # Time LLM calls
@@ -386,7 +394,7 @@ class VanillaLLMPlanner:
                 for idx, goal_num in enumerate(goal_nums)
             ]
             responses = [future.result() for future in futures]
-        total_llm_time = time() - llm_start
+        llm_time = time() - llm_start
 
         # Apply all responses to policy table
         for goal_num, idx, response in responses:
@@ -397,22 +405,27 @@ class VanillaLLMPlanner:
         prism_start = time()
         model_str = self.model_generator.generate_prism_model(self.q_table)
         ltl_score = self.simplified_verifier.verify_policy(model_str)
-        total_prism_time = time() - prism_start
+        prism_time = time() - prism_start
 
         # Update probabilities from verification
         if self.simplified_verifier.ltl_probabilities:
             self._update_prism_probabilities(self.simplified_verifier.ltl_probabilities[-1])
 
         # Compute metrics
-        mistakes, cost = self._compute_mistakes_and_cost()
+        mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
+        cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
         success = all(p >= self.target_threshold for p in self.prism_probs.values()) if self.prism_probs else False
+        iteration_time = time() - iteration_start
 
         self.logger.info(f"LTL Score (LLM): {ltl_score}")
         return {
             "ltl_score": ltl_score,
-            "total_prism_time": total_prism_time,
-            "total_llm_time": total_llm_time,
-            "total_mistakes": mistakes,
-            "total_cost": cost,
+            "iterations": 1,
+            "iteration_times": [iteration_time],
+            "iteration_prism_times": [prism_time],
+            "iteration_llm_times": [llm_time],
+            "iteration_prism_probs": [self.prism_probs.copy()],
+            "iteration_mistakes": [mistakes],
+            "iteration_costs": [cost],
             "success": success
         }
