@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 
 from time import time
 
-from config.Settings import PRISM_PATH
+from config.Settings import PRISM_PATH, get_threshold_for_key
 from utils.Logging import setup_logger, create_run_directory
 
 
@@ -42,8 +42,7 @@ def _evaluate_single_gridworld_vanilla_plus(args: Tuple) -> Dict:
     planner = VanillaPlusLLMPlanner(
         model=model,
         model_name=model_name,
-        max_attempts=config.get('max_attempts', 3),
-        target_threshold=config.get('target_threshold', 0.9)
+        max_attempts=config.get('max_attempts', 3)
     )
 
     # Setup logger for this worker in the shared directory
@@ -91,79 +90,33 @@ class VanillaPlusLLMPlanner:
     never provides feedback about previous attempt results.
     """
 
-    def __init__(self, model, model_name: str, max_attempts: int = 3, target_threshold: float = 0.9):
+    def __init__(self, model, model_name: str, max_attempts: int = 3):
         self.action_space = 4
         self.prism_probs = {}  # Will be populated dynamically
         self.model = model
         self.model_name = model_name
         self.max_attempts = max_attempts
-        self.target_threshold = target_threshold
 
 
-    def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
-                 use_threads: bool = True):
+    def evaluate(self, dataloader, max_workers: Optional[int] = None, use_threads: bool = True, run_dir: Optional[str] = None):
         """
         Evaluate the Vanilla Plus LLM planner on all gridworlds in the dataloader.
 
         Args:
             dataloader: DataLoader instance containing GridWorld configurations
-            parallel: If True, evaluate gridworlds in parallel
             max_workers: Maximum number of workers. If None, uses CPU count for processes
                         or min(32, CPU count + 4) for threads.
-            use_threads: If True and parallel=True, use ThreadPoolExecutor instead of
+            use_threads: If True, use ThreadPoolExecutor instead of
                         ProcessPoolExecutor. Threads are recommended for I/O-bound LLM calls.
+            run_dir: Optional shared parent directory for logs. If None, creates standalone directory.
 
         Returns:
             List of results containing LTL scores and evaluation statistics
         """
-        if parallel:
-            return self._evaluate_parallel(dataloader, max_workers, use_threads)
-        else:
-            return self._evaluate_sequential(dataloader)
-
-    def _evaluate_sequential(self, dataloader) -> List[Dict]:
-        """Sequential evaluation of all gridworlds"""
-        # Create a run directory for this evaluation
-        run_dir = create_run_directory(f"vanilla_plus_LLM_{self.model_name}_sequential")
-
-        self.logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
-        self.prism_verifier = PrismVerifier(self.get_prism_path(), self.logger)
-        results_list = []
-
-        self.logger.info(f"Logs will be saved to: {run_dir}")
-
-        for idx, (gridworld, _) in enumerate(dataloader):
-            start_time = time()
-            self.size = gridworld.size
-            self.env = gridworld
-            self.model_generator = PrismModelGenerator(self.env, self.logger)
-            self.simplified_verifier = SimplifiedVerifier(self.prism_verifier, self.env, self.logger)
-            self.num_goals = len(gridworld.goals)
-            self.q_table = self.initialize_q_table()
-            self.prism_probs = {}
-
-            step_result = self.step()
-            self.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']} (iterations: {step_result['iterations']})")
-            end_time = time()
-            delta_time = end_time - start_time
-            results_list.append({
-                "LTL_Score": step_result["ltl_score"],
-                "Prism_Probabilities": self.prism_probs.copy(),
-                "Evaluation_Time": delta_time,
-                "Iterations_Used": step_result["iterations"],
-                "Iteration_Times": step_result["iteration_times"],
-                "Iteration_PRISM_Times": step_result["iteration_prism_times"],
-                "Iteration_LLM_Times": step_result["iteration_llm_times"],
-                "Iteration_Prism_Probs": step_result["iteration_prism_probs"],
-                "Iteration_Mistakes": step_result["iteration_mistakes"],
-                "Iteration_Costs": step_result["iteration_costs"],
-                "Success": step_result["success"]
-            })
-
-        return results_list
+        return self._evaluate_parallel(dataloader, max_workers, use_threads, run_dir)
 
     def _evaluate_parallel(self, dataloader, max_workers: Optional[int] = None,
-                          use_threads: bool = True) -> List[Dict]:
+                          use_threads: bool = True, run_dir: Optional[str] = None) -> List[Dict]:
         """
         Parallel evaluation of all gridworlds.
 
@@ -171,15 +124,20 @@ class VanillaPlusLLMPlanner:
             dataloader: DataLoader instance containing GridWorld configurations
             max_workers: Maximum number of workers
             use_threads: If True, use ThreadPoolExecutor (better for I/O-bound LLM calls)
+            run_dir: Optional shared parent directory for logs.
 
         Returns:
             List of results containing LTL scores and evaluation statistics
         """
-        # Create a shared run directory for all workers
-        run_dir = create_run_directory(f"vanilla_plus_LLM_{self.model_name}_parallel")
+        # Create log directory under shared run_dir, or standalone
+        if run_dir:
+            log_dir = os.path.join(run_dir, f"vanilla_plus_LLM_{self.model_name}")
+            os.makedirs(log_dir, exist_ok=True)
+        else:
+            log_dir = create_run_directory(f"vanilla_plus_LLM_{self.model_name}_parallel")
 
         # Setup main logger in the shared directory
-        main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
+        main_logger = setup_logger("main", run_dir=log_dir, include_timestamp=False)
 
         if max_workers is None:
             if use_threads:
@@ -189,13 +147,12 @@ class VanillaPlusLLMPlanner:
 
         executor_type = "threads" if use_threads else "processes"
         main_logger.info(f"Starting parallel evaluation with {max_workers} {executor_type}")
-        main_logger.info(f"Logs will be saved to: {run_dir}")
+        main_logger.info(f"Logs will be saved to: {log_dir}")
 
         # Prepare arguments with shared run directory
         config = {
             'max_attempts': self.max_attempts,
-            'target_threshold': self.target_threshold,
-            'run_dir': run_dir,  # Pass shared directory to workers
+            'run_dir': log_dir,  # Pass shared directory to workers
             'model': self.model,
             'model_name': self.model_name
         }
@@ -310,15 +267,17 @@ class VanillaPlusLLMPlanner:
                 self.prism_probs[f'seq_{goal_nums[i]}_before_{goal_nums[i+1]}'] = probabilities[idx]
                 idx += 1
 
-        # Complete sequence
-        if idx < len(probabilities):
+        # Complete sequence (only emitted when multiple goals)
+        if len(goal_nums) > 1 and idx < len(probabilities):
             self.prism_probs['complete_sequence'] = probabilities[idx]
             idx += 1
 
-        # Obstacle avoidance
-        if idx < len(probabilities):
-            self.prism_probs['avoid_obstacle'] = probabilities[idx]
-            idx += 1
+        # Per-segment moving obstacle avoidance
+        if self.env.moving_obstacle_positions:
+            for goal_num in goal_nums:
+                if idx < len(probabilities):
+                    self.prism_probs[f'avoid_moving_seg{goal_num}'] = probabilities[idx]
+                    idx += 1
 
     def _get_applicable_goal_states(self, goal_idx: int) -> List[List[bool]]:
         """Get the goal state combinations applicable for planning to reach goal i
@@ -346,10 +305,10 @@ class VanillaPlusLLMPlanner:
         return [goal_state]
 
     def _check_all_probabilities_meet_threshold(self) -> bool:
-        """Check if all probabilities meet the target threshold"""
+        """Check if all probabilities meet the per-key thresholds"""
         if not self.prism_probs:
             return False
-        return all(prob >= self.target_threshold for prob in self.prism_probs.values())
+        return all(p >= get_threshold_for_key(k) for k, p in self.prism_probs.items())
 
     def _invoke_llm_for_goal(self, goal_num: int, idx: int) -> Tuple[int, int, ActionPolicy]:
         """Invoke LLM for a single goal. Returns (goal_num, idx, response)."""
@@ -454,7 +413,7 @@ class VanillaPlusLLMPlanner:
                 self._update_prism_probabilities(self.simplified_verifier.ltl_probabilities[-1])
 
             # Compute metrics
-            mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
+            mistakes = sum(1 for k, p in self.prism_probs.items() if p < get_threshold_for_key(k))
             cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
             iteration_time = time() - iteration_start
 
@@ -468,6 +427,9 @@ class VanillaPlusLLMPlanner:
 
             self.logger.info(f"LTL Score after attempt {attempt}: {ltl_score}")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
+            failed = {k: f"{p:.4f} < {get_threshold_for_key(k)}" for k, p in self.prism_probs.items() if p < get_threshold_for_key(k)}
+            if failed:
+                self.logger.info(f"Failed requirements ({mistakes}): {failed}")
 
             # Early exit if all probabilities meet threshold
             if self._check_all_probabilities_meet_threshold():

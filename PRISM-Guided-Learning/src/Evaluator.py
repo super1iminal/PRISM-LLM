@@ -17,7 +17,7 @@ from planners.UniformPlanner import BaselinePlanner
 from planners.RLCounterfactual import LTLGuidedQLearningWithObstacle
 from planners.FeedbackLLMPlanner import FeedbackLLMPlanner
 from planners.FeedbackMinusLLMPlanner import FeedbackMinusLLMPlanner
-from config.Settings import EVAL_PATH, RESULTS_PATH
+from config.Settings import RESULTS_PATH
 
 
 class EvalModel(Enum):
@@ -45,30 +45,30 @@ class EvalModel(Enum):
 
 def main():
     """Main entry point - runs evaluation and saves results to CSV."""
-    logger = setup_logger("eval", console_output=False, log_path=EVAL_PATH)
-
     dataloader = DataLoader("PRISM-Guided-Learning/data/grid_20_samples.csv")
     dataloader.load_data()
 
     models = [
         EvalModel.RL, 
         EvalModel.LLM_VANILLA_GPT5_NANO, 
-        EvalModel.LLM_VANILLA_GPT5_MINI,
-        EvalModel.LLM_VANILLA_GEMINI_FLASH,
+        # EvalModel.LLM_VANILLA_GPT5_MINI,
+        # EvalModel.LLM_VANILLA_GEMINI_FLASH,
         EvalModel.LLM_VANILLA_PLUS_GPT5_NANO,
-        EvalModel.LLM_VANILLA_PLUS_GPT5_MINI,
-        EvalModel.LLM_VANILLA_PLUS_GEMINI_FLASH,
+        # EvalModel.LLM_VANILLA_PLUS_GPT5_MINI,
+        # EvalModel.LLM_VANILLA_PLUS_GEMINI_FLASH,
         EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO,
-        EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI,
-        EvalModel.LLM_FEEDBACK_MINUS_GEMINI_FLASH,
+        # EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI,
+        # EvalModel.LLM_FEEDBACK_MINUS_GEMINI_FLASH,
         EvalModel.LLM_FEEDBACK_GPT5_NANO,         
-        EvalModel.LLM_FEEDBACK_GPT5_MINI,
-        EvalModel.LLM_FEEDBACK_GEMINI_FLASH 
+        # EvalModel.LLM_FEEDBACK_GPT5_MINI,
+        # EvalModel.LLM_FEEDBACK_GEMINI_FLASH 
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
     run_dir = os.path.join(RESULTS_PATH, f"{len(dataloader.data)}_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
+
+    logger = setup_logger("eval", console_output=False, run_dir=run_dir, include_timestamp=False)
 
     model_dfs = evaluate_models(models, dataloader, run_dir, logger)
 
@@ -101,7 +101,7 @@ def evaluate_models(
             model = get_model(model_type)
 
             start_time = time()
-            results = model.evaluate(dataloader, parallel=True)
+            results = model.evaluate(dataloader, run_dir=run_dir)
             end_time = time()
             delta_time = end_time - start_time
 
@@ -207,6 +207,10 @@ def results_to_multiindex_df(
             # Get per-iteration data with safe indexing
             iteration_prism_probs = result.get("Iteration_Prism_Probs", [{}])
             prism_probs = iteration_prism_probs[iter_idx] if iter_idx < len(iteration_prism_probs) else {}
+
+            # Fallback: if iteration prism probs are empty, use final Prism_Probabilities
+            if not prism_probs and iter_idx == 0:
+                prism_probs = result.get("Prism_Probabilities", {})
 
             iteration_times = result.get("Iteration_Times", [0.0])
             iteration_time = iteration_times[iter_idx] if iter_idx < len(iteration_times) else 0.0

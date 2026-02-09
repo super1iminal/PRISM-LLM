@@ -16,7 +16,7 @@ from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
 
 from environment.GridWorldStepper import GridWorldMover
-from config.Settings import PRISM_PATH, RL_MAX_EPISODES, RL_CONVERGENCE_EPSILON, RL_PROBABILITY_THRESHOLD, RL_MIN_EPISODES_BEFORE_CONVERGENCE
+from config.Settings import PRISM_PATH, RL_MAX_EPISODES, RL_CONVERGENCE_EPSILON, RL_MIN_EPISODES_BEFORE_CONVERGENCE, get_threshold_for_key
 from utils.Logging import setup_logger, create_run_directory
 
 
@@ -40,7 +40,6 @@ def _evaluate_single_gridworld(args: Tuple) -> Dict:
     agent = LTLGuidedQLearningWithObstacle()
     agent.max_episodes = config.get('max_episodes', RL_MAX_EPISODES)
     agent.convergence_epsilon = config.get('convergence_epsilon', RL_CONVERGENCE_EPSILON)
-    agent.probability_threshold = config.get('probability_threshold', RL_PROBABILITY_THRESHOLD)
     agent.min_episodes_before_convergence = config.get('min_episodes_before_convergence', RL_MIN_EPISODES_BEFORE_CONVERGENCE)
     agent.verify_interval = config.get('verify_interval', 1)
     
@@ -76,6 +75,14 @@ def _evaluate_single_gridworld(args: Tuple) -> Dict:
         "LTL_Score": best_ltl_score,
         "Prism_Probabilities": agent.prism_probs.copy(),
         "Evaluation_Time": delta_time,
+        "Iterations_Used": 1,
+        "Iteration_Times": [delta_time],
+        "Iteration_PRISM_Times": [0.0],
+        "Iteration_LLM_Times": [0.0],
+        "Iteration_Prism_Probs": [agent.prism_probs.copy()],
+        "Iteration_Mistakes": [sum(1 for k, p in agent.prism_probs.items() if p < get_threshold_for_key(k))],
+        "Iteration_Costs": [sum(1.0 - p for p in agent.prism_probs.values() if p < 1.0)],
+        "Success": all(p >= get_threshold_for_key(k) for k, p in agent.prism_probs.items()),
         "Episode_Rewards": agent.episode_rewards.copy(),
         "Training_Stats": agent.training_stats.copy()
     }
@@ -103,7 +110,6 @@ class LTLGuidedQLearningWithObstacle:
         # Training configuration
         self.max_episodes = RL_MAX_EPISODES  # 500
         self.convergence_epsilon = RL_CONVERGENCE_EPSILON  # 0.001
-        self.probability_threshold = RL_PROBABILITY_THRESHOLD  # 0.9
         self.min_episodes_before_convergence = RL_MIN_EPISODES_BEFORE_CONVERGENCE  # 50
         self.verify_interval = 1
         self.previous_probs = None
@@ -115,100 +121,55 @@ class LTLGuidedQLearningWithObstacle:
         else:
             raise FileNotFoundError(f"PRISM executable not found or not executable at {PRISM_PATH}")
     
-    def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None):
+    def evaluate(self, dataloader, max_workers: Optional[int] = None, run_dir: Optional[str] = None):
         """
         Evaluate the RL planner on all gridworlds in the dataloader.
-        
+
         Args:
             dataloader: DataLoader instance containing GridWorld configurations
-            parallel: If True, evaluate gridworlds in parallel using multiple processes
             max_workers: Maximum number of worker processes. If None, uses CPU count.
-                        Only used when parallel=True.
-            
+            run_dir: Optional shared parent directory for logs. If None, creates standalone directory.
+
         Returns:
             List of results containing LTL scores and training statistics
         """
-        if parallel:
-            return self._evaluate_parallel(dataloader, max_workers)
-        else:
-            return self._evaluate_sequential(dataloader)
-    
-    def _evaluate_sequential(self, dataloader) -> List[Dict]:
-        """Sequential evaluation of all gridworlds"""
-        # Create a run directory for this evaluation
-        run_dir = create_run_directory("RL_counterfactual_sequential")
-        
-        self.logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
-        self.prism_verifier = PrismVerifier(self._get_prism_path(), self.logger)
-        results_list = []
-        
-        self.logger.info(f"Logs will be saved to: {run_dir}")
-        
-        for idx, (gridworld, expected_steps) in enumerate(dataloader):
-            self.logger.info(f"\n{'='*50}")
-            self.logger.info(f"Evaluating gridworld {idx+1}")
-            self.logger.info(f"Size: {gridworld.size}, Goals: {gridworld.goals}")
-            self.logger.info(f"Static obstacles: {gridworld.static_obstacles}")
-            self.logger.info(f"Expected BFS steps: {expected_steps}")
-            self.logger.info(f"{'='*50}\n")
-            
-            start_time = time()
-            
-            # Initialize for this gridworld
-            self._init_for_gridworld(gridworld)
-            
-            # Train the agent
-            best_policy, best_ltl_score = self.train(
-                verify_interval=self.verify_interval
-            )
-            
-            end_time = time()
-            delta_time = end_time - start_time
-            
-            self.logger.info(f"Evaluation {idx+1}: Best LTL Score = {best_ltl_score:.4f}")
-            self.logger.info(f"Training time: {delta_time:.2f} seconds")
-            
-            results_list.append({
-                "LTL_Score": best_ltl_score,
-                "Prism_Probabilities": self.prism_probs.copy(),
-                "Evaluation_Time": delta_time,
-                "Episode_Rewards": self.episode_rewards.copy(),
-                "Training_Stats": self.training_stats.copy()
-            })
-            
-        return results_list
-    
-    def _evaluate_parallel(self, dataloader, max_workers: Optional[int] = None) -> List[Dict]:
+        return self._evaluate_parallel(dataloader, max_workers, run_dir)
+
+    def _evaluate_parallel(self, dataloader, max_workers: Optional[int] = None, run_dir: Optional[str] = None) -> List[Dict]:
         """
         Parallel evaluation of all gridworlds using ProcessPoolExecutor.
-        
+
         Args:
             dataloader: DataLoader instance containing GridWorld configurations
             max_workers: Maximum number of worker processes. If None, uses CPU count.
-            
+            run_dir: Optional shared parent directory for logs.
+
         Returns:
             List of results containing LTL scores and training statistics
         """
-        # Create a shared run directory for all workers
-        run_dir = create_run_directory("RL_counterfactual_parallel")
-        
+        # Create log directory under shared run_dir, or standalone
+        if run_dir:
+            log_dir = os.path.join(run_dir, "RL_counterfactual")
+            os.makedirs(log_dir, exist_ok=True)
+        else:
+            log_dir = create_run_directory("RL_counterfactual_parallel")
+
         # Setup main logger in the shared directory
-        main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
+        main_logger = setup_logger("main", run_dir=log_dir, include_timestamp=False)
         
         if max_workers is None:
             max_workers = multiprocessing.cpu_count()
         
         main_logger.info(f"Starting parallel evaluation with {max_workers} workers")
-        main_logger.info(f"Logs will be saved to: {run_dir}")
-        
+        main_logger.info(f"Logs will be saved to: {log_dir}")
+
         # Prepare arguments for parallel execution
         config = {
             'max_episodes': self.max_episodes,
             'convergence_epsilon': self.convergence_epsilon,
-            'probability_threshold': self.probability_threshold,
             'min_episodes_before_convergence': self.min_episodes_before_convergence,
             'verify_interval': self.verify_interval,
-            'run_dir': run_dir  # Pass shared directory to workers
+            'run_dir': log_dir  # Pass shared directory to workers
         }
         
         # Convert dataloader to list for indexing
@@ -300,14 +261,18 @@ class LTLGuidedQLearningWithObstacle:
         probs = {}
         for i in range(1, self.num_goals + 1):
             probs[f'goal{i}'] = 0.0
-        
+
         # Sequence probabilities
         for i in range(1, self.num_goals):
             probs[f'seq_{i}_before_{i+1}'] = 0.0
-        
+
         probs['complete_sequence'] = 0.0
-        probs['avoid_obstacle'] = 0.0
-        
+
+        # Per-segment moving obstacle avoidance
+        if self.env.moving_obstacle_positions:
+            for i in range(1, self.num_goals + 1):
+                probs[f'avoid_moving_seg{i}'] = 0.0
+
         return probs
     
     def _initialize_q_table(self) -> Dict:
@@ -343,15 +308,18 @@ class LTLGuidedQLearningWithObstacle:
                 self.prism_probs[f'seq_{goal_nums[i]}_before_{goal_nums[i+1]}'] = probabilities[idx]
                 idx += 1
         
-        # Complete sequence
-        if idx < len(probabilities):
+        # Complete sequence (only emitted when multiple goals)
+        if len(goal_nums) > 1 and idx < len(probabilities):
             self.prism_probs['complete_sequence'] = probabilities[idx]
             idx += 1
-        
-        # Obstacle avoidance
-        if idx < len(probabilities):
-            self.prism_probs['avoid_obstacle'] = probabilities[idx]
-            idx += 1
+
+        # Per-segment moving obstacle avoidance
+        if self.env.moving_obstacle_positions:
+            goal_nums_local = sorted(self.env.goals.keys())
+            for goal_num in goal_nums_local:
+                if idx < len(probabilities):
+                    self.prism_probs[f'avoid_moving_seg{goal_num}'] = probabilities[idx]
+                    idx += 1
 
     def _calculate_sequence_weight(self, state: tuple, next_state: tuple) -> float:
         """Calculate weight based on goal sequence progress"""
@@ -397,7 +365,9 @@ class LTLGuidedQLearningWithObstacle:
         
         sequence_weight = self._calculate_sequence_weight(state, next_state)
         k_bonus = 1.0 + (k / self.K) * sequence_weight
-        obstacle_prob = self.prism_probs.get('avoid_obstacle', 0.0)
+        # Use average of per-segment avoidance probs, or 0.0 if none
+        avoid_probs = [v for k, v in self.prism_probs.items() if k.startswith('avoid_moving_seg')]
+        obstacle_prob = sum(avoid_probs) / len(avoid_probs) if avoid_probs else 0.0
         
         # Check obstacle collision
         if (next_x, next_y) in self.env.static_obstacles:
@@ -582,11 +552,11 @@ class LTLGuidedQLearningWithObstacle:
         self.previous_probs = self.prism_probs.copy()
 
     def _all_probs_meet_threshold(self) -> bool:
-        """Check if all probabilities >= threshold."""
+        """Check if all probabilities >= their per-key thresholds."""
         if not self.prism_probs:
             return False
-        return all(prob >= self.probability_threshold
-                   for prob in self.prism_probs.values())
+        return all(p >= get_threshold_for_key(k)
+                   for k, p in self.prism_probs.items())
 
     def _check_convergence(self) -> bool:
         """Check if probability changes are below epsilon (single check)."""
@@ -800,9 +770,7 @@ def main():
         # Create and evaluate agent
         agent = LTLGuidedQLearningWithObstacle()
         
-        # Choose evaluation mode: parallel or sequential
-        # results = agent.evaluate(dataloader, parallel=False)  # Sequential
-        results = agent.evaluate(dataloader, parallel=True, max_workers=4)  # Parallel
+        results = agent.evaluate(dataloader, max_workers=4)
         
         print("\n" + "="*50)
         print("TRAINING RESULTS")

@@ -49,23 +49,39 @@ class SimplifiedVerifier:
         To add a new requirement, add it here. Everything else derives from this.
 
         Weight distribution:
-        - Single goal: 75% reachability, 25% safety
-        - Multiple goals: 25% reachability, 50% sequence, 25% safety
+        - No moving obstacles:
+          - Single goal: 100% reachability
+          - Multiple goals: 33% reachability, 67% sequence
+        - With moving obstacles:
+          - Single goal: 75% reachability, 25% safety (split across segments)
+          - Multiple goals: 25% reachability, 50% sequence, 25% safety (split across segments)
         """
         requirements = []
         goal_list = sorted(self.gridWorld.goals.keys())
+        has_moving = bool(self.gridWorld.moving_obstacle_positions)
 
-        # Calculate weights based on number of goals
-        # Weights should sum to 1.0: 0.25 reachability + 0.50 sequence + 0.25 safety
-        if self.num_goals == 1:
-            reachability_weight = 0.75
-            sequence_weight = 0.0
-            safety_weight = 0.25
+        # Calculate weights based on number of goals and whether moving obstacles exist
+        if has_moving:
+            if self.num_goals == 1:
+                reachability_weight = 0.75
+                sequence_weight = 0.0
+                safety_budget = 0.25
+            else:
+                reachability_weight = 0.25 / self.num_goals
+                sequence_weight = 0.50 / (self.num_goals - 1)
+                safety_budget = 0.25
         else:
-            reachability_weight = 0.25 / self.num_goals
-            # N goals have N-1 sequence requirements
-            sequence_weight = 0.50 / (self.num_goals - 1)
-            safety_weight = 0.25
+            # No moving obstacles — no safety requirements, redistribute weight
+            if self.num_goals == 1:
+                reachability_weight = 1.0
+                sequence_weight = 0.0
+            else:
+                reachability_weight = 0.25 / self.num_goals
+                sequence_weight = 0.50 / (self.num_goals - 1)
+                # Redistribute old safety weight (0.25) into reachability
+                # Total reachability becomes 0.25 + 0.25 = 0.50
+                reachability_weight = 0.50 / self.num_goals
+            safety_budget = 0.0
 
         # 1. Reachability requirements for each goal
         for goal_num in goal_list:
@@ -79,7 +95,6 @@ class SimplifiedVerifier:
 
         # 2. Sequential ordering requirements (only if multiple goals)
         if self.num_goals > 1:
-            # Individual sequence properties: G1...Gi before G(i+1)
             for i in range(len(goal_list) - 1):
                 goals_before = goal_list[:i+1]
                 next_goal = goal_list[i+1]
@@ -110,14 +125,17 @@ class SimplifiedVerifier:
                 csv_header="Complete_Sequence"
             ))
 
-        # 3. Safety: Obstacle avoidance
-        requirements.append(Requirement(
-            name="Avoid obstacles (30 steps)",
-            property='P=? [ G<=30 !"at_obstacle" ];',
-            weight=safety_weight,
-            category="safety",
-            csv_header="Avoid_Obstacle"
-        ))
+        # 3. Per-segment moving obstacle avoidance (replaces old avoid_obstacle)
+        if has_moving:
+            seg_weight = safety_budget / len(goal_list)
+            for goal_num in goal_list:
+                requirements.append(Requirement(
+                    name=f"Avoid moving obs (seg {goal_num})",
+                    property=f'P=? [ G ("in_seg{goal_num}" => !"at_moving_obs") ];',
+                    weight=seg_weight,
+                    category="segment_safety",
+                    csv_header=f"Avoid_Moving_Seg{goal_num}"
+                ))
 
         return requirements
 

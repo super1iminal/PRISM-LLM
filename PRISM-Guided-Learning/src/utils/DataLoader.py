@@ -17,8 +17,14 @@ class DataLoader:
             goals = ast.literal_eval(row["goals"] if isinstance(row["goals"], str) else row["goals"])
             obstacles = ast.literal_eval(row["static"]) if isinstance(row["static"], str) else row["static"]
 
-            expected = int(row["BFS_steps"])            
-            self.data.append((GridWorld(size, goals, obstacles, []), expected))
+            # Parse optional moving obstacle column (backward-compatible)
+            if "moving" in row and pd.notna(row["moving"]):
+                moving = ast.literal_eval(row["moving"]) if isinstance(row["moving"], str) else row["moving"]
+            else:
+                moving = []
+
+            expected = int(row["BFS_steps"])
+            self.data.append((GridWorld(size, goals, obstacles, moving), expected))
             print(f"Loaded gridworld of size {size} with goals {goals} and obstacles {obstacles}.")
         
     def __iter__(self):

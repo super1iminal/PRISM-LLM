@@ -1,102 +1,19 @@
 from verification.PrismVerifier import PrismVerifier
 from verification.SimplifiedVerifier import SimplifiedVerifier
 from verification.PrismModelGenerator import PrismModelGenerator
-from environment.GridWorld import GridWorld
-from utils.LLMPrompting import get_prompt, ActionPolicy, StateAction, generate_grid_visual, generate_policy_visual
+from utils.LLMPrompting import get_prompt, build_prompt, ActionPolicy, generate_policy_visual, format_probability_summary, extract_segment_probs
 
 import os
 from typing import List, Optional, Dict, Tuple
 from itertools import product
-import pandas as pd
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import multiprocessing
 import traceback
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
-
 from time import time
 
-from config.Settings import PRISM_PATH
+from config.Settings import PRISM_PATH, get_threshold_for_key
 from utils.Logging import setup_logger, create_run_directory
-
-
-# Feedback Minus prompt template - includes probabilities and visuals but NO problem identification
-FEEDBACK_MINUS_PROMPT_TEXT = """You are an expert path planner. Your previous plan did NOT achieve perfect probabilities.
-
-PREVIOUS ATTEMPT RESULTS:
-{probability_summary}
-
-The grid world is {size} x {size}. Here is the visual layout:
-
-{grid_visual}
-
-Grid Legend:
-- 'S' = Start position (0,0) - the initial state
-- 'G' = Current goal position you must reach
-- 'X' = Static obstacle (CANNOT enter - you will bounce back)
-- 'F' = Future goal (treat as obstacle for now - avoid it)
-- 'M' = Moving obstacle position (avoid if possible)
-- '.' = Empty cell you can move through
-
-YOUR PREVIOUS POLICY (visualized as arrows):
-{policy_visual}
-
-Policy Legend:
-- ↑ = UP (action 0), → = RIGHT (action 1), ↓ = DOWN (action 2), ← = LEFT (action 3)
-- X↓ = Static obstacle with escape action (e.g., X↓ means obstacle, escape by going DOWN)
-- F→ = Future goal with escape action (e.g., F→ means future goal, escape by going RIGHT)
-- G = Current goal (destination)
-
-Compare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.
-
-COORDINATE SYSTEM:
-- Position format: (row, col) where row is Y-axis, col is X-axis
-- (0,0) is in the TOP-LEFT corner
-- Row increases DOWNWARD (0 → 1 → 2...)
-- Column increases RIGHTWARD (0 → 1 → 2...)
-
-ACTIONS - pick ONE best action per state:
-- 0 = UP: Move to (row-1, col) - DECREASES row
-- 1 = RIGHT: Move to (row, col+1) - INCREASES column
-- 2 = DOWN: Move to (row+1, col) - INCREASES row
-- 3 = LEFT: Move to (row, col-1) - DECREASES column
-
-TASK DETAILS:
-- Static obstacles: {s_obstacles} (marked as 'X')
-- Future goals to avoid: {f_goals} (marked as 'F')
-- Moving obstacles: {k_obstacles} (marked as 'M')
-- Your current goal: {goal} (marked as 'G')
-
-STOCHASTIC EXECUTION:
-When you choose an action, the agent executes it with uncertainty:
-- {prob_forward_pct}% probability: Moves in the intended direction
-- {prob_slip_left_pct}% probability: Slips 90° LEFT of intended direction
-- {prob_slip_right_pct}% probability: Slips 90° RIGHT of intended direction
-
-This means paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
-
-CRITICAL: Analyze the probability results and your previous policy to find improvements. Provide IMPROVED best action (0-3) for ALL {total_states} states.
-Remember: obstacles (X) and future goals (F) also need escape actions (how to exit if accidentally there due to stochastic slip).
-You may not be the cause of this problem. If you think all or a subset of your actions are optimally configured to satisfy the requirements, you may repeat them.
-"""
-
-FEEDBACK_MINUS_TEMPLATE = PromptTemplate(
-    template=FEEDBACK_MINUS_PROMPT_TEXT,
-    input_variables=["probability_summary", "size", "grid_visual", "policy_visual",
-                     "s_obstacles", "f_goals", "k_obstacles", "goal", "total_states",
-                     "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct"]
-)
-
-
-def format_probability_summary(prism_probs: Dict[str, float]) -> str:
-    """Format probability summary for feedback"""
-    lines = ["Current verification probabilities:"]
-    for key, prob in prism_probs.items():
-        status = "✓" if prob >= 0.99 else "✗"
-        lines.append(f"  {status} {key}: {prob:.4f}")
-    return "\n".join(lines)
 
 
 def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
@@ -121,8 +38,7 @@ def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
     planner = FeedbackMinusLLMPlanner(
         model=model,
         model_name=model_name,
-        max_attempts=config.get('max_attempts', 3),
-        target_threshold=config.get('target_threshold', 0.9)
+        max_attempts=config.get('max_attempts', 3)
     )
 
     # Setup logger for this worker in the shared directory
@@ -170,78 +86,32 @@ class FeedbackMinusLLMPlanner:
     identify_problems() output - the LLM must infer issues from raw probabilities.
     """
 
-    def __init__(self, model, model_name: str, max_attempts: int = 3, target_threshold: float = 0.9):
+    def __init__(self, model, model_name: str, max_attempts: int = 3):
         self.action_space = 4
         self.prism_probs = {}
         self.max_attempts = max_attempts  # Total LLM attempts per goal (1 initial + N-1 feedback)
-        self.target_threshold = target_threshold
         self.model = model
         self.model_name = model_name
 
-    def evaluate(self, dataloader, parallel: bool = False, max_workers: Optional[int] = None,
-                 use_threads: bool = True):
+    def evaluate(self, dataloader, max_workers: Optional[int] = None, use_threads: bool = True, run_dir: Optional[str] = None):
         """
         Evaluate the Feedback Minus LLM planner on all gridworlds in the dataloader.
 
         Args:
             dataloader: DataLoader instance containing GridWorld configurations
-            parallel: If True, evaluate gridworlds in parallel
             max_workers: Maximum number of workers. If None, uses CPU count for processes
                         or min(32, CPU count + 4) for threads.
-            use_threads: If True and parallel=True, use ThreadPoolExecutor instead of
+            use_threads: If True, use ThreadPoolExecutor instead of
                         ProcessPoolExecutor. Threads are recommended for I/O-bound LLM calls.
+            run_dir: Optional shared parent directory for logs. If None, creates standalone directory.
 
         Returns:
             List of results containing LTL scores and evaluation statistics
         """
-        if parallel:
-            return self._evaluate_parallel(dataloader, max_workers, use_threads)
-        else:
-            return self._evaluate_sequential(dataloader)
-
-    def _evaluate_sequential(self, dataloader) -> List[Dict]:
-        """Sequential evaluation of all gridworlds"""
-        # Create a run directory for this evaluation
-        run_dir = create_run_directory(f"feedback_minus_LLM_{self.model_name}_sequential")
-
-        self.logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
-        self.prism_verifier = PrismVerifier(self.get_prism_path(), self.logger)
-        results_list = []
-
-        self.logger.info(f"Logs will be saved to: {run_dir}")
-
-        for idx, (gridworld, _) in enumerate(dataloader):
-            start_time = time()
-            self.size = gridworld.size
-            self.env = gridworld
-            self.model_generator = PrismModelGenerator(self.env, self.logger)
-            self.simplified_verifier = SimplifiedVerifier(self.prism_verifier, self.env, self.logger)
-            self.num_goals = len(gridworld.goals)
-            self.q_table = self.initialize_q_table()
-            self.prism_probs = {}
-
-            step_result = self.step()
-            self.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']} (iterations: {step_result['iterations']})")
-            end_time = time()
-            delta_time = end_time - start_time
-            results_list.append({
-                "LTL_Score": step_result["ltl_score"],
-                "Prism_Probabilities": self.prism_probs.copy(),
-                "Evaluation_Time": delta_time,
-                "Iterations_Used": step_result["iterations"],
-                "Iteration_Times": step_result["iteration_times"],
-                "Iteration_PRISM_Times": step_result["iteration_prism_times"],
-                "Iteration_LLM_Times": step_result["iteration_llm_times"],
-                "Iteration_Prism_Probs": step_result["iteration_prism_probs"],
-                "Iteration_Mistakes": step_result["iteration_mistakes"],
-                "Iteration_Costs": step_result["iteration_costs"],
-                "Success": step_result["success"]
-            })
-
-        return results_list
+        return self._evaluate_parallel(dataloader, max_workers, use_threads, run_dir)
 
     def _evaluate_parallel(self, dataloader, max_workers: Optional[int] = None,
-                          use_threads: bool = True) -> List[Dict]:
+                          use_threads: bool = True, run_dir: Optional[str] = None) -> List[Dict]:
         """
         Parallel evaluation of all gridworlds.
 
@@ -249,15 +119,20 @@ class FeedbackMinusLLMPlanner:
             dataloader: DataLoader instance containing GridWorld configurations
             max_workers: Maximum number of workers
             use_threads: If True, use ThreadPoolExecutor (better for I/O-bound LLM calls)
+            run_dir: Optional shared parent directory for logs.
 
         Returns:
             List of results containing LTL scores and evaluation statistics
         """
-        # Create a shared run directory for all workers
-        run_dir = create_run_directory(f"feedback_minus_LLM_{self.model_name}_parallel")
+        # Create log directory under shared run_dir, or standalone
+        if run_dir:
+            log_dir = os.path.join(run_dir, f"feedback_minus_LLM_{self.model_name}")
+            os.makedirs(log_dir, exist_ok=True)
+        else:
+            log_dir = create_run_directory(f"feedback_minus_LLM_{self.model_name}_parallel")
 
         # Setup main logger in the shared directory
-        main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
+        main_logger = setup_logger("main", run_dir=log_dir, include_timestamp=False)
 
         if max_workers is None:
             if use_threads:
@@ -267,13 +142,12 @@ class FeedbackMinusLLMPlanner:
 
         executor_type = "threads" if use_threads else "processes"
         main_logger.info(f"Starting parallel evaluation with {max_workers} {executor_type}")
-        main_logger.info(f"Logs will be saved to: {run_dir}")
+        main_logger.info(f"Logs will be saved to: {log_dir}")
 
         # Prepare arguments with shared run directory
         config = {
             'max_attempts': self.max_attempts,
-            'target_threshold': self.target_threshold,
-            'run_dir': run_dir,  # Pass shared directory to workers
+            'run_dir': log_dir,  # Pass shared directory to workers
             'model': self.model,
             'model_name': self.model_name
         }
@@ -383,13 +257,17 @@ class FeedbackMinusLLMPlanner:
                 self.prism_probs[f'seq_{goal_nums[i]}_before_{goal_nums[i+1]}'] = probabilities[idx]
                 idx += 1
 
-        if idx < len(probabilities):
+        # Complete sequence (only emitted when multiple goals)
+        if len(goal_nums) > 1 and idx < len(probabilities):
             self.prism_probs['complete_sequence'] = probabilities[idx]
             idx += 1
 
-        if idx < len(probabilities):
-            self.prism_probs['avoid_obstacle'] = probabilities[idx]
-            idx += 1
+        # Per-segment moving obstacle avoidance
+        if self.env.moving_obstacle_positions:
+            for goal_num in goal_nums:
+                if idx < len(probabilities):
+                    self.prism_probs[f'avoid_moving_seg{goal_num}'] = probabilities[idx]
+                    idx += 1
 
     def _get_applicable_goal_states(self, goal_idx: int) -> List[List[bool]]:
         """Get the goal state combinations applicable for planning to reach goal i"""
@@ -406,53 +284,58 @@ class FeedbackMinusLLMPlanner:
         return [goal_state]
 
     def _check_all_probabilities_meet_threshold(self) -> bool:
-        """Check if all probabilities meet the target threshold"""
+        """Check if all probabilities meet the per-key thresholds"""
         if not self.prism_probs:
             return False
-        return all(prob >= self.target_threshold for prob in self.prism_probs.values())
+        return all(p >= get_threshold_for_key(k) for k, p in self.prism_probs.items())
+
+    def _goals_needing_requery(self) -> List[int]:
+        """Return indices of goals whose segment probabilities are below threshold."""
+        goal_nums = sorted(self.env.goals.keys())
+        needs_requery = []
+        for idx, goal_num in enumerate(goal_nums):
+            segment_probs = extract_segment_probs(self.prism_probs, goal_num, goal_nums)
+            if any(p < get_threshold_for_key(k) for k, p in segment_probs.items()):
+                needs_requery.append(idx)
+        return needs_requery
 
     def _get_feedback_prompt(self, goal_idx: int, goal: Tuple[int, int],
                               future_goals: List[Tuple[int, int]]) -> str:
         """Generate feedback prompt for correction iteration (without problem identification)"""
 
-        flat_k_obstacles = []
-        if self.env.moving_obstacle_positions:
-            for item in self.env.moving_obstacle_positions:
-                if isinstance(item, list):
-                    flat_k_obstacles.extend(item)
-                else:
-                    flat_k_obstacles.append(item)
-
-        grid_visual = generate_grid_visual(
-            self.size, goal, self.env.static_obstacles,
-            future_goals, flat_k_obstacles
-        )
+        goal_nums = sorted(self.env.goals.keys())
+        goal_num = goal_nums[goal_idx]
 
         # Get the applicable goal state for this goal index
         goal_state_list = self._get_applicable_goal_states(goal_idx)[0]
         goal_state = tuple(goal_state_list)
 
-        policy_visual = generate_policy_visual(
+        policy_vis = generate_policy_visual(
             self.size, self.q_table, goal_state,
             goal, self.env.static_obstacles, future_goals
         )
 
-        probability_summary = format_probability_summary(self.prism_probs)
+        # Per-segment probs for this goal + global metrics
+        segment_probs = extract_segment_probs(self.prism_probs, goal_num, goal_nums)
+        if 'complete_sequence' in self.prism_probs:
+            segment_probs['complete_sequence'] = self.prism_probs['complete_sequence']
 
-        # Note: No call to identify_problems() - that's the key difference from FeedbackLLMPlanner
-        return FEEDBACK_MINUS_TEMPLATE.format(
-            probability_summary=probability_summary,
+        prob_summary = format_probability_summary(segment_probs)
+
+        # Note: No problems argument - that's the key difference from FeedbackLLMPlanner
+        return build_prompt(
             size=self.size,
-            grid_visual=grid_visual,
-            policy_visual=policy_visual,
-            s_obstacles=str(self.env.static_obstacles),
-            f_goals=str(future_goals),
-            k_obstacles=str(self.env.moving_obstacle_positions),
-            goal=str(goal),
-            total_states=self.size * self.size,
-            prob_forward_pct=int(self.env.prob_forward * 100),
-            prob_slip_left_pct=int(self.env.prob_slip_left * 100),
-            prob_slip_right_pct=int(self.env.prob_slip_right * 100)
+            s_obstacles=self.env.static_obstacles,
+            f_goals=future_goals,
+            k_obstacles=self.env.moving_obstacle_positions,
+            goal=goal,
+            prob_forward=self.env.prob_forward,
+            prob_slip_left=self.env.prob_slip_left,
+            prob_slip_right=self.env.prob_slip_right,
+            is_feedback=True,
+            probability_summary=prob_summary,
+            policy_visual=policy_vis,
+            problems=""
         )
 
     def _apply_response_to_q_table(self, response: ActionPolicy, goal_idx: int):
@@ -552,7 +435,7 @@ class FeedbackMinusLLMPlanner:
         self.logger.info(f"Initial LTL Score: {ltl_score}")
 
         # Track metrics for initial iteration
-        mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
+        mistakes = sum(1 for k, p in self.prism_probs.items() if p < get_threshold_for_key(k))
         cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
         iteration_times.append(time() - iteration_start)
         iteration_prism_times.append(iter_prism_time)
@@ -560,6 +443,14 @@ class FeedbackMinusLLMPlanner:
         iteration_prism_probs.append(self.prism_probs.copy())
         iteration_mistakes.append(mistakes)
         iteration_costs.append(cost)
+        failed = {k: f"{p:.4f} < {get_threshold_for_key(k)}" for k, p in self.prism_probs.items() if p < get_threshold_for_key(k)}
+        if failed:
+            self.logger.info(f"Failed requirements ({mistakes}): {failed}")
+
+        # Track best policy to prevent over-correction
+        best_ltl_score = ltl_score
+        best_q_table = self.q_table.copy()
+        best_prism_probs = self.prism_probs.copy()
 
         # Feedback loop - attempt counts: 1 = initial, 2+ = feedback iterations
         attempt = 1  # We've completed attempt 1 (initial)
@@ -570,8 +461,15 @@ class FeedbackMinusLLMPlanner:
             self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback minus - no problem identification) ===")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
 
-            # Re-query for each goal with feedback (but no problem identification)
+            # Selective re-query: only goals with below-threshold segments
+            goals_to_requery = self._goals_needing_requery()
+            self.logger.info(f"Goals needing re-query: {[sorted(self.env.goals.keys())[i] for i in goals_to_requery]}")
+
             for idx, goal_num in enumerate(goal_nums):
+                if idx not in goals_to_requery:
+                    self.logger.info(f"Skipping goal {goal_num} (all segment probs meet threshold)")
+                    continue
+
                 goal = self.env.goals[goal_num]
                 future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
@@ -600,7 +498,7 @@ class FeedbackMinusLLMPlanner:
             self.logger.info(f"LTL Score after attempt {attempt}: {ltl_score}")
 
             # Track metrics for this iteration
-            mistakes = sum(1 for p in self.prism_probs.values() if p < self.target_threshold)
+            mistakes = sum(1 for k, p in self.prism_probs.items() if p < get_threshold_for_key(k))
             cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
             iteration_times.append(time() - iteration_start)
             iteration_prism_times.append(iter_prism_time)
@@ -608,6 +506,24 @@ class FeedbackMinusLLMPlanner:
             iteration_prism_probs.append(self.prism_probs.copy())
             iteration_mistakes.append(mistakes)
             iteration_costs.append(cost)
+            failed = {k: f"{p:.4f} < {get_threshold_for_key(k)}" for k, p in self.prism_probs.items() if p < get_threshold_for_key(k)}
+            if failed:
+                self.logger.info(f"Failed requirements ({mistakes}): {failed}")
+
+            # Keep-best with rollback: revert if score didn't improve
+            if ltl_score > best_ltl_score:
+                best_ltl_score = ltl_score
+                best_q_table = self.q_table.copy()
+                best_prism_probs = self.prism_probs.copy()
+                self.logger.info(f"New best score: {best_ltl_score:.4f}")
+            else:
+                self.logger.info(f"Score {ltl_score:.4f} did not improve over best {best_ltl_score:.4f}, reverting policy")
+                self.q_table = best_q_table.copy()
+                self.prism_probs = best_prism_probs.copy()
+
+        # Ensure we return the best results
+        self.q_table = best_q_table
+        self.prism_probs = best_prism_probs
 
         success = self._check_all_probabilities_meet_threshold()
         if success:
@@ -615,11 +531,11 @@ class FeedbackMinusLLMPlanner:
         else:
             self.logger.warning(f"Max attempts ({self.max_attempts}) reached. Final probabilities: {self.prism_probs}")
 
-        self.logger.info(f"Final LTL Score (Feedback Minus LLM): {ltl_score}")
+        self.logger.info(f"Final LTL Score (Feedback Minus LLM): {best_ltl_score}")
         self.logger.info(f"Total PRISM time: {sum(iteration_prism_times):.2f}s, Total LLM time: {sum(iteration_llm_times):.2f}s")
 
         return {
-            "ltl_score": ltl_score,
+            "ltl_score": best_ltl_score,
             "iterations": attempt,
             "iteration_times": iteration_times,
             "iteration_prism_times": iteration_prism_times,
