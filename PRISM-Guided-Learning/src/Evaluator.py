@@ -50,18 +50,18 @@ def main():
 
     models = [
         # EvalModel.RL, 
-        EvalModel.LLM_VANILLA_GPT5_NANO, 
+        # EvalModel.LLM_VANILLA_GPT5_NANO, 
         EvalModel.LLM_VANILLA_GPT5_MINI,
-        EvalModel.LLM_VANILLA_GEMINI_PRO,
-        EvalModel.LLM_VANILLA_PLUS_GPT5_NANO,
+        # EvalModel.LLM_VANILLA_GEMINI_PRO,
+        # EvalModel.LLM_VANILLA_PLUS_GPT5_NANO,
         EvalModel.LLM_VANILLA_PLUS_GPT5_MINI,
-        EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO,
-        EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO,
+        # EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO,
+        # EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO,
         EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI,
-        EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO,
-        EvalModel.LLM_FEEDBACK_GPT5_NANO,         
+        # EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO,
+        # EvalModel.LLM_FEEDBACK_GPT5_NANO,         
         EvalModel.LLM_FEEDBACK_GPT5_MINI,
-        EvalModel.LLM_FEEDBACK_GEMINI_PRO 
+        #EvalModel.LLM_FEEDBACK_GEMINI_PRO 
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
