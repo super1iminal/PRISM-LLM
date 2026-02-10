@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 from config.Settings import get_threshold_for_key
 
 UNIFIED_PROMPT_TEXT = """You are an expert path planner{role_block}
+
+Your task is to create a best-action policy for a grid world — choose one action per cell that guides the agent from any position to the goal while avoiding static obstacles, future goals, and moving obstacles.
 {results_block}
 The grid world is {size} x {size}. Here is the visual layout:
 
@@ -14,7 +16,7 @@ The grid world is {size} x {size}. Here is the visual layout:
 - 'G' = Current goal position you must reach
 - 'X' = Static obstacle (CANNOT enter - you will bounce back)
 - 'F' = Future goal (treat as obstacle for now - avoid it)
-- 'M' = Moving obstacle position (avoid if possible)
+- 'M' = Moving obstacle patrol path (avoid if possible)
 - '.' = Empty cell you can move through
 {policy_block}
 COORDINATE SYSTEM:
@@ -192,9 +194,15 @@ Policy Legend:
 Compare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.
 
 """
-        examples_block = ""
-        moving_note = ""
-        stochastic_example = ""
+        examples_block = f"""
+ACTION EXAMPLES:
+From (0,0): UP→(0,0), RIGHT→(0,1), DOWN→(1,0), LEFT→(0,0)
+From (0,1): UP→(0,1), RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
+From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
+
+"""
+        stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
+        moving_note = ", which could be anywhere along the patrol path" if k_obstacles else ""
         paths_word = ""
 
         if problems:
@@ -205,19 +213,25 @@ HINTS (possible issues):
 
 """
             closing_block = (
-                f"CRITICAL: Analyze the probability results, your previous policy, and the hints above to find improvements. Provide IMPROVED best action (0-3) for ALL {total_states} states.\n"
-                "Remember: obstacles (X) and future goals (F) also need escape actions (how to exit if accidentally there due to stochastic slip).\n"
-                "The hints are suggestions — your policy may not be the cause of every issue listed. If you think all or a subset of your actions are optimally configured, you may repeat them.\n"
-                "PRIORITY: Focus on goal reachability and sequential ordering first. Obstacle avoidance is secondary."
+                f"CRITICAL REQUIREMENTS:\n"
+                f"1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid\n"
+                "2. Never plan a path through obstacles (X) or future goals (F)\n"
+                "2a. Avoid moving obstacles (M) along their patrol paths if possible\n"
+                "3. The best action should create a path from ANY position to the goal\n"
+                "4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
+                "Now provide the best action (0-3) for each state."
             )
         else:
             # FeedbackMinus style - no problems block
             problems_block = ""
             closing_block = (
-                f"CRITICAL: Analyze the probability results and your previous policy to find improvements. Provide IMPROVED best action (0-3) for ALL {total_states} states.\n"
-                "Remember: obstacles (X) and future goals (F) also need escape actions (how to exit if accidentally there due to stochastic slip).\n"
-                "You may not be the cause of this problem. If you think all or a subset of your actions are optimally configured to satisfy the requirements, you may repeat them.\n"
-                "PRIORITY: Focus on goal reachability and sequential ordering first. Obstacle avoidance is secondary."
+                f"CRITICAL REQUIREMENTS:\n"
+                f"1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid\n"
+                "2. Never plan a path through obstacles (X) or future goals (F)\n"
+                "2a. Avoid moving obstacles (M) along their patrol paths if possible\n"
+                "3. The best action should create a path from ANY position to the goal\n"
+                "4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
+                "Now provide the best action (0-3) for each state."
             )
     else:
         # Initial (Vanilla) style
@@ -233,15 +247,16 @@ From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
 
 """
         problems_block = ""
-        moving_note = ", move with 90% probability"
+        moving_note = ", which could be anywhere along the trajectory each timestep" if k_obstacles else ""
         stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
         paths_word = "your "
         closing_block = (
             f"CRITICAL REQUIREMENTS:\n"
             f"1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid\n"
             "2. Never plan a path through obstacles (X) or future goals (F)\n"
+            "2a. Avoid moving obstacles (M) along their patrol paths if possible\n"
             "3. The best action should create a path from ANY position to the goal\n"
-            "4. If a cell is an obstacle (X) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
+            "4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
             "Now provide the best action (0-3) for each state."
         )
 

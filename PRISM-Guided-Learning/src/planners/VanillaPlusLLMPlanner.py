@@ -386,6 +386,9 @@ class VanillaPlusLLMPlanner:
         iteration_costs = []
 
         ltl_score = 0.0
+        best_ltl_score = 0.0
+        best_q_table = None
+        best_prism_probs = {}
         attempt = 0
 
         while attempt < self.max_attempts:
@@ -421,7 +424,7 @@ class VanillaPlusLLMPlanner:
             cost = sum(1.0 - p for p in self.prism_probs.values() if p < 1.0)
             iteration_time = time() - iteration_start
 
-            # Track metrics for this iteration
+            # Track metrics for this iteration (pre-rollback)
             iteration_times.append(iteration_time)
             iteration_prism_times.append(prism_time)
             iteration_llm_times.append(llm_time)
@@ -435,20 +438,34 @@ class VanillaPlusLLMPlanner:
             if failed:
                 self.logger.info(f"Failed requirements ({mistakes}): {failed}")
 
+            # Keep-best with rollback: track the best attempt
+            if ltl_score > best_ltl_score:
+                best_ltl_score = ltl_score
+                best_q_table = self.q_table.copy()
+                best_prism_probs = self.prism_probs.copy()
+                self.logger.info(f"New best score: {best_ltl_score:.4f}")
+            else:
+                self.logger.info(f"Score {ltl_score:.4f} did not improve over best {best_ltl_score:.4f}")
+
             # Early exit if all probabilities meet threshold
             if self._check_all_probabilities_meet_threshold():
                 self.logger.info(f"All probabilities meet threshold after {attempt} attempts")
                 break
 
+        # Ensure we return the best results
+        if best_q_table is not None:
+            self.q_table = best_q_table
+            self.prism_probs = best_prism_probs
+
         success = self._check_all_probabilities_meet_threshold()
         if not success:
             self.logger.warning(f"Max attempts ({self.max_attempts}) reached. Final probabilities: {self.prism_probs}")
 
-        self.logger.info(f"Final LTL Score (Vanilla Plus LLM): {ltl_score}")
+        self.logger.info(f"Final LTL Score (Vanilla Plus LLM): {best_ltl_score}")
         self.logger.info(f"Total PRISM time: {sum(iteration_prism_times):.2f}s, Total LLM time: {sum(iteration_llm_times):.2f}s")
 
         return {
-            "ltl_score": ltl_score,
+            "ltl_score": best_ltl_score,
             "iterations": attempt,
             "iteration_times": iteration_times,
             "iteration_prism_times": iteration_prism_times,

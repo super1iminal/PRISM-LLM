@@ -188,7 +188,7 @@ def _method_label(fb, llm, multi_llm):
 # RQ1: Effect of Feedback
 # ──────────────────────────────────────────────
 
-def rq1(summaries, out_dir):
+def rq1(summaries, out_dir, raw=None):
     print("\n=== RQ1: Effect of Feedback ===")
 
     llm_methods = _split_llm_methods(summaries)
@@ -203,6 +203,8 @@ def rq1(summaries, out_dir):
     _rq1_tts_bar(llm_methods, fb_types, llms, multi_llm, out_dir)
     _rq1_success_boxplot(llm_methods, fb_types, llms, multi_llm, out_dir)
     _rq1_table(llm_methods, fb_types, llms, multi_llm, out_dir)
+    if raw is not None:
+        _rq1_mistakes_per_iteration(raw, out_dir)
 
 
 def _rq1_tts_bar(M, fb_types, llms, multi_llm, out_dir):
@@ -313,6 +315,61 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
         tbl[0, j].set_facecolor("#2C3E50")
         tbl[0, j].set_text_props(color="white", fontweight="bold")
     _save(fig, os.path.join(out_dir, "rq1_table.png"))
+
+
+def _rq1_mistakes_per_iteration(raw, out_dir):
+    """Line plot: average mistakes per iteration for LLM feedback methods.
+
+    Uses the raw multi-index DataFrames so we can group by iteration number.
+    Each line shows how the average number of mistakes evolves across
+    feedback iterations, with sample counts annotated.
+    """
+    multi_llm = len(set(
+        parse_model_name(m)[1] for m in raw if parse_model_name(m)[1] is not None
+    )) > 1
+
+    items = []  # (label, fb_type, df)
+    for model_name, df in raw.items():
+        fb, llm = parse_model_name(model_name)
+        if llm is None:
+            continue
+        label = _method_label(fb, llm, multi_llm)
+        items.append((label, fb, df))
+
+    if not items:
+        return
+
+    # Sort by feedback order
+    fb_rank = {fb: i for i, fb in enumerate(FEEDBACK_ORDER)}
+    items.sort(key=lambda t: (fb_rank.get(t[1], 99), t[0]))
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    markers = ["o", "s", "^", "D", "v", "P", "X"]
+
+    for i, (label, fb, df) in enumerate(items):
+        by_iter = df.groupby("iteration")["mistakes"].agg(["mean", "count"])
+        ax.plot(
+            by_iter.index, by_iter["mean"],
+            marker=markers[i % len(markers)],
+            color=FEEDBACK_COLORS.get(fb, "#999"),
+            label=label, linewidth=2, markersize=7,
+        )
+        # Annotate sample count at each point
+        for it, row in by_iter.iterrows():
+            ax.annotate(
+                f"n={int(row['count'])}",
+                (it, row["mean"]),
+                textcoords="offset points", xytext=(0, 10),
+                fontsize=7, ha="center", color="#555",
+            )
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Average Mistakes")
+    ax.set_title("RQ1: Average Mistakes per Iteration")
+    ax.set_xticks(sorted(df.index.get_level_values("iteration").unique()))
+    ax.legend()
+    ax.grid(alpha=0.3)
+    _save(fig, os.path.join(out_dir, "rq1_mistakes_per_iter.png"))
 
 
 # ──────────────────────────────────────────────
@@ -538,7 +595,7 @@ def main():
     out_dir = os.path.join(run_dir, "plots")
     os.makedirs(out_dir, exist_ok=True)
 
-    rq1(summaries, out_dir)
+    rq1(summaries, out_dir, raw=raw)
     rq2(summaries, out_dir)
     rq3(summaries, out_dir)
 
