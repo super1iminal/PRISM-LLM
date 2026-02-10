@@ -1,7 +1,7 @@
 from verification.PrismVerifier import PrismVerifier
 from verification.SimplifiedVerifier import SimplifiedVerifier
 from verification.PrismModelGenerator import PrismModelGenerator
-from utils.LLMPrompting import get_prompt, build_prompt, ActionPolicy, generate_policy_visual, format_probability_summary, extract_segment_probs
+from utils.LLMPrompting import get_prompt, build_prompt, ActionPolicy, generate_policy_visual, generate_policy_raw, format_probability_summary, extract_segment_probs
 
 import os
 from typing import List, Optional, Dict, Tuple
@@ -312,8 +312,10 @@ class FeedbackMinusLLMPlanner:
 
         policy_vis = generate_policy_visual(
             self.size, self.q_table, goal_state,
-            goal, self.env.static_obstacles, future_goals
+            goal, self.env.static_obstacles, future_goals,
+            self.env.moving_obstacle_positions
         )
+        policy_raw = generate_policy_raw(self.size, self.q_table, goal_state)
 
         # Determine which keys are relevant to this goal segment
         segment_probs = extract_segment_probs(self.prism_probs, goal_num, goal_nums)
@@ -334,6 +336,7 @@ class FeedbackMinusLLMPlanner:
             is_feedback=True,
             probability_summary=prob_summary,
             policy_visual=policy_vis,
+            policy_raw=policy_raw,
             problems=""
         )
 

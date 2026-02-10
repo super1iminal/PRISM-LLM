@@ -151,6 +151,7 @@ def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tu
                  is_feedback: bool = False,
                  probability_summary: str = "",
                  policy_visual: str = "",
+                 policy_raw: str = "",
                  problems: str = "") -> str:
     """Generate the complete prompt with visual grid using the unified template.
 
@@ -166,6 +167,7 @@ def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tu
         is_feedback: If True, generates feedback prompt (with results, policy visual)
         probability_summary: Formatted probability summary (feedback only)
         policy_visual: ASCII policy visualization (feedback only)
+        policy_raw: Raw policy listing e.g. "(0, 0)=1, ..." (feedback only)
         problems: Problem identification text (feedback only; empty = FeedbackMinus style)
 
     Returns:
@@ -199,10 +201,12 @@ def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tu
         parts = [
             f"A previous policy generated for this problem has the following probabilities for the requirements:\n",
             f"{probability_summary}\n",
-            f"Previous policy (visualized as arrows):\n{policy_visual}\n",
+            f"Previous policy:\n{policy_raw}\n",
+            f"The following is a visualization of the previous policy:\n{policy_visual}\n",
             "Policy Legend:\n"
             "- ↑ = UP (action 0), → = RIGHT (action 1), ↓ = DOWN (action 2), ← = LEFT (action 3)\n"
             "- X↓ = Static obstacle with escape action (e.g., X↓ means obstacle, escape by going DOWN)\n"
+            "- M→ = Moving obstacle with action (e.g., M→ means moving obstacle, action is RIGHT)\n"
             "- F→ = Future goal with escape action (e.g., F→ means future goal, escape by going RIGHT)\n"
             "- G = Current goal (destination)\n",
             "\nCompare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.\n",
@@ -269,11 +273,33 @@ def generate_grid_visual(size: int, goal: Tuple[int, int], s_obstacles: List[Tup
     return visual
 
 
+def generate_policy_raw(size: int, policy: Dict[Tuple, int],
+                        goal_state: Tuple[bool, ...]) -> str:
+    """Generate raw policy listing: (x, y)=action for each cell.
+
+    Args:
+        size: Grid size
+        policy: Dict mapping (x, y, goal_flags...) -> action
+        goal_state: Current goal state tuple to filter relevant states
+
+    Returns:
+        Newline-separated string like "(0, 0)=1\\n(0, 1)=2\\n..."
+    """
+    parts = []
+    for x in range(size):
+        for y in range(size):
+            state = (x, y) + goal_state
+            action = policy.get(state, '?')
+            parts.append(f"({x}, {y})={action}")
+    return "\n".join(parts)
+
+
 def generate_policy_visual(size: int, policy: Dict[Tuple, int],
                            goal_state: Tuple[bool, ...],
                            goal: Tuple[int, int],
                            s_obstacles: List[Tuple[int, int]],
-                           f_goals: List[Tuple[int, int]]) -> str:
+                           f_goals: List[Tuple[int, int]],
+                           k_obstacles: List[Tuple[int, int]] = None) -> str:
     """Generate ASCII visual of the policy actions.
 
     Args:
@@ -283,16 +309,19 @@ def generate_policy_visual(size: int, policy: Dict[Tuple, int],
         goal: Current goal position
         s_obstacles: List of static obstacle positions
         f_goals: List of future goal positions
+        k_obstacles: List of moving obstacle positions
 
     Returns:
         ASCII grid showing arrows for actions, with markers for special cells.
-        Format uses 2-char cells: " →" for normal, "X↓" for obstacle+action, "F→" for future goal+action.
+        Format uses 2-char cells: " →" for normal, "X↓" for obstacle+action,
+        "F→" for future goal+action, "M→" for moving obstacle+action.
     """
     ACTION_ARROWS = {0: '↑', 1: '→', 2: '↓', 3: '←'}
 
     # Create sets for quick lookup
     obstacle_set = set((obs[0], obs[1]) for obs in s_obstacles if 0 <= obs[0] < size and 0 <= obs[1] < size)
     future_goal_set = set((fg[0], fg[1]) for fg in f_goals if 0 <= fg[0] < size and 0 <= fg[1] < size)
+    moving_set = set((obs[0], obs[1]) for obs in (k_obstacles or []) if 0 <= obs[0] < size and 0 <= obs[1] < size)
 
     # Build grid with 2-char cells
     grid = [[' ?' for _ in range(size)] for _ in range(size)]
@@ -308,6 +337,9 @@ def generate_policy_visual(size: int, policy: Dict[Tuple, int],
             elif (x, y) in obstacle_set:
                 # Obstacle with escape action
                 grid[x][y] = 'X' + action_arrow
+            elif (x, y) in moving_set:
+                # Moving obstacle with action
+                grid[x][y] = 'M' + action_arrow
             elif (x, y) in future_goal_set:
                 # Future goal with escape action
                 grid[x][y] = 'F' + action_arrow
