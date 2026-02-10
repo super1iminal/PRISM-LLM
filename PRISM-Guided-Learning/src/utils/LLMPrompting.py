@@ -380,7 +380,7 @@ def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tupl
 class StateAction(BaseModel):
     x: int = Field(..., description="x coordinate (row, 0-indexed)")
     y: int = Field(..., description="y coordinate (column, 0-indexed)")
-    best_action: int = Field(..., description="Best action: 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT")
+    best_action: int = Field(..., ge=0, le=3, description="Best action: 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT")
 
 class ActionPolicy(BaseModel):
     """Best action for each state in the grid"""

@@ -320,6 +320,10 @@ class VanillaLLMPlanner:
         for state_action in response.states:
             x, y = state_action.x, state_action.y
 
+            if state_action.best_action not in (0, 1, 2, 3):
+                self.logger.warning(f"Invalid action {state_action.best_action} at ({x},{y}), skipping.")
+                continue
+
             for goal_state_list in applicable_goals:
                 goal_state_tuple = tuple(goal_state_list)
                 state = (x, y) + goal_state_tuple
