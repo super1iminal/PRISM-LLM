@@ -315,10 +315,11 @@ class FeedbackMinusLLMPlanner:
             goal, self.env.static_obstacles, future_goals
         )
 
-        # Per-segment probs for this goal only
+        # Determine which keys are relevant to this goal segment
         segment_probs = extract_segment_probs(self.prism_probs, goal_num, goal_nums)
 
-        prob_summary = format_probability_summary(segment_probs)
+        # Show ALL probs but annotate which are relevant to this goal
+        prob_summary = format_probability_summary(self.prism_probs, relevant_keys=set(segment_probs.keys()))
 
         # Note: No problems argument - that's the key difference from FeedbackLLMPlanner
         return build_prompt(
@@ -406,20 +407,20 @@ class FeedbackMinusLLMPlanner:
             future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
             self.logger.info(f"Calling LLM for goal {goal_num}...")
+            prompt_text = get_prompt(
+                self.size,
+                self.env.static_obstacles,
+                future_goals,
+                self.env.moving_obstacle_positions,
+                goal,
+                self.env.prob_forward,
+                self.env.prob_slip_left,
+                self.env.prob_slip_right
+            )
+            self.logger.info(f"=== PROMPT for goal {goal_num} ===\n{prompt_text}")
             llm_start = time()
             try:
-                response = self.model.invoke(
-                    get_prompt(
-                        self.size,
-                        self.env.static_obstacles,
-                        future_goals,
-                        self.env.moving_obstacle_positions,
-                        goal,
-                        self.env.prob_forward,
-                        self.env.prob_slip_left,
-                        self.env.prob_slip_right
-                    )
-                )
+                response = self.model.invoke(prompt_text)
             except Exception as e:
                 self.logger.error(f"LLM invoke failed for goal {goal_num}: {type(e).__name__}: {e}")
                 raise
@@ -463,15 +464,7 @@ class FeedbackMinusLLMPlanner:
             self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback minus - no problem identification) ===")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
 
-            # Selective re-query: only goals with below-threshold segments
-            goals_to_requery = self._goals_needing_requery()
-            self.logger.info(f"Goals needing re-query: {[sorted(self.env.goals.keys())[i] for i in goals_to_requery]}")
-
             for idx, goal_num in enumerate(goal_nums):
-                if idx not in goals_to_requery:
-                    self.logger.info(f"Skipping goal {goal_num} (all segment probs meet threshold)")
-                    continue
-
                 goal = self.env.goals[goal_num]
                 future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
@@ -480,6 +473,7 @@ class FeedbackMinusLLMPlanner:
                 feedback_prompt = self._get_feedback_prompt(
                     idx, goal, future_goals
                 )
+                self.logger.info(f"=== PROMPT for goal {goal_num} (feedback) ===\n{feedback_prompt}")
 
                 llm_start = time()
                 try:

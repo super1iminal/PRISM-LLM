@@ -16,7 +16,7 @@ from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
 
 from environment.GridWorldStepper import GridWorldMover
-from config.Settings import PRISM_PATH, RL_MAX_EPISODES, RL_CONVERGENCE_EPSILON, RL_MIN_EPISODES_BEFORE_CONVERGENCE, get_threshold_for_key
+from config.Settings import PRISM_PATH, RL_MAX_EPISODES, RL_TIME_BUDGET, RL_CONVERGENCE_EPSILON, RL_MIN_EPISODES_BEFORE_CONVERGENCE, get_threshold_for_key
 from utils.Logging import setup_logger, create_run_directory
 
 
@@ -39,6 +39,7 @@ def _evaluate_single_gridworld(args: Tuple) -> Dict:
     # Create a new agent instance for this process
     agent = LTLGuidedQLearningWithObstacle()
     agent.max_episodes = config.get('max_episodes', RL_MAX_EPISODES)
+    agent.time_budget = config.get('time_budget', RL_TIME_BUDGET)
     agent.convergence_epsilon = config.get('convergence_epsilon', RL_CONVERGENCE_EPSILON)
     agent.min_episodes_before_convergence = config.get('min_episodes_before_convergence', RL_MIN_EPISODES_BEFORE_CONVERGENCE)
     agent.verify_interval = config.get('verify_interval', 1)
@@ -108,11 +109,13 @@ class LTLGuidedQLearningWithObstacle:
         self.K = 5  # Counterfactual depth
         
         # Training configuration
-        self.max_episodes = RL_MAX_EPISODES  # 500
-        self.convergence_epsilon = RL_CONVERGENCE_EPSILON  # 0.001
-        self.min_episodes_before_convergence = RL_MIN_EPISODES_BEFORE_CONVERGENCE  # 50
+        self.max_episodes = RL_MAX_EPISODES
+        self.time_budget = RL_TIME_BUDGET  # Wall-clock seconds
+        self.convergence_epsilon = RL_CONVERGENCE_EPSILON
+        self.min_episodes_before_convergence = RL_MIN_EPISODES_BEFORE_CONVERGENCE
         self.verify_interval = 1
         self.previous_probs = None
+        self.train_start_time = None
         
     def _get_prism_path(self):
         """Get PRISM executable path"""
@@ -166,6 +169,7 @@ class LTLGuidedQLearningWithObstacle:
         # Prepare arguments for parallel execution
         config = {
             'max_episodes': self.max_episodes,
+            'time_budget': self.time_budget,
             'convergence_epsilon': self.convergence_epsilon,
             'min_episodes_before_convergence': self.min_episodes_before_convergence,
             'verify_interval': self.verify_interval,
@@ -532,18 +536,18 @@ class LTLGuidedQLearningWithObstacle:
                 for state, q_values in self.q_table.items()}
 
     def _check_termination(self, episode: int) -> Optional[str]:
-        """Check termination conditions. Returns reason string or None."""
-        # Condition 1: All probabilities meet threshold (can trigger anytime)
-        if self._all_probs_meet_threshold():
-            return "all probabilities >= threshold"
+        """Check termination conditions. Returns reason string or None.
 
-        # Condition 2: Convergence (only after minimum episodes to allow learning)
-        if episode >= self.min_episodes_before_convergence:
-            if self._check_convergence():
-                return "probabilities converged (change < epsilon)"
-        else:
-            # Still track previous probs for when we do start checking
-            self._update_previous_probs()
+        Only wall-clock time budget triggers early termination.
+        Convergence/threshold checks are disabled so RL trains comparably
+        to LLM planners.
+        """
+        self._update_previous_probs()
+
+        if self.train_start_time is not None:
+            elapsed = time() - self.train_start_time
+            if elapsed >= self.time_budget:
+                return f"time budget reached ({elapsed:.0f}s >= {self.time_budget}s)"
 
         return None
 
@@ -577,10 +581,9 @@ class LTLGuidedQLearningWithObstacle:
         """
         Train the Q-learning agent with PRISM verification guidance.
 
-        Termination conditions (checked after each verification):
-        1. All probabilities >= threshold
-        2. Probability changes < epsilon (convergence)
-        3. Max episodes reached
+        Termination conditions:
+        1. Wall-clock time budget exceeded (RL_TIME_BUDGET seconds)
+        2. Max episodes reached
 
         Args:
             verify_interval: Frequency of PRISM verification
@@ -590,6 +593,7 @@ class LTLGuidedQLearningWithObstacle:
         """
         try:
             start_time = time()
+            self.train_start_time = start_time
             best_episode = 0
             episode = 0
 

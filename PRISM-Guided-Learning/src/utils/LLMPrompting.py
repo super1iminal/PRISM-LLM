@@ -117,21 +117,25 @@ def extract_segment_probs(prism_probs: Dict[str, float], goal_num: int, goal_num
     return segment
 
 
-def format_probability_summary(prism_probs: Dict[str, float]) -> str:
-    """Format probability summary for feedback.
+def format_probability_summary(prism_probs: Dict[str, float], relevant_keys: set = None) -> str:
+    """Format probability summary for feedback showing ALL probabilities.
 
-    Hides moving-obstacle avoidance metrics that already meet their
-    threshold so the LLM doesn't try to optimise a non-problem.
+    Each probability is shown with its threshold, a pass/fail marker,
+    a relevance annotation if relevant_keys is provided, and a below threshold
+    marker for failing probabilities.
     """
     lines = ["Current verification probabilities:"]
     for key, prob in prism_probs.items():
         threshold = get_threshold_for_key(key)
-        # Don't show obstacle avoidance metrics that meet threshold —
-        # they distract the LLM from the real issues.
-        if key.startswith('avoid_moving') and prob >= threshold:
-            continue
-        status = "✓" if prob >= threshold else "✗"
-        lines.append(f"  {status} {key}: {prob:.4f}")
+        passing = prob >= threshold
+        status = "PASS" if passing else "FAIL"
+        parts = [f"  {status}  {key}: {prob:.4f} (threshold: {threshold})"]
+        if relevant_keys is not None and key in relevant_keys:
+            parts.append("[relevant to this goal]")
+        if not passing:
+            parts.append("<-- below threshold")
+        lines.append("  ".join(parts))
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -178,7 +182,7 @@ def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tu
     prob_slip_right_pct = int(prob_slip_right * 100)
 
     if is_feedback:
-        role_block = ". Your previous plan did NOT achieve perfect probabilities."
+        role_block = " specializing in policy repair. You need to repair an existing policy to improve its formal verification scores."
         results_block = f"\nPREVIOUS ATTEMPT RESULTS:\n{probability_summary}\n"
         legend_label = "Grid "
         policy_block = f"""

@@ -53,7 +53,7 @@ _FEEDBACK_PARSE_MAP = {
 _LLM_DISPLAY = {
     "GPT5_NANO": "GPT-5 Nano",
     "GPT5_MINI": "GPT-5 Mini",
-    "GEMINI_FLASH": "Gemini Flash",
+    "GEMINI_PRO": "Gemini 2.5 Pro",
 }
 
 FEEDBACK_COLORS = {
@@ -201,7 +201,8 @@ def rq1(summaries, out_dir, raw=None):
     multi_llm = len(llms) > 1
 
     _rq1_tts_bar(llm_methods, fb_types, llms, multi_llm, out_dir)
-    _rq1_success_boxplot(llm_methods, fb_types, llms, multi_llm, out_dir)
+    _rq1_success_grouped_bar(llm_methods, fb_types, llms, multi_llm, out_dir)
+    _rq1_success_heatmap(llm_methods, fb_types, llms, multi_llm, out_dir)
     _rq1_table(llm_methods, fb_types, llms, multi_llm, out_dir)
     if raw is not None:
         _rq1_mistakes_per_iteration(raw, out_dir)
@@ -245,33 +246,91 @@ def _rq1_tts_bar(M, fb_types, llms, multi_llm, out_dir):
     _save(fig, os.path.join(out_dir, "rq1_tts_bar.png"))
 
 
-def _rq1_success_boxplot(M, fb_types, llms, multi_llm, out_dir):
-    """Boxplot of success rate per grid size, one box per method."""
-    fig, ax = plt.subplots(figsize=(max(8, len(fb_types) * len(llms) * 1.5), 5))
+def _rq1_success_grouped_bar(M, fb_types, llms, multi_llm, out_dir):
+    """Grouped bar chart: success rate by grid size, bars grouped by method."""
+    # Collect all grid sizes present
+    all_sizes = sorted(set(
+        s for key in M for s in M[key]["size"].unique()
+    ))
 
-    box_data, labels, colors = [], [], []
+    # Build method list
+    method_keys = []
+    for fb in fb_types:
+        for llm in llms:
+            if (fb, llm) in M:
+                method_keys.append((fb, llm))
+
+    n_methods = len(method_keys)
+    n_sizes = len(all_sizes)
+    bar_w = 0.7 / max(n_methods, 1)
+
+    fig, ax = plt.subplots(figsize=(max(8, n_sizes * n_methods * 0.5), 5))
+    x = np.arange(n_sizes)
+
+    for mi, (fb, llm) in enumerate(method_keys):
+        df = M[(fb, llm)]
+        rates_by_size = df.groupby("size")["success"].mean()
+        vals = [rates_by_size.get(s, 0) for s in all_sizes]
+        offset = (mi - (n_methods - 1) / 2) * bar_w
+        label = _method_label(fb, llm, multi_llm)
+        ax.bar(x + offset, vals, bar_w * 0.9,
+               label=label, color=FEEDBACK_COLORS.get(fb, "#999"),
+               hatch=LLM_HATCHES[mi % len(LLM_HATCHES)],
+               edgecolor="black", linewidth=0.5, alpha=0.8)
+
+    ax.set_xlabel("Grid Size")
+    ax.set_ylabel("Success Rate")
+    ax.set_title("RQ1: Success Rate by Grid Size")
+    ax.set_xticks(x)
+    ax.set_xticklabels(all_sizes)
+    ax.set_ylim(0, 1.15)
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+    _save(fig, os.path.join(out_dir, "rq1_success_grouped_bar.png"))
+
+
+def _rq1_success_heatmap(M, fb_types, llms, multi_llm, out_dir):
+    """Heatmap: methods (rows) x grid sizes (columns), cell = success rate."""
+    all_sizes = sorted(set(
+        s for key in M for s in M[key]["size"].unique()
+    ))
+
+    method_labels = []
+    heat_data = []
     for fb in fb_types:
         for llm in llms:
             key = (fb, llm)
             if key not in M:
                 continue
-            rates = M[key].groupby("size")["success"].mean()
-            box_data.append(rates.values)
-            labels.append(_method_label(fb, llm, multi_llm))
-            colors.append(FEEDBACK_COLORS.get(fb, "#999"))
+            rates_by_size = M[key].groupby("size")["success"].mean()
+            row = [rates_by_size.get(s, float("nan")) for s in all_sizes]
+            heat_data.append(row)
+            method_labels.append(_method_label(fb, llm, multi_llm))
 
-    bp = ax.boxplot(box_data, patch_artist=True, showmeans=True,
-                    meanprops=dict(marker="D", markerfacecolor="white", markersize=5))
-    for patch, c in zip(bp["boxes"], colors):
-        patch.set_facecolor(c)
-        patch.set_alpha(0.7)
+    if not heat_data:
+        return
 
-    ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylabel("Success Rate (per grid size)")
-    ax.set_title("RQ1: Success Distribution Across Grid Sizes")
-    ax.set_ylim(-0.05, 1.15)
-    ax.grid(axis="y", alpha=0.3)
-    _save(fig, os.path.join(out_dir, "rq1_success_boxplot.png"))
+    data = np.array(heat_data)
+    fig, ax = plt.subplots(figsize=(max(6, len(all_sizes) * 1.2), max(3, len(method_labels) * 0.6 + 1)))
+    im = ax.imshow(data, aspect="auto", cmap="RdYlGn", vmin=0, vmax=1)
+
+    # Annotate cells
+    for i in range(len(method_labels)):
+        for j in range(len(all_sizes)):
+            val = data[i, j]
+            if not np.isnan(val):
+                text_color = "white" if val < 0.4 else "black"
+                ax.text(j, i, f"{val:.0%}", ha="center", va="center",
+                        fontsize=9, fontweight="bold", color=text_color)
+
+    ax.set_xticks(range(len(all_sizes)))
+    ax.set_xticklabels(all_sizes)
+    ax.set_yticks(range(len(method_labels)))
+    ax.set_yticklabels(method_labels)
+    ax.set_xlabel("Grid Size")
+    ax.set_title("RQ1: Success Rate Heatmap")
+    fig.colorbar(im, ax=ax, label="Success Rate", shrink=0.8)
+    _save(fig, os.path.join(out_dir, "rq1_success_heatmap.png"))
 
 
 def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
@@ -416,7 +475,8 @@ def rq2(summaries, out_dir):
         return
 
     _rq2_tts_bar(ordered, methods, out_dir)
-    _rq2_success_boxplot(ordered, methods, out_dir)
+    _rq2_success_grouped_bar(ordered, methods, out_dir)
+    _rq2_success_heatmap(ordered, methods, out_dir)
     _rq2_table(ordered, methods, out_dir)
     _rq2_scaling(ordered, methods, out_dir)
 
@@ -446,29 +506,71 @@ def _rq2_tts_bar(ordered, M, out_dir):
     _save(fig, os.path.join(out_dir, "rq2_tts_bar.png"))
 
 
-def _rq2_success_boxplot(ordered, M, out_dir):
-    fig, ax = plt.subplots(figsize=(max(8, len(ordered) * 1.5), 5))
+def _rq2_success_grouped_bar(ordered, M, out_dir):
+    """Grouped bar chart: success rate by grid size, bars grouped by method."""
+    all_sizes = sorted(set(
+        s for n in ordered for s in M[n][0]["size"].unique()
+    ))
 
-    box_data, colors = [], []
+    n_methods = len(ordered)
+    n_sizes = len(all_sizes)
+    bar_w = 0.7 / max(n_methods, 1)
+
+    fig, ax = plt.subplots(figsize=(max(8, n_sizes * n_methods * 0.5), 5))
+    x = np.arange(n_sizes)
+
+    for mi, n in enumerate(ordered):
+        df, fb = M[n]
+        rates_by_size = df.groupby("size")["success"].mean()
+        vals = [rates_by_size.get(s, 0) for s in all_sizes]
+        offset = (mi - (n_methods - 1) / 2) * bar_w
+        ax.bar(x + offset, vals, bar_w * 0.9,
+               label=n, color=_method_color(fb),
+               edgecolor="black", linewidth=0.5, alpha=0.8)
+
+    ax.set_xlabel("Grid Size")
+    ax.set_ylabel("Success Rate")
+    ax.set_title("RQ2: Success Rate by Grid Size")
+    ax.set_xticks(x)
+    ax.set_xticklabels(all_sizes)
+    ax.set_ylim(0, 1.15)
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+    _save(fig, os.path.join(out_dir, "rq2_success_grouped_bar.png"))
+
+
+def _rq2_success_heatmap(ordered, M, out_dir):
+    """Heatmap: methods (rows) x grid sizes (columns), cell = success rate."""
+    all_sizes = sorted(set(
+        s for n in ordered for s in M[n][0]["size"].unique()
+    ))
+
+    heat_data = []
     for n in ordered:
         df = M[n][0]
-        rates = df.groupby("size")["success"].mean()
-        box_data.append(rates.values)
-        colors.append(_method_color(M[n][1]))
+        rates_by_size = df.groupby("size")["success"].mean()
+        heat_data.append([rates_by_size.get(s, float("nan")) for s in all_sizes])
 
-    bp = ax.boxplot(box_data, tick_labels=ordered, patch_artist=True,
-                    showmeans=True,
-                    meanprops=dict(marker="D", markerfacecolor="white", markersize=5))
-    for patch, c in zip(bp["boxes"], colors):
-        patch.set_facecolor(c)
-        patch.set_alpha(0.7)
+    data = np.array(heat_data)
+    fig, ax = plt.subplots(figsize=(max(6, len(all_sizes) * 1.2), max(3, len(ordered) * 0.6 + 1)))
+    im = ax.imshow(data, aspect="auto", cmap="RdYlGn", vmin=0, vmax=1)
 
-    ax.set_ylabel("Success Rate (per grid size)")
-    ax.set_title("RQ2: Success Distribution Across Grid Sizes")
-    ax.set_ylim(-0.05, 1.15)
-    ax.set_xticklabels(ordered, rotation=20, ha="right")
-    ax.grid(axis="y", alpha=0.3)
-    _save(fig, os.path.join(out_dir, "rq2_success_boxplot.png"))
+    for i in range(len(ordered)):
+        for j in range(len(all_sizes)):
+            val = data[i, j]
+            if not np.isnan(val):
+                text_color = "white" if val < 0.4 else "black"
+                ax.text(j, i, f"{val:.0%}", ha="center", va="center",
+                        fontsize=9, fontweight="bold", color=text_color)
+
+    ax.set_xticks(range(len(all_sizes)))
+    ax.set_xticklabels(all_sizes)
+    ax.set_yticks(range(len(ordered)))
+    ax.set_yticklabels(ordered)
+    ax.set_xlabel("Grid Size")
+    ax.set_title("RQ2: Success Rate Heatmap")
+    fig.colorbar(im, ax=ax, label="Success Rate", shrink=0.8)
+    _save(fig, os.path.join(out_dir, "rq2_success_heatmap.png"))
 
 
 def _rq2_table(ordered, M, out_dir):
@@ -573,11 +675,17 @@ def rq3(summaries, out_dir):
 # Entry point
 # ──────────────────────────────────────────────
 
+## ── Change this to plot a specific run, or leave None for latest ──
+RUN_FOLDER = "20_20260210_07-44-45"
+
+
 def main():
     base_path = os.path.join("PRISM-Guided-Learning", "out", "results")
 
     if len(sys.argv) > 1:
         run_dir = sys.argv[1]
+    elif RUN_FOLDER is not None:
+        run_dir = os.path.join(base_path, RUN_FOLDER)
     else:
         run_dir = _latest_run_dir(base_path)
 

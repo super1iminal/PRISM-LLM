@@ -24,11 +24,11 @@ class EvalModel(Enum):
     # Vanilla LLM planners (single iteration, no feedback)
     LLM_VANILLA_GPT5_NANO = 1
     LLM_VANILLA_GPT5_MINI = 2
-    LLM_VANILLA_GEMINI_FLASH = 3
+    LLM_VANILLA_GEMINI_PRO = 3
     # Feedback LLM planners (multiple iterations, full feedback)
     LLM_FEEDBACK_GPT5_NANO = 4
     LLM_FEEDBACK_GPT5_MINI = 5
-    LLM_FEEDBACK_GEMINI_FLASH = 6
+    LLM_FEEDBACK_GEMINI_PRO = 6
     # Other planners
     RL = 7
     RANDOM = 8
@@ -36,11 +36,11 @@ class EvalModel(Enum):
     # Vanilla Plus LLM planners (multiple iterations, no feedback - regenerate from scratch)
     LLM_VANILLA_PLUS_GPT5_NANO = 10
     LLM_VANILLA_PLUS_GPT5_MINI = 11
-    LLM_VANILLA_PLUS_GEMINI_FLASH = 12
+    LLM_VANILLA_PLUS_GEMINI_PRO = 12
     # Feedback Minus LLM planners (multiple iterations, probabilities only - no NL problems)
     LLM_FEEDBACK_MINUS_GPT5_NANO = 20
     LLM_FEEDBACK_MINUS_GPT5_MINI = 21
-    LLM_FEEDBACK_MINUS_GEMINI_FLASH = 22
+    LLM_FEEDBACK_MINUS_GEMINI_PRO = 22
 
 
 def main():
@@ -52,16 +52,16 @@ def main():
         # EvalModel.RL, 
         EvalModel.LLM_VANILLA_GPT5_NANO, 
         EvalModel.LLM_VANILLA_GPT5_MINI,
-        EvalModel.LLM_VANILLA_GEMINI_FLASH,
+        EvalModel.LLM_VANILLA_GEMINI_PRO,
         EvalModel.LLM_VANILLA_PLUS_GPT5_NANO,
         EvalModel.LLM_VANILLA_PLUS_GPT5_MINI,
-        EvalModel.LLM_VANILLA_PLUS_GEMINI_FLASH,
+        EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO,
         EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO,
         EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI,
-        EvalModel.LLM_FEEDBACK_MINUS_GEMINI_FLASH,
+        EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO,
         EvalModel.LLM_FEEDBACK_GPT5_NANO,         
         EvalModel.LLM_FEEDBACK_GPT5_MINI,
-        EvalModel.LLM_FEEDBACK_GEMINI_FLASH 
+        EvalModel.LLM_FEEDBACK_GEMINI_PRO 
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
@@ -132,8 +132,8 @@ def get_model(model_type: EvalModel):
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
         return VanillaLLMPlanner(model=model, model_name=model_name)
-    elif model_type == EvalModel.LLM_VANILLA_GEMINI_FLASH:
-        model_name = "gemini-2.5-flash-lite"
+    elif model_type == EvalModel.LLM_VANILLA_GEMINI_PRO:
+        model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
         return VanillaLLMPlanner(model=model, model_name=model_name)
     # Vanilla Plus LLM planners (multiple iterations, no feedback - regenerate from scratch)
@@ -145,8 +145,8 @@ def get_model(model_type: EvalModel):
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
         return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
-    elif model_type == EvalModel.LLM_VANILLA_PLUS_GEMINI_FLASH:
-        model_name = "gemini-2.5-flash-lite"
+    elif model_type == EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO:
+        model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
         return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Feedback Minus LLM planners (multiple iterations, probabilities only - no NL problems)
@@ -158,8 +158,8 @@ def get_model(model_type: EvalModel):
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
         return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
-    elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GEMINI_FLASH:
-        model_name = "gemini-2.5-flash-lite"
+    elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO:
+        model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
         return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Feedback LLM planners (multiple iterations, full feedback)
@@ -171,8 +171,8 @@ def get_model(model_type: EvalModel):
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
         return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
-    elif model_type == EvalModel.LLM_FEEDBACK_GEMINI_FLASH:
-        model_name = "gemini-2.5-flash-lite"
+    elif model_type == EvalModel.LLM_FEEDBACK_GEMINI_PRO:
+        model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
         return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Other planners
