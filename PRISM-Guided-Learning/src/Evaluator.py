@@ -45,7 +45,7 @@ class EvalModel(Enum):
 
 def main():
     """Main entry point - runs evaluation and saves results to CSV."""
-    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_20_samples.csv")
+    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_100_samples.csv")
     dataloader.load_data()
 
     models = [
