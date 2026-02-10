@@ -390,7 +390,7 @@ def _rq1_mistakes_per_iteration(raw, out_dir):
     items = []  # (label, fb_type, df)
     for model_name, df in raw.items():
         fb, llm = parse_model_name(model_name)
-        if llm is None:
+        if llm is None or fb == "Vanilla":
             continue
         label = _method_label(fb, llm, multi_llm)
         items.append((label, fb, df))
