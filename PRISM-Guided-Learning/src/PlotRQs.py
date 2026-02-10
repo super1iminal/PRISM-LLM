@@ -347,7 +347,7 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
                 "Method": _method_label(fb, llm, multi_llm),
                 "Successes": f"{int(df['success'].sum())}/{n}",
                 "Success %": f"{df['success'].mean():.0%}",
-                "Avg Mistakes/Iter": f"{(df['total_mistakes'] / df['num_iterations']).mean():.2f}",
+                "Avg Mistakes/Iter": f"{df['total_mistakes'].sum() / df['num_iterations'].sum():.1f}",
                 "Avg Cost": f"{df['final_cost'].mean():.3f}",
                 "Med. Iters": f"{df['num_iterations'].median():.1f}",
                 "Med. TTS (s)": f"{df['total_time'].median():.1f}",
@@ -406,7 +406,15 @@ def _rq1_mistakes_per_iteration(raw, out_dir):
     markers = ["o", "s", "^", "D", "v", "P", "X"]
 
     for i, (label, fb, df) in enumerate(items):
-        by_iter = df.groupby("iteration")["mistakes"].agg(["mean", "count"])
+        # Only include samples that ran all 3 iterations (max iteration = 3)
+        # so the cohort is consistent across all points
+        max_iter = df.index.get_level_values("iteration").max()
+        full_run_samples = df.groupby("sample_id").filter(
+            lambda g: g.index.get_level_values("iteration").max() == max_iter
+        )
+        if full_run_samples.empty:
+            continue
+        by_iter = full_run_samples.groupby("iteration")["mistakes"].agg(["mean", "count"])
         ax.plot(
             by_iter.index, by_iter["mean"],
             marker=markers[i % len(markers)],
@@ -582,7 +590,7 @@ def _rq2_table(ordered, M, out_dir):
             "Method": n,
             "Successes": f"{int(df['success'].sum())}/{total}",
             "Success %": f"{df['success'].mean():.0%}",
-            "Avg Mistakes/Iter": f"{(df['total_mistakes'] / df['num_iterations']).mean():.2f}",
+            "Avg Mistakes/Iter": f"{df['total_mistakes'].sum() / df['num_iterations'].sum():.1f}",
             "Avg Cost": f"{df['final_cost'].mean():.3f}",
             "Med. TTS (s)": f"{df['total_time'].median():.1f}",
         })
