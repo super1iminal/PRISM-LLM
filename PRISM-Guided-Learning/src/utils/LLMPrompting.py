@@ -3,22 +3,22 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 from config.Settings import get_threshold_for_key
 
-UNIFIED_PROMPT_TEXT = """You are an expert path planner{role_block}
+UNIFIED_PROMPT_TEXT = """You are an expert path planner working on formulating paths that meet formal requirements.
 
 Your task is to create a best-action policy for a grid world — choose one action per cell that guides the agent from any position to the goal while avoiding static obstacles, future goals, and moving obstacles.
-{results_block}
+
 The grid world is {size} x {size}. Here is the visual layout:
 
 {grid_visual}
 
-{legend_label}Legend:
+Legend:
 - 'S' = Start position (0,0) - the initial state
 - 'G' = Current goal position you must reach
 - 'X' = Static obstacle (CANNOT enter - you will bounce back)
 - 'F' = Future goal (treat as obstacle for now - avoid it)
 - 'M' = Moving obstacle patrol path (avoid if possible)
 - '.' = Empty cell you can move through
-{policy_block}
+
 COORDINATE SYSTEM:
 - Position format: (row, col) where row is Y-axis, col is X-axis
 - (0,0) is in the TOP-LEFT corner
@@ -30,7 +30,7 @@ ACTIONS - pick ONE best action per state:
 - 1 = RIGHT: Move to (row, col+1) - INCREASES column
 - 2 = DOWN: Move to (row+1, col) - INCREASES row
 - 3 = LEFT: Move to (row, col-1) - DECREASES column
-{examples_block}{problems_block}
+{examples_block}
 TASK DETAILS:
 - Static obstacles: {s_obstacles} (marked as 'X')
 - Future goals to avoid: {f_goals} (marked as 'F')
@@ -43,19 +43,25 @@ When you choose an action, the agent executes it with uncertainty:
 - {prob_slip_left_pct}% probability: Slips 90° LEFT of intended direction
 - {prob_slip_right_pct}% probability: Slips 90° RIGHT of intended direction
 {stochastic_example}
-This means {paths_word}paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+This means your paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+{feedback_block}
+CRITICAL REQUIREMENTS:
+1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid
+2. Never plan a path through obstacles (X) or future goals (F)
+2a. Avoid moving obstacles (M) along their patrol paths if possible
+3. The best action should create a path from ANY position to the goal
+4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)
 
-{closing_block}
+Now provide the best action (0-3) for each state.
 """
 
 UNIFIED_TEMPLATE = PromptTemplate(
     template=UNIFIED_PROMPT_TEXT,
-    input_variables=["role_block", "results_block", "size", "grid_visual",
-                     "legend_label", "policy_block", "examples_block",
-                     "problems_block", "s_obstacles", "f_goals", "k_obstacles",
+    input_variables=["size", "grid_visual", "examples_block",
+                     "s_obstacles", "f_goals", "k_obstacles",
                      "moving_note", "goal", "total_states",
                      "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct",
-                     "stochastic_example", "paths_word", "closing_block"]
+                     "stochastic_example", "feedback_block"]
 )
 
 
@@ -120,22 +126,21 @@ def extract_segment_probs(prism_probs: Dict[str, float], goal_num: int, goal_num
 def format_probability_summary(prism_probs: Dict[str, float], relevant_keys: set = None) -> str:
     """Format probability summary for feedback showing ALL probabilities.
 
-    Each probability is shown with its threshold, a pass/fail marker,
-    a relevance annotation if relevant_keys is provided, and a below threshold
-    marker for failing probabilities.
+    Each probability is shown with its threshold, a shortfall amount if below,
+    and a relevance annotation if relevant_keys is provided.
     """
-    lines = ["Current verification probabilities:"]
+    lines = []
     for key, prob in prism_probs.items():
         threshold = get_threshold_for_key(key)
         passing = prob >= threshold
-        status = "PASS" if passing else "FAIL"
-        parts = [f"  {status}  {key}: {prob:.4f} (threshold: {threshold})"]
+        parts = [f"  {key}: {prob:.4f} (threshold: {threshold})"]
+        if not passing:
+            parts.append(f"-- {threshold - prob:.4f} below threshold")
+        else:
+            parts.append("-- meets threshold")
         if relevant_keys is not None and key in relevant_keys:
             parts.append("[relevant to this goal]")
-        if not passing:
-            parts.append("<-- below threshold")
         lines.append("  ".join(parts))
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -181,98 +186,37 @@ def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tu
     prob_slip_left_pct = int(prob_slip_left * 100)
     prob_slip_right_pct = int(prob_slip_right * 100)
 
+    examples_block = (
+        "ACTION EXAMPLES:\n"
+        "From (0,0): UP↑(0,0), RIGHT→(0,1), DOWN↓(1,0), LEFT←(0,0)\n"
+        "From (0,1): UP↑(0,1), RIGHT→(0,2), DOWN↓(1,1), LEFT←(0,0)\n"
+        "From (1,0): UP↑(0,0), RIGHT→(1,1), DOWN↓(2,0), LEFT←(1,0)\n"
+    )
+    stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
+    moving_note = ", which could be anywhere along their patrol path" if k_obstacles else ""
+
     if is_feedback:
-        role_block = " specializing in policy repair. You need to repair an existing policy to improve its formal verification scores."
-        results_block = f"\nPREVIOUS ATTEMPT RESULTS:\n{probability_summary}\n"
-        legend_label = "Grid "
-        policy_block = f"""
-YOUR PREVIOUS POLICY (visualized as arrows):
-{policy_visual}
-
-Policy Legend:
-- ↑ = UP (action 0), → = RIGHT (action 1), ↓ = DOWN (action 2), ← = LEFT (action 3)
-- X↓ = Static obstacle with escape action (e.g., X↓ means obstacle, escape by going DOWN)
-- F→ = Future goal with escape action (e.g., F→ means future goal, escape by going RIGHT)
-- G = Current goal (destination)
-
-Compare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.
-
-"""
-        examples_block = f"""
-ACTION EXAMPLES:
-From (0,0): UP→(0,0), RIGHT→(0,1), DOWN→(1,0), LEFT→(0,0)
-From (0,1): UP→(0,1), RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
-From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
-
-"""
-        stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
-        moving_note = ", which could be anywhere along the patrol path" if k_obstacles else ""
-        paths_word = ""
-
+        parts = [
+            f"A previous policy generated for this problem has the following probabilities for the requirements:\n",
+            f"{probability_summary}\n",
+            f"Previous policy (visualized as arrows):\n{policy_visual}\n",
+            "Policy Legend:\n"
+            "- ↑ = UP (action 0), → = RIGHT (action 1), ↓ = DOWN (action 2), ← = LEFT (action 3)\n"
+            "- X↓ = Static obstacle with escape action (e.g., X↓ means obstacle, escape by going DOWN)\n"
+            "- F→ = Future goal with escape action (e.g., F→ means future goal, escape by going RIGHT)\n"
+            "- G = Current goal (destination)\n",
+            "\nCompare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.\n",
+        ]
         if problems:
-            # Feedback (full) style
-            problems_block = f"""
-HINTS (possible issues):
-{problems}
-
-"""
-            closing_block = (
-                f"CRITICAL REQUIREMENTS:\n"
-                f"1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid\n"
-                "2. Never plan a path through obstacles (X) or future goals (F)\n"
-                "2a. Avoid moving obstacles (M) along their patrol paths if possible\n"
-                "3. The best action should create a path from ANY position to the goal\n"
-                "4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
-                "Now provide the best action (0-3) for each state."
-            )
-        else:
-            # FeedbackMinus style - no problems block
-            problems_block = ""
-            closing_block = (
-                f"CRITICAL REQUIREMENTS:\n"
-                f"1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid\n"
-                "2. Never plan a path through obstacles (X) or future goals (F)\n"
-                "2a. Avoid moving obstacles (M) along their patrol paths if possible\n"
-                "3. The best action should create a path from ANY position to the goal\n"
-                "4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
-                "Now provide the best action (0-3) for each state."
-            )
+            parts.append(f"\nHints (possible issues with the previous policy):\n{problems}\n")
+        feedback_block = "\n" + "\n".join(parts)
     else:
-        # Initial (Vanilla) style
-        role_block = " working on formulating paths that meet formal requirements."
-        results_block = ""
-        legend_label = ""
-        policy_block = "\n"
-        examples_block = f"""
-ACTION EXAMPLES:
-From (0,0): UP→(0,0), RIGHT→(0,1), DOWN→(1,0), LEFT→(0,0)
-From (0,1): UP→(0,1), RIGHT→(0,2), DOWN→(1,1), LEFT→(0,0)
-From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
-
-"""
-        problems_block = ""
-        moving_note = ", which could be anywhere along the trajectory each timestep" if k_obstacles else ""
-        stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
-        paths_word = "your "
-        closing_block = (
-            f"CRITICAL REQUIREMENTS:\n"
-            f"1. You MUST provide the best action for ALL {total_states} states in the {size}x{size} grid\n"
-            "2. Never plan a path through obstacles (X) or future goals (F)\n"
-            "2a. Avoid moving obstacles (M) along their patrol paths if possible\n"
-            "3. The best action should create a path from ANY position to the goal\n"
-            "4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)\n\n"
-            "Now provide the best action (0-3) for each state."
-        )
+        feedback_block = ""
 
     return UNIFIED_TEMPLATE.format(
-        role_block=role_block,
-        results_block=results_block,
         size=size,
         grid_visual=grid_visual,
-        legend_label=legend_label,
-        policy_block=policy_block,
         examples_block=examples_block,
-        problems_block=problems_block,
         s_obstacles=str(s_obstacles),
         f_goals=str(f_goals),
         k_obstacles=str(k_obstacles),
@@ -283,8 +227,7 @@ From (1,0): UP→(0,0), RIGHT→(1,1), DOWN→(2,0), LEFT→(1,0)
         prob_slip_left_pct=prob_slip_left_pct,
         prob_slip_right_pct=prob_slip_right_pct,
         stochastic_example=stochastic_example,
-        paths_word=paths_word,
-        closing_block=closing_block
+        feedback_block=feedback_block
     )
 
 

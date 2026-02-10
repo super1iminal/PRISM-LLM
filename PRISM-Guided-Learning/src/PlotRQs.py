@@ -110,7 +110,7 @@ def summarize_samples(df):
     per sample with aggregated metrics.
 
     Returned columns:
-        total_time, success, total_mistakes, final_cost,
+        total_time, success, total_mistakes, final_mistakes, final_cost,
         num_iterations, size, complexity, final_ltl_score
     """
     records = []
@@ -122,6 +122,7 @@ def summarize_samples(df):
                 "total_time": sample.get("iteration_time", 0),
                 "success": bool(sample.get("success", False)),
                 "total_mistakes": int(sample.get("mistakes", 0)),
+                "final_mistakes": int(sample.get("mistakes", 0)),
                 "final_cost": float(sample.get("cost", 0)),
                 "num_iterations": 1,
                 "size": int(sample.get("size", 0)),
@@ -135,6 +136,7 @@ def summarize_samples(df):
                 "total_time": float(sample["iteration_time"].sum()),
                 "success": bool(final["success"]),
                 "total_mistakes": int(sample["mistakes"].sum()),
+                "final_mistakes": int(final["mistakes"]),
                 "final_cost": float(final["cost"]),
                 "num_iterations": len(sample),
                 "size": int(sample["size"].iloc[0]),
@@ -347,8 +349,8 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
                 "Method": _method_label(fb, llm, multi_llm),
                 "Successes": f"{int(df['success'].sum())}/{n}",
                 "Success %": f"{df['success'].mean():.0%}",
-                "Avg Mistakes/Iter": f"{df['total_mistakes'].sum() / df['num_iterations'].sum():.1f}",
-                "Avg Cost": f"{df['final_cost'].mean():.3f}",
+                "Avg LTL Score": f"{df['final_ltl_score'].mean():.3f}",
+                "Med. Cost": f"{df['final_cost'].median():.3f}",
                 "Med. Iters": f"{df['num_iterations'].median():.1f}",
                 "Med. TTS (s)": f"{df['total_time'].median():.1f}",
             })
@@ -590,8 +592,8 @@ def _rq2_table(ordered, M, out_dir):
             "Method": n,
             "Successes": f"{int(df['success'].sum())}/{total}",
             "Success %": f"{df['success'].mean():.0%}",
-            "Avg Mistakes/Iter": f"{df['total_mistakes'].sum() / df['num_iterations'].sum():.1f}",
-            "Avg Cost": f"{df['final_cost'].mean():.3f}",
+            "Avg LTL Score": f"{df['final_ltl_score'].mean():.3f}",
+            "Med. Cost": f"{df['final_cost'].median():.3f}",
             "Med. TTS (s)": f"{df['total_time'].median():.1f}",
         })
     tdf = pd.DataFrame(rows)
