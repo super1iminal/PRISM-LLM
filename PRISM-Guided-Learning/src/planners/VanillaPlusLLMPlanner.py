@@ -317,19 +317,19 @@ class VanillaPlusLLMPlanner:
         future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
         self.logger.info(f"LLM planning for goal {goal_num} at position {goal}")
+        prompt_text = get_prompt(
+            self.size,
+            self.env.static_obstacles,
+            future_goals,
+            self.env.moving_obstacle_positions,
+            goal,
+            self.env.prob_forward,
+            self.env.prob_slip_left,
+            self.env.prob_slip_right
+        )
+        self.logger.info(f"=== PROMPT for goal {goal_num} ===\n{prompt_text}")
         try:
-            response = self.model.invoke(
-                get_prompt(
-                    self.size,
-                    self.env.static_obstacles,
-                    future_goals,
-                    self.env.moving_obstacle_positions,
-                    goal,
-                    self.env.prob_forward,
-                    self.env.prob_slip_left,
-                    self.env.prob_slip_right
-                )
-            )
+            response = self.model.invoke(prompt_text)
         except Exception as e:
             self.logger.error(f"LLM invoke failed for goal {goal_num}: {type(e).__name__}: {e}")
             raise

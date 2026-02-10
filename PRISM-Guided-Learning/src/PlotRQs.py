@@ -347,7 +347,7 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
                 "Method": _method_label(fb, llm, multi_llm),
                 "Successes": f"{int(df['success'].sum())}/{n}",
                 "Success %": f"{df['success'].mean():.0%}",
-                "Tot. Mistakes": f"{df['total_mistakes'].sum():.0f}",
+                "Avg Mistakes/Iter": f"{(df['total_mistakes'] / df['num_iterations']).mean():.2f}",
                 "Avg Cost": f"{df['final_cost'].mean():.3f}",
                 "Med. Iters": f"{df['num_iterations'].median():.1f}",
                 "Med. TTS (s)": f"{df['total_time'].median():.1f}",
@@ -582,7 +582,7 @@ def _rq2_table(ordered, M, out_dir):
             "Method": n,
             "Successes": f"{int(df['success'].sum())}/{total}",
             "Success %": f"{df['success'].mean():.0%}",
-            "Tot. Mistakes": f"{df['total_mistakes'].sum():.0f}",
+            "Avg Mistakes/Iter": f"{(df['total_mistakes'] / df['num_iterations']).mean():.2f}",
             "Avg Cost": f"{df['final_cost'].mean():.3f}",
             "Med. TTS (s)": f"{df['total_time'].median():.1f}",
         })
