@@ -200,14 +200,14 @@ Compare this policy to the grid layout above to identify where actions lead towa
         if problems:
             # Feedback (full) style
             problems_block = f"""
-PROBLEMS TO FIX:
+HINTS (possible issues):
 {problems}
 
 """
             closing_block = (
-                f"CRITICAL: Fix the issues identified above. Provide IMPROVED best action (0-3) for ALL {total_states} states.\n"
+                f"CRITICAL: Analyze the probability results, your previous policy, and the hints above to find improvements. Provide IMPROVED best action (0-3) for ALL {total_states} states.\n"
                 "Remember: obstacles (X) and future goals (F) also need escape actions (how to exit if accidentally there due to stochastic slip).\n"
-                "This goal's policy may not be the cause of this problem. If you think all or a subset of your actions are optimally configured to satisfy the requirements, you may repeat them.\n"
+                "The hints are suggestions — your policy may not be the cause of every issue listed. If you think all or a subset of your actions are optimally configured, you may repeat them.\n"
                 "PRIORITY: Focus on goal reachability and sequential ordering first. Obstacle avoidance is secondary."
             )
         else:

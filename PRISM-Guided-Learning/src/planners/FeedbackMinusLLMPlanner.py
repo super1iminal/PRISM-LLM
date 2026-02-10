@@ -315,10 +315,8 @@ class FeedbackMinusLLMPlanner:
             goal, self.env.static_obstacles, future_goals
         )
 
-        # Per-segment probs for this goal + global metrics
+        # Per-segment probs for this goal only
         segment_probs = extract_segment_probs(self.prism_probs, goal_num, goal_nums)
-        if 'complete_sequence' in self.prism_probs:
-            segment_probs['complete_sequence'] = self.prism_probs['complete_sequence']
 
         prob_summary = format_probability_summary(segment_probs)
 
