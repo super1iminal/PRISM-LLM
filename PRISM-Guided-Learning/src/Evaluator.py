@@ -45,7 +45,7 @@ class EvalModel(Enum):
 
 def main():
     """Main entry point - runs evaluation and saves results to CSV."""
-    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_100_samples.csv")
+    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_20_samples.csv")
     dataloader.load_data()
 
     models = [
@@ -101,7 +101,7 @@ def evaluate_models(
             model = get_model(model_type)
 
             start_time = time()
-            results = model.evaluate(dataloader, max_workers=10, run_dir=run_dir)
+            results = model.evaluate(dataloader, max_workers=20, run_dir=run_dir)
             end_time = time()
             delta_time = end_time - start_time
 
