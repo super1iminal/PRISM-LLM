@@ -101,7 +101,7 @@ def evaluate_models(
             model = get_model(model_type)
 
             start_time = time()
-            results = model.evaluate(dataloader, run_dir=run_dir)
+            results = model.evaluate(dataloader, max_workers=10, run_dir=run_dir)
             end_time = time()
             delta_time = end_time - start_time
 
