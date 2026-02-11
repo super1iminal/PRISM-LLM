@@ -9,7 +9,7 @@ RL_TIME_BUDGET = 700  # Wall-clock seconds per gridworld before graceful termina
 RL_CONVERGENCE_EPSILON = 0.001  # Min change in probabilities to continue (unused - early termination disabled)
 GOAL_REACHABILITY_THRESHOLD = 0.8
 SEQUENCE_ORDERING_THRESHOLD = 0.8
-OBSTACLE_AVOIDANCE_THRESHOLD = 0.5
+OBSTACLE_AVOIDANCE_THRESHOLD = 0.7
 
 def get_threshold_for_key(key: str) -> float:
     """Map a probability key to its per-requirement threshold."""

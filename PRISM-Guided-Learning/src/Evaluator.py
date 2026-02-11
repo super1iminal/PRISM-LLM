@@ -126,54 +126,54 @@ def get_model(model_type: EvalModel):
     # Vanilla LLM planners (single iteration, no feedback)
     if model_type == EvalModel.LLM_VANILLA_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return VanillaLLMPlanner(model=model, model_name=model_name)
     elif model_type == EvalModel.LLM_VANILLA_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return VanillaLLMPlanner(model=model, model_name=model_name)
     elif model_type == EvalModel.LLM_VANILLA_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
-        model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
         return VanillaLLMPlanner(model=model, model_name=model_name)
     # Vanilla Plus LLM planners (multiple iterations, no feedback - regenerate from scratch)
     elif model_type == EvalModel.LLM_VANILLA_PLUS_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     elif model_type == EvalModel.LLM_VANILLA_PLUS_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     elif model_type == EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
-        model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
         return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Feedback Minus LLM planners (multiple iterations, probabilities only - no NL problems)
     elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
-        model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
         return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Feedback LLM planners (multiple iterations, full feedback)
     elif model_type == EvalModel.LLM_FEEDBACK_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     elif model_type == EvalModel.LLM_FEEDBACK_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
-        model = ChatOpenAI(model_name=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
         return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     elif model_type == EvalModel.LLM_FEEDBACK_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
-        model = ChatGoogleGenerativeAI(model=model_name, temperature=1).with_structured_output(ActionPolicy)
+        model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
         return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Other planners
     elif model_type == EvalModel.RL:
