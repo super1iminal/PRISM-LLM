@@ -538,9 +538,9 @@ class LTLGuidedQLearningWithObstacle:
     def _check_termination(self, episode: int) -> Optional[str]:
         """Check termination conditions. Returns reason string or None.
 
-        Only wall-clock time budget triggers early termination.
-        Convergence/threshold checks are disabled so RL trains comparably
-        to LLM planners.
+        Termination triggers:
+        1. Wall-clock time budget exceeded
+        2. All probabilities meet their per-key thresholds
         """
         self._update_previous_probs()
 
@@ -548,6 +548,9 @@ class LTLGuidedQLearningWithObstacle:
             elapsed = time() - self.train_start_time
             if elapsed >= self.time_budget:
                 return f"time budget reached ({elapsed:.0f}s >= {self.time_budget}s)"
+
+        if self._all_probs_meet_threshold():
+            return "all probabilities meet threshold"
 
         return None
 
@@ -583,7 +586,8 @@ class LTLGuidedQLearningWithObstacle:
 
         Termination conditions:
         1. Wall-clock time budget exceeded (RL_TIME_BUDGET seconds)
-        2. Max episodes reached
+        2. All probabilities meet their per-key thresholds
+        3. Max episodes reached
 
         Args:
             verify_interval: Frequency of PRISM verification
