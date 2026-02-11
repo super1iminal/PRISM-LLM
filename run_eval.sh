@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=prism-eval
+#SBATCH --job-name=prism-rl
 #SBATCH --partition=cpunodes
 #SBATCH -c 4
 #SBATCH --mem=4G
-#SBATCH --time=24:00:00
+#SBATCH --time=5:00:00
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
 #SBATCH --mail-type=END,FAIL
