@@ -961,6 +961,8 @@ def rq2(summaries, out_dir, raw=None):
     _rq2_scaling(ordered, methods, out_dir)
     if raw is not None:
         _rq2_proximity_table(ordered, methods, out_dir, raw)
+        _rq2_gsr_by_llm_scaling(summaries, out_dir, raw)
+        _rq2_gsr_by_feedback_scaling(summaries, out_dir, raw)
 
 
 def _method_color(fb_type):
@@ -1321,6 +1323,229 @@ def _rq2_scaling(ordered, M, out_dir):
     _save(fig, os.path.join(out_dir, "rq2_scaling.png"))
 
 
+def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
+    """Line plot: GSR vs grid size for best-performing LLM (all its feedback types) + RL.
+
+    Best-performing LLM = the LLM with highest overall GSR across the most feedback mechanisms.
+    """
+    raw_lookup = _build_raw_lookup(raw)
+
+    # Gather all LLMs and feedback types
+    llm_set = set()
+    fb_set = set()
+    for model_name in raw:
+        fb, llm = parse_model_name(model_name)
+        if llm is not None:
+            llm_set.add(llm)
+            fb_set.add(fb)
+
+    llms = sorted(llm_set)
+    fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
+
+    if not llms or not fb_types:
+        print("  Skipping RQ2 GSR-by-LLM scaling: not enough data.")
+        return
+
+    # Compute overall GSR for each LLM (averaging across all its feedback types)
+    llm_gsr = {}
+    for llm in llms:
+        gsr_vals = []
+        for fb in fb_types:
+            key = (fb, llm)
+            if key in raw_lookup:
+                rates = _compute_group_rates(raw_lookup[key])
+                if not np.isnan(rates["GSR"]):
+                    gsr_vals.append(rates["GSR"])
+        llm_gsr[llm] = np.mean(gsr_vals) if gsr_vals else 0
+
+    best_llm = max(llm_gsr, key=llm_gsr.get)
+    print(f"  Best-performing LLM for GSR scaling: {best_llm} (avg GSR={llm_gsr[best_llm]:.2f}%)")
+
+    # Collect all grid sizes
+    all_sizes = set()
+    for key, df in raw_lookup.items():
+        if "size" in df.columns:
+            all_sizes.update(df["size"].unique())
+        elif "size" in df.index.names:
+            all_sizes.update(df.index.get_level_values("size").unique())
+    all_sizes = sorted(all_sizes)
+
+    if not all_sizes:
+        print("  Skipping RQ2 GSR-by-LLM scaling: no grid sizes found.")
+        return
+
+    # Build data series: 3 feedback types for the best LLM + RL
+    fig, ax = plt.subplots(figsize=(8, 5))
+    markers = ["o", "s", "^", "D"]
+    line_styles = ["-", "--", "-.", ":"]
+
+    series_idx = 0
+    for fb in fb_types:
+        key = (fb, best_llm)
+        if key not in raw_lookup:
+            continue
+
+        df = raw_lookup[key]
+        # Get final rows
+        if "is_final" in df.columns:
+            finals = df[df["is_final"]]
+        else:
+            finals = df.groupby("sample_id").tail(1)
+
+        gsr_by_size = finals.groupby("size")["success"].mean() * 100
+        sizes = [s for s in all_sizes if s in gsr_by_size.index]
+        vals = [gsr_by_size.get(s, np.nan) for s in sizes]
+
+        label = f"{fb} ({best_llm})"
+        ax.plot(sizes, vals,
+                marker=markers[series_idx % len(markers)],
+                linestyle=line_styles[series_idx % len(line_styles)],
+                color=FEEDBACK_COLORS.get(fb, "#999"),
+                label=label, linewidth=2, markersize=6)
+        series_idx += 1
+
+    # Add RL
+    if ("RL", None) in raw_lookup:
+        df = raw_lookup[("RL", None)]
+        if "is_final" in df.columns:
+            finals = df[df["is_final"]]
+        else:
+            finals = df.groupby("sample_id").tail(1)
+
+        gsr_by_size = finals.groupby("size")["success"].mean() * 100
+        sizes = [s for s in all_sizes if s in gsr_by_size.index]
+        vals = [gsr_by_size.get(s, np.nan) for s in sizes]
+
+        ax.plot(sizes, vals,
+                marker=markers[series_idx % len(markers)],
+                linestyle=line_styles[series_idx % len(line_styles)],
+                color=RL_COLOR,
+                label="RL", linewidth=2, markersize=6)
+
+    ax.set_xlabel("Grid Size")
+    ax.set_ylabel("Success Rate (%)")
+    ax.set_title(f"RQ2: GSR vs Grid Size – Best LLM ({best_llm}) + RL")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    ax.set_ylim(0, 105)
+    _save(fig, os.path.join(out_dir, "rq2_gsr_by_llm_scaling.png"))
+
+
+def _rq2_gsr_by_feedback_scaling(summaries, out_dir, raw):
+    """Line plot: GSR vs grid size for best-performing feedback (all its LLMs) + RL.
+
+    Best-performing feedback = the feedback mechanism with highest overall GSR across all LLMs.
+    """
+    raw_lookup = _build_raw_lookup(raw)
+
+    # Gather all LLMs and feedback types
+    llm_set = set()
+    fb_set = set()
+    for model_name in raw:
+        fb, llm = parse_model_name(model_name)
+        if llm is not None:
+            llm_set.add(llm)
+            fb_set.add(fb)
+
+    llms = sorted(llm_set)
+    fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
+
+    if not llms or not fb_types:
+        print("  Skipping RQ2 GSR-by-Feedback scaling: not enough data.")
+        return
+
+    # Compute overall GSR for each feedback type (averaging across all LLMs)
+    fb_gsr = {}
+    for fb in fb_types:
+        gsr_vals = []
+        for llm in llms:
+            key = (fb, llm)
+            if key in raw_lookup:
+                rates = _compute_group_rates(raw_lookup[key])
+                if not np.isnan(rates["GSR"]):
+                    gsr_vals.append(rates["GSR"])
+        fb_gsr[fb] = np.mean(gsr_vals) if gsr_vals else 0
+
+    best_fb = max(fb_gsr, key=fb_gsr.get)
+    print(f"  Best-performing feedback for GSR scaling: {best_fb} (avg GSR={fb_gsr[best_fb]:.2f}%)")
+
+    # Collect all grid sizes
+    all_sizes = set()
+    for key, df in raw_lookup.items():
+        if "size" in df.columns:
+            all_sizes.update(df["size"].unique())
+        elif "size" in df.index.names:
+            all_sizes.update(df.index.get_level_values("size").unique())
+    all_sizes = sorted(all_sizes)
+
+    if not all_sizes:
+        print("  Skipping RQ2 GSR-by-Feedback scaling: no grid sizes found.")
+        return
+
+    # Define colors for LLMs
+    llm_colors = {
+        "GPT-5 Nano": "#3498DB",
+        "GPT-5 Mini": "#9B59B6",
+        "Gemini 2.5 Pro": "#E67E22",
+    }
+
+    # Build data series: 3 LLMs for the best feedback + RL
+    fig, ax = plt.subplots(figsize=(8, 5))
+    markers = ["o", "s", "^", "D"]
+    line_styles = ["-", "--", "-.", ":"]
+
+    series_idx = 0
+    for llm in llms:
+        key = (best_fb, llm)
+        if key not in raw_lookup:
+            continue
+
+        df = raw_lookup[key]
+        # Get final rows
+        if "is_final" in df.columns:
+            finals = df[df["is_final"]]
+        else:
+            finals = df.groupby("sample_id").tail(1)
+
+        gsr_by_size = finals.groupby("size")["success"].mean() * 100
+        sizes = [s for s in all_sizes if s in gsr_by_size.index]
+        vals = [gsr_by_size.get(s, np.nan) for s in sizes]
+
+        label = f"{best_fb} ({llm})"
+        ax.plot(sizes, vals,
+                marker=markers[series_idx % len(markers)],
+                linestyle=line_styles[series_idx % len(line_styles)],
+                color=llm_colors.get(llm, "#999"),
+                label=label, linewidth=2, markersize=6)
+        series_idx += 1
+
+    # Add RL
+    if ("RL", None) in raw_lookup:
+        df = raw_lookup[("RL", None)]
+        if "is_final" in df.columns:
+            finals = df[df["is_final"]]
+        else:
+            finals = df.groupby("sample_id").tail(1)
+
+        gsr_by_size = finals.groupby("size")["success"].mean() * 100
+        sizes = [s for s in all_sizes if s in gsr_by_size.index]
+        vals = [gsr_by_size.get(s, np.nan) for s in sizes]
+
+        ax.plot(sizes, vals,
+                marker=markers[series_idx % len(markers)],
+                linestyle=line_styles[series_idx % len(line_styles)],
+                color=RL_COLOR,
+                label="RL", linewidth=2, markersize=6)
+
+    ax.set_xlabel("Grid Size")
+    ax.set_ylabel("Success Rate (%)")
+    ax.set_title(f"RQ2: GSR vs Grid Size – Best Feedback ({best_fb}) + RL")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    ax.set_ylim(0, 105)
+    _save(fig, os.path.join(out_dir, "rq2_gsr_by_feedback_scaling.png"))
+
+
 # ──────────────────────────────────────────────
 # RQ3: LLM Scalability
 # ──────────────────────────────────────────────
@@ -1371,7 +1596,7 @@ def rq3(summaries, out_dir):
 # ──────────────────────────────────────────────
 
 ## ── Change this to plot a specific run, or leave None for latest ──
-RUN_FOLDER = "100_20260210_22-18-20"
+RUN_FOLDER = "50_20260211_05-59-39"
 
 
 def main():
