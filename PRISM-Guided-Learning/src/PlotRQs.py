@@ -162,10 +162,24 @@ def _save(fig, path):
 
 def _save_latex_table(df, path):
     """Save a DataFrame as a booktabs-compatible LaTeX table to a .txt file."""
+    def _esc(s):
+        return str(s).replace("&", "\\&").replace("%", "\\%").replace("_", "\\_")
+
     col_fmt = "l" + "r" * (len(df.columns) - 1)
-    latex = df.to_latex(index=False, escape=True, column_format=col_fmt, booktabs=True)
+    lines = []
+    lines.append("\\begin{table}[htbp]")
+    lines.append("\\centering")
+    lines.append(f"\\begin{{tabular}}{{{col_fmt}}}")
+    lines.append("\\toprule")
+    lines.append(" & ".join(_esc(c) for c in df.columns) + " \\\\")
+    lines.append("\\midrule")
+    for _, row in df.iterrows():
+        lines.append(" & ".join(_esc(v) for v in row) + " \\\\")
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    lines.append("\\end{table}")
     with open(path, "w") as f:
-        f.write(latex)
+        f.write("\n".join(lines) + "\n")
     print(f"  Saved: {path}")
 
 
