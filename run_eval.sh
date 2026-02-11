@@ -9,7 +9,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=asher.arya@mail.utoronto.ca
 
-source ~/.bashrc
+eval "$(conda shell.bash hook)"
 conda activate prism3
 
 cd ~/coding/PRISM-LLM

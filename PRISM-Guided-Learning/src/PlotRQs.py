@@ -231,6 +231,7 @@ def rq1(summaries, out_dir, raw=None):
     _rq1_table(llm_methods, fb_types, llms, multi_llm, out_dir)
     if raw is not None:
         _rq1_mistakes_per_iteration(raw, out_dir)
+        _rq1_failure_reasons(raw, out_dir)
 
 
 def _rq1_tts_bar(M, fb_types, llms, multi_llm, out_dir):
@@ -465,6 +466,96 @@ def _rq1_mistakes_per_iteration(raw, out_dir):
     ax.legend()
     ax.grid(alpha=0.3)
     _save(fig, os.path.join(out_dir, "rq1_mistakes_per_iter.png"))
+
+
+def _rq1_failure_reasons(raw, out_dir):
+    """Table counting failure reasons (goal reachability / sequential ordering /
+    obstacle avoidance) for failed final solutions, broken down by approach.
+
+    Uses the raw multi-index DataFrames to inspect per-probability columns.
+    """
+    from config.Settings import (
+        GOAL_REACHABILITY_THRESHOLD,
+        SEQUENCE_ORDERING_THRESHOLD,
+        OBSTACLE_AVOIDANCE_THRESHOLD,
+    )
+
+    multi_llm = len(set(
+        parse_model_name(m)[1] for m in raw if parse_model_name(m)[1] is not None
+    )) > 1
+
+    rows = []
+    for model_name, df in raw.items():
+        fb, llm = parse_model_name(model_name)
+        if llm is None:
+            continue
+        label = _method_label(fb, llm, multi_llm)
+
+        # Get final iteration rows only
+        if "is_final" in df.columns:
+            finals = df[df["is_final"]]
+        else:
+            finals = df.groupby("sample_id").tail(1)
+
+        # Filter to failed samples
+        failed = finals[~finals["success"].astype(bool)]
+        n_failed = len(failed)
+        if n_failed == 0:
+            rows.append({
+                "Method": label,
+                "Failed": 0,
+                "Goal Reach.": "0",
+                "Seq. Order.": "0",
+                "Obst. Avoid.": "0",
+            })
+            continue
+
+        # Identify prob columns by category
+        prob_cols = [c for c in df.columns if c.startswith("prob_")]
+        goal_cols = [c for c in prob_cols if c.startswith("prob_goal")]
+        seq_cols = [c for c in prob_cols
+                    if c.startswith("prob_seq_") or c == "prob_complete_sequence"]
+        obs_cols = [c for c in prob_cols if c.startswith("prob_avoid")]
+
+        # Count samples where at least one prob in category is below threshold
+        goal_fail = (failed[goal_cols] < GOAL_REACHABILITY_THRESHOLD).any(axis=1).sum() if goal_cols else 0
+        seq_fail = (failed[seq_cols] < SEQUENCE_ORDERING_THRESHOLD).any(axis=1).sum() if seq_cols else 0
+        obs_fail = (failed[obs_cols] < OBSTACLE_AVOIDANCE_THRESHOLD).any(axis=1).sum() if obs_cols else 0
+
+        rows.append({
+            "Method": label,
+            "Failed": n_failed,
+            "Goal Reach.": f"{int(goal_fail)} ({goal_fail/n_failed:.0%})",
+            "Seq. Order.": f"{int(seq_fail)} ({seq_fail/n_failed:.0%})",
+            "Obst. Avoid.": f"{int(obs_fail)} ({obs_fail/n_failed:.0%})",
+        })
+
+    if not rows:
+        return
+
+    # Sort by feedback order
+    fb_rank = {fb: i for i, fb in enumerate(FEEDBACK_ORDER)}
+    rows.sort(key=lambda r: fb_rank.get(r["Method"].split(" (")[0], 99))
+
+    tdf = pd.DataFrame(rows)
+
+    print("\n  RQ1 Failure Reasons:")
+    print(tdf.to_string(index=False))
+
+    _save_latex_table(tdf, os.path.join(out_dir, "rq1_failure_reasons.txt"))
+
+    fig, ax = plt.subplots(figsize=(12, max(1.8, len(rows) * 0.45 + 1.2)))
+    ax.axis("off")
+    ax.set_title("RQ1: Failure Reasons (Final Solutions)", fontsize=13, pad=20)
+    tbl = ax.table(cellText=tdf.values, colLabels=tdf.columns,
+                   cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.auto_set_column_width(list(range(len(tdf.columns))))
+    for j in range(len(tdf.columns)):
+        tbl[0, j].set_facecolor("#2C3E50")
+        tbl[0, j].set_text_props(color="white", fontweight="bold")
+    _save(fig, os.path.join(out_dir, "rq1_failure_reasons.png"))
 
 
 # ──────────────────────────────────────────────
@@ -715,7 +806,7 @@ def rq3(summaries, out_dir):
 # ──────────────────────────────────────────────
 
 ## ── Change this to plot a specific run, or leave None for latest ──
-RUN_FOLDER = "20_20260210_07-44-45"
+RUN_FOLDER = "20_20260210_21-24-57"
 
 
 def main():
