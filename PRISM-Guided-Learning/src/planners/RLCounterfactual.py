@@ -255,6 +255,7 @@ class LTLGuidedQLearningWithObstacle:
         self.ltl_scores = []
         self.best_policy = None
         self.best_ltl_score = 0.0
+        self.best_mistakes = float('inf')
         self.training_stats = []
     
     def _init_prism_probs(self) -> Dict[str, float]:
@@ -508,23 +509,27 @@ class LTLGuidedQLearningWithObstacle:
         return int(np.argmax(self.q_table[state]))
 
     def _adjust_parameters(self, ltl_score: float):
-        """Adjust learning parameters based on LTL score"""
-        if ltl_score > self.best_ltl_score:
+        """Adjust learning parameters based on mistakes (primary) and LTL score (tiebreaker)"""
+        mistakes = sum(1 for k, p in self.prism_probs.items() if p < get_threshold_for_key(k))
+
+        if mistakes < self.best_mistakes or (mistakes == self.best_mistakes and ltl_score > self.best_ltl_score):
+            self.best_mistakes = mistakes
             self.best_ltl_score = ltl_score
             self.best_policy = self.get_current_policy()
-            
+
             # Reduce exploration
             self.epsilon = max(self.epsilon_min, self.epsilon * 0.997)
             self.alpha = max(self.alpha_min, self.alpha * 0.998)
         else:
             # Increase exploration if not improving
             self.epsilon = min(0.9, self.epsilon * 1.02)
-        
+
         self.training_stats.append({
             'ltl_score': ltl_score,
             'epsilon': self.epsilon,
             'alpha': self.alpha,
-            'best_score': self.best_ltl_score
+            'best_score': self.best_ltl_score,
+            'best_mistakes': self.best_mistakes
         })
 
     def get_current_policy(self) -> Dict[tuple, int]:

@@ -445,6 +445,7 @@ class FeedbackLLMPlanner:
 
         # Track best policy to prevent over-correction
         best_ltl_score = ltl_score
+        best_mistakes = mistakes
         best_q_table = self.q_table.copy()
         best_prism_probs = self.prism_probs.copy()
 
@@ -499,14 +500,15 @@ class FeedbackLLMPlanner:
             if failed:
                 self.logger.info(f"Failed requirements ({mistakes}): {failed}")
 
-            # Keep-best with rollback: revert if score didn't improve
-            if ltl_score > best_ltl_score:
+            # Keep-best with rollback: prefer fewer mistakes, break ties by LTL score
+            if mistakes < best_mistakes or (mistakes == best_mistakes and ltl_score > best_ltl_score):
+                best_mistakes = mistakes
                 best_ltl_score = ltl_score
                 best_q_table = self.q_table.copy()
                 best_prism_probs = self.prism_probs.copy()
-                self.logger.info(f"New best score: {best_ltl_score:.4f}")
+                self.logger.info(f"New best: {best_mistakes} mistakes, LTL={best_ltl_score:.4f}")
             else:
-                self.logger.info(f"Score {ltl_score:.4f} did not improve over best {best_ltl_score:.4f}, reverting policy")
+                self.logger.info(f"{mistakes} mistakes / LTL={ltl_score:.4f} did not improve over best {best_mistakes} mistakes / LTL={best_ltl_score:.4f}, reverting policy")
                 self.q_table = best_q_table.copy()
                 self.prism_probs = best_prism_probs.copy()
 

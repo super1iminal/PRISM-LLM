@@ -17,6 +17,7 @@ from planners.UniformPlanner import BaselinePlanner
 from planners.RLCounterfactual import LTLGuidedQLearningWithObstacle
 from planners.FeedbackLLMPlanner import FeedbackLLMPlanner
 from planners.FeedbackMinusLLMPlanner import FeedbackMinusLLMPlanner
+from planners.FeedbackSimplifiedLLMPlanner import FeedbackSimplifiedLLMPlanner
 from config.Settings import RESULTS_PATH
 
 
@@ -41,6 +42,10 @@ class EvalModel(Enum):
     LLM_FEEDBACK_MINUS_GPT5_NANO = 20
     LLM_FEEDBACK_MINUS_GPT5_MINI = 21
     LLM_FEEDBACK_MINUS_GEMINI_PRO = 22
+    # Feedback Simplified LLM planners (multiple iterations, focused repair prompt)
+    LLM_FEEDBACK_SIMPLIFIED_GPT5_NANO = 30
+    LLM_FEEDBACK_SIMPLIFIED_GPT5_MINI = 31
+    LLM_FEEDBACK_SIMPLIFIED_GEMINI_PRO = 32
 
 
 def main():
@@ -162,6 +167,19 @@ def get_model(model_type: EvalModel):
         model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
         return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+    # Feedback Simplified LLM planners (multiple iterations, focused repair prompt)
+    elif model_type == EvalModel.LLM_FEEDBACK_SIMPLIFIED_GPT5_NANO:
+        model_name = "gpt-5-nano-2025-08-07"
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
+        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+    elif model_type == EvalModel.LLM_FEEDBACK_SIMPLIFIED_GPT5_MINI:
+        model_name = "gpt-5-mini-2025-08-07"
+        model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
+        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+    elif model_type == EvalModel.LLM_FEEDBACK_SIMPLIFIED_GEMINI_PRO:
+        model_name = "gemini-2.5-pro"
+        model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
+        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=3)
     # Feedback LLM planners (multiple iterations, full feedback)
     elif model_type == EvalModel.LLM_FEEDBACK_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"

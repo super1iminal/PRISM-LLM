@@ -462,6 +462,109 @@ def generate_policy_visual(size: int, policy: Dict[Tuple, int],
     return header + '\n' + '\n'.join(rows)
 
 
+REPAIR_PROMPT_TEXT = """You are an expert path planner specializing in policy repair. Your previous policy had issues — fix them while keeping what already works.
+
+PREVIOUS ATTEMPT RESULTS:
+{probability_summary}
+
+The grid world is {size}x{size}. Here is the visual layout:
+
+{grid_visual}
+
+Legend: S=Start(0,0), G=Current goal, X=Static obstacle, F=Future goal, M=Moving obstacle, .=Empty
+
+YOUR PREVIOUS POLICY:
+{policy_visual}
+
+Policy Legend: ↑=UP(0), →=RIGHT(1), ↓=DOWN(2), ←=LEFT(3), X↓=obstacle+escape, M→=moving+action, F→=future+escape, G=goal
+
+Raw policy:
+{policy_raw}
+
+Compare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.
+
+COORDINATE SYSTEM:
+- (row, col), (0,0) top-left, row increases DOWN, col increases RIGHT
+
+ACTIONS: 0=UP(row-1), 1=RIGHT(col+1), 2=DOWN(row+1), 3=LEFT(col-1)
+
+Action examples:
+- At (2,3), action 1 (RIGHT) moves to (2,4)
+- At (0,1), action 0 (UP) bounces off wall, stays at (0,1)
+- At (3,3), action 2 (DOWN) on a 4x4 grid bounces off wall, stays at (3,3)
+
+TASK DETAILS:
+- Static obstacles: {s_obstacles} (marked X)
+- Future goals to avoid: {f_goals} (marked F)
+- Moving obstacles: {k_obstacles} (marked M{moving_note})
+- Your current goal: {goal} (marked G)
+
+STOCHASTIC EXECUTION:
+When you choose an action, the agent executes it with uncertainty:
+- {prob_forward_pct}% probability: Moves in the intended direction
+- {prob_slip_left_pct}% probability: Slips 90° LEFT of intended direction
+- {prob_slip_right_pct}% probability: Slips 90° RIGHT of intended direction
+This means paths should be ROBUST — avoid routes adjacent to obstacles since slips could cause collisions.
+
+REQUIREMENTS:
+1. Provide the best action for ALL {total_states} states in the {size}x{size} grid
+2. Never plan through obstacles (X) or future goals (F); avoid moving obstacles (M)
+3. For obstacle/future-goal cells, provide an escape action
+4. Focus on fixing the failing requirements shown above while preserving what works
+
+Now provide the corrected best action for all states.
+"""
+
+
+def build_repair_prompt(size: int, s_obstacles: List[Tuple[int, int]],
+                        f_goals: List[Tuple[int, int]],
+                        k_obstacles: List[Tuple[int, int]],
+                        goal: Tuple[int, int],
+                        prob_forward: float = 0.7,
+                        prob_slip_left: float = 0.15,
+                        prob_slip_right: float = 0.15,
+                        probability_summary: str = "",
+                        policy_visual: str = "",
+                        policy_raw: str = "") -> str:
+    """Generate a focused repair prompt for feedback iterations.
+
+    Unlike build_prompt(is_feedback=True), this prompt:
+    - Places probability results at the top (prominent)
+    - Shows the previous policy prominently
+    - Uses only short action examples (no full worked examples)
+    - Frames the task as policy repair rather than planning from scratch
+    """
+    # Flatten k_obstacles if nested
+    flat_k_obstacles = []
+    if k_obstacles:
+        for item in k_obstacles:
+            if isinstance(item, list):
+                flat_k_obstacles.extend(item)
+            else:
+                flat_k_obstacles.append(item)
+
+    grid_visual = generate_grid_visual(size, goal, s_obstacles, f_goals, flat_k_obstacles)
+    total_states = size * size
+    moving_note = ", which could be anywhere along their patrol path" if k_obstacles else ""
+
+    return REPAIR_PROMPT_TEXT.format(
+        size=size,
+        grid_visual=grid_visual,
+        probability_summary=probability_summary,
+        policy_visual=policy_visual,
+        policy_raw=policy_raw,
+        s_obstacles=str(s_obstacles),
+        f_goals=str(f_goals),
+        k_obstacles=str(k_obstacles),
+        moving_note=moving_note,
+        goal=str(goal),
+        total_states=total_states,
+        prob_forward_pct=int(prob_forward * 100),
+        prob_slip_left_pct=int(prob_slip_left * 100),
+        prob_slip_right_pct=int(prob_slip_right * 100),
+    )
+
+
 def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]],
                k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int],
                prob_forward: float = 0.7, prob_slip_left: float = 0.15,

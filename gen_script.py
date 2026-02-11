@@ -1,0 +1,1 @@
+import pathlib; pathlib.Path(r"C:/Users/asher/Documents/Coding/PRISM-LLM/PRISM-LLM/analysis_script.py").write_text(open(r"C:/Users/asher/Documents/Coding/PRISM-LLM/PRISM-LLM/analysis_template.txt", "r").read()); print("done")

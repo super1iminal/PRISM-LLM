@@ -41,10 +41,11 @@ matplotlib.rcParams.update({
 # Configuration
 # ──────────────────────────────────────────────
 
-FEEDBACK_ORDER = ["Vanilla", "Vanilla+", "Feedback-", "Feedback"]
+FEEDBACK_ORDER = ["Vanilla", "Vanilla+", "Feedback-", "FeedbackS", "Feedback"]
 
 _FEEDBACK_PARSE_MAP = {
     "VANILLA_PLUS": "Vanilla+",
+    "FEEDBACK_SIMPLIFIED": "FeedbackS",
     "FEEDBACK_MINUS": "Feedback-",
     "VANILLA": "Vanilla",
     "FEEDBACK": "Feedback",
@@ -60,6 +61,7 @@ FEEDBACK_COLORS = {
     "Vanilla": "#5DADE2",
     "Vanilla+": "#2E86C1",
     "Feedback-": "#F39C12",
+    "FeedbackS": "#8E44AD",
     "Feedback": "#E74C3C",
 }
 
@@ -86,7 +88,7 @@ def parse_model_name(name):
 
     rest = name[4:]
     # Longest prefix first to avoid partial matches
-    for key in ("VANILLA_PLUS", "FEEDBACK_MINUS", "VANILLA", "FEEDBACK"):
+    for key in ("VANILLA_PLUS", "FEEDBACK_SIMPLIFIED", "FEEDBACK_MINUS", "VANILLA", "FEEDBACK"):
         if rest.startswith(key + "_"):
             llm_key = rest[len(key) + 1:]
             return _FEEDBACK_PARSE_MAP[key], _LLM_DISPLAY.get(llm_key, llm_key)
