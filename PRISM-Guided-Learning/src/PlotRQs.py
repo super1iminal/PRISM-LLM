@@ -160,6 +160,15 @@ def _save(fig, path):
     print(f"  Saved: {path}")
 
 
+def _save_latex_table(df, path):
+    """Save a DataFrame as a booktabs-compatible LaTeX table to a .txt file."""
+    col_fmt = "l" + "r" * (len(df.columns) - 1)
+    latex = df.to_latex(index=False, escape=True, column_format=col_fmt, booktabs=True)
+    with open(path, "w") as f:
+        f.write(latex)
+    print(f"  Saved: {path}")
+
+
 # ──────────────────────────────────────────────
 # Helpers for method grouping
 # ──────────────────────────────────────────────
@@ -362,6 +371,9 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
     # Console output
     print("\n  RQ1 Summary Table:")
     print(tdf.to_string(index=False))
+
+    # LaTeX table
+    _save_latex_table(tdf, os.path.join(out_dir, "rq1_table.txt"))
 
     # Figure
     fig, ax = plt.subplots(figsize=(12, max(1.8, len(rows) * 0.45 + 1.2)))
@@ -600,6 +612,9 @@ def _rq2_table(ordered, M, out_dir):
 
     print("\n  RQ2 Summary Table:")
     print(tdf.to_string(index=False))
+
+    # LaTeX table
+    _save_latex_table(tdf, os.path.join(out_dir, "rq2_table.txt"))
 
     fig, ax = plt.subplots(figsize=(12, max(1.8, len(rows) * 0.45 + 1.2)))
     ax.axis("off")
