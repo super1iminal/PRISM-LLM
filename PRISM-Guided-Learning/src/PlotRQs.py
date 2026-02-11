@@ -183,6 +183,269 @@ def _save_latex_table(df, path):
     print(f"  Saved: {path}")
 
 
+def _compute_group_rates(raw_df):
+    """Compute GSR and per-group success rates from raw multi-index DataFrame.
+
+    Returns dict with keys: GSR, GR, SO, OA (all as percentages 0-100).
+    """
+    from config.Settings import (
+        GOAL_REACHABILITY_THRESHOLD,
+        SEQUENCE_ORDERING_THRESHOLD,
+        OBSTACLE_AVOIDANCE_THRESHOLD,
+    )
+
+    # Get final iteration rows
+    if "is_final" in raw_df.columns:
+        finals = raw_df[raw_df["is_final"]]
+    else:
+        finals = raw_df.groupby("sample_id").tail(1)
+
+    # GSR
+    gsr = finals["success"].astype(bool).mean() * 100
+
+    # Identify prob columns by category
+    prob_cols = [c for c in raw_df.columns if c.startswith("prob_")]
+    goal_cols = sorted([c for c in prob_cols if c.startswith("prob_goal")])
+    seq_cols = sorted([c for c in prob_cols
+                       if c.startswith("prob_seq_") or c == "prob_complete_sequence"])
+    obs_cols = sorted([c for c in prob_cols if c.startswith("prob_avoid")])
+
+    def group_rate(cols, threshold):
+        if not cols:
+            return float("nan")
+        vals = finals[cols]
+        total = vals.size  # total individual requirements across all samples
+        successes = int((vals >= threshold).sum().sum())
+        return (successes / total) * 100 if total > 0 else float("nan")
+
+    return {
+        "GSR": gsr,
+        "GR": group_rate(goal_cols, GOAL_REACHABILITY_THRESHOLD),
+        "SO": group_rate(seq_cols, SEQUENCE_ORDERING_THRESHOLD),
+        "OA": group_rate(obs_cols, OBSTACLE_AVOIDANCE_THRESHOLD),
+    }
+
+
+def _build_raw_lookup(raw):
+    """Build {(feedback_type, llm): raw_df} and {'RL': raw_df} from raw dict."""
+    lookup = {}
+    for model_name, df in raw.items():
+        fb, llm = parse_model_name(model_name)
+        if fb == "RL":
+            lookup[("RL", None)] = df
+        elif llm is not None:
+            lookup[(fb, llm)] = df
+    return lookup
+
+
+def _compute_proximity(raw_df):
+    """Compute proximity-to-success metrics for FAILED samples only.
+
+    Proximity for a failed requirement = threshold - achieved_probability.
+    Only requirements that failed (prob < threshold) are included.
+
+    Returns dict with keys:
+        All, GR, SO, OA  – median (across failed samples) of avg proximity
+        Max               – median (across failed samples) of max proximity
+    All values are floats or NaN if no failed samples / no failed requirements.
+    """
+    from config.Settings import (
+        GOAL_REACHABILITY_THRESHOLD,
+        SEQUENCE_ORDERING_THRESHOLD,
+        OBSTACLE_AVOIDANCE_THRESHOLD,
+    )
+
+    # Get final iteration rows
+    if "is_final" in raw_df.columns:
+        finals = raw_df[raw_df["is_final"]]
+    else:
+        finals = raw_df.groupby("sample_id").tail(1)
+
+    # Filter to failed samples
+    failed = finals[~finals["success"].astype(bool)]
+    if failed.empty:
+        return {k: float("nan") for k in ("All", "GR", "SO", "OA", "Max")}
+
+    # Identify prob columns by category
+    prob_cols = [c for c in raw_df.columns if c.startswith("prob_")]
+    goal_cols = sorted([c for c in prob_cols if c.startswith("prob_goal")])
+    seq_cols = sorted([c for c in prob_cols
+                       if c.startswith("prob_seq_") or c == "prob_complete_sequence"])
+    obs_cols = sorted([c for c in prob_cols if c.startswith("prob_avoid")])
+
+    # Build (col_name -> threshold) mapping
+    col_thresh = {}
+    for c in goal_cols:
+        col_thresh[c] = GOAL_REACHABILITY_THRESHOLD
+    for c in seq_cols:
+        col_thresh[c] = SEQUENCE_ORDERING_THRESHOLD
+    for c in obs_cols:
+        col_thresh[c] = OBSTACLE_AVOIDANCE_THRESHOLD
+
+    group_map = {
+        "GR": goal_cols,
+        "SO": seq_cols,
+        "OA": obs_cols,
+    }
+
+    def _sample_proximity(row, cols):
+        """Return (avg, max) proximity for failed requirements in *cols*."""
+        gaps = []
+        for c in cols:
+            prob = row[c]
+            thresh = col_thresh[c]
+            if prob < thresh:
+                gaps.append(thresh - prob)
+        if not gaps:
+            return float("nan"), float("nan")
+        return np.mean(gaps), max(gaps)
+
+    # Per-sample metrics
+    all_cols = goal_cols + seq_cols + obs_cols
+    per_sample_all_avg = []
+    per_sample_all_max = []
+    per_sample_group = {g: [] for g in group_map}  # list of avg per sample
+
+    for _, row in failed.iterrows():
+        avg_all, max_all = _sample_proximity(row, all_cols)
+        per_sample_all_avg.append(avg_all)
+        per_sample_all_max.append(max_all)
+
+        for g, cols in group_map.items():
+            avg_g, _ = _sample_proximity(row, cols)
+            per_sample_group[g].append(avg_g)
+
+    def _median_dropna(vals):
+        clean = [v for v in vals if not np.isnan(v)]
+        return float(np.median(clean)) if clean else float("nan")
+
+    result = {
+        "All": _median_dropna(per_sample_all_avg),
+        "Max": _median_dropna(per_sample_all_max),
+    }
+    for g in group_map:
+        result[g] = _median_dropna(per_sample_group[g])
+
+    return result
+
+
+def _save_multicolumn_latex_table(rows, row_labels, col_groups, sub_cols,
+                                  path, caption="", label="",
+                                  lower_is_better=False):
+    """Save a LaTeX table with multicolumn headers like the reference image.
+
+    Bold = best in each column, underline = 2nd best.
+
+    Parameters
+    ----------
+    rows : list of list of str
+        Each inner list has one value per (col_group × sub_col).
+    row_labels : list of str
+        Row labels (one per row).
+    col_groups : list of str
+        Top-level column group names (e.g. LLM names).
+    sub_cols : list of str
+        Sub-column names repeated under each group (e.g. ['GSR','GR','SO','OA']).
+    lower_is_better : bool
+        If True, the lowest value is bolded (best) instead of highest.
+    """
+    n_sub = len(sub_cols)
+    n_groups = len(col_groups)
+    total_data_cols = n_groups * n_sub
+    n_rows = len(rows)
+
+    # ── Determine best / 2nd-best per column ──
+    # Parse numeric values (None for non-numeric like "--")
+    numeric = []
+    for row_data in rows:
+        parsed = []
+        for v in row_data:
+            try:
+                parsed.append(float(v))
+            except (ValueError, TypeError):
+                parsed.append(None)
+        numeric.append(parsed)
+
+    # For each column, find the best and 2nd-best VALUES, then mark all
+    # rows that match.  This handles ties (e.g. RL repeating the same value).
+    best_val = [None] * total_data_cols
+    second_val = [None] * total_data_cols
+    for ci in range(total_data_cols):
+        col_vals = [numeric[ri][ci] for ri in range(n_rows)
+                    if numeric[ri][ci] is not None]
+        if not col_vals:
+            continue
+        unique_sorted = sorted(set(col_vals), reverse=(not lower_is_better))
+        best_val[ci] = unique_sorted[0]
+        if len(unique_sorted) >= 2:
+            second_val[ci] = unique_sorted[1]
+
+    # Format cells with \textbf / \underline
+    formatted = []
+    for ri, row_data in enumerate(rows):
+        fmt_row = []
+        for ci, v in enumerate(row_data):
+            nv = numeric[ri][ci]
+            if nv is not None and nv == best_val[ci]:
+                fmt_row.append(f"\\textbf{{{v}}}")
+            elif nv is not None and nv == second_val[ci]:
+                fmt_row.append(f"\\underline{{{v}}}")
+            else:
+                fmt_row.append(v)
+        formatted.append(fmt_row)
+
+    # ── Build LaTeX ──
+    col_parts = ["l"]
+    for g in range(n_groups):
+        col_parts.append("|")
+        col_parts.extend(["r"] * n_sub)
+    col_fmt = "".join(col_parts)
+
+    lines = []
+    lines.append("\\begin{table}[htbp]")
+    lines.append("\\centering")
+    if caption:
+        lines.append(f"\\caption{{{caption}}}")
+    if label:
+        lines.append(f"\\label{{{label}}}")
+    lines.append(f"\\begin{{tabular}}{{{col_fmt}}}")
+    lines.append("\\toprule")
+
+    # Top header row: empty cell, then multicolumn for each group
+    header_parts = [""]
+    for gi, g in enumerate(col_groups):
+        sep = "|c|" if gi < n_groups - 1 else "|c"
+        header_parts.append(f"\\multicolumn{{{n_sub}}}{{{sep}}}{{{g}}}")
+    lines.append(" & ".join(header_parts) + " \\\\")
+
+    # Cline under group headers
+    start = 2  # data cols start at column 2
+    for gi in range(n_groups):
+        end = start + n_sub - 1
+        lines.append(f"\\cline{{{start}-{end}}}")
+        start = end + 1
+
+    # Sub-header row
+    sub_header_parts = ["Methods"]
+    for _ in col_groups:
+        sub_header_parts.extend(sub_cols)
+    lines.append(" & ".join(sub_header_parts) + " \\\\")
+    lines.append("\\midrule")
+
+    # Data rows
+    for rl, fmt_row in zip(row_labels, formatted):
+        parts = [rl] + fmt_row
+        lines.append(" & ".join(parts) + " \\\\")
+
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    lines.append("\\end{table}")
+
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"  Saved: {path}")
+
+
 # ──────────────────────────────────────────────
 # Helpers for method grouping
 # ──────────────────────────────────────────────
@@ -228,10 +491,11 @@ def rq1(summaries, out_dir, raw=None):
     _rq1_tts_bar(llm_methods, fb_types, llms, multi_llm, out_dir)
     _rq1_success_grouped_bar(llm_methods, fb_types, llms, multi_llm, out_dir)
     _rq1_success_heatmap(llm_methods, fb_types, llms, multi_llm, out_dir)
-    _rq1_table(llm_methods, fb_types, llms, multi_llm, out_dir)
+    _rq1_table(llm_methods, fb_types, llms, multi_llm, out_dir, raw=raw)
     if raw is not None:
         _rq1_mistakes_per_iteration(raw, out_dir)
         _rq1_failure_reasons(raw, out_dir)
+        _rq1_proximity_table(fb_types, llms, out_dir, raw)
 
 
 def _rq1_tts_bar(M, fb_types, llms, multi_llm, out_dir):
@@ -359,45 +623,73 @@ def _rq1_success_heatmap(M, fb_types, llms, multi_llm, out_dir):
     _save(fig, os.path.join(out_dir, "rq1_success_heatmap.png"))
 
 
-def _rq1_table(M, fb_types, llms, multi_llm, out_dir):
-    """Summary table: successes, mistakes, cost, iterations, TTS."""
+def _rq1_table(M, fb_types, llms, multi_llm, out_dir, raw=None):
+    """Summary table with multicolumn layout: GSR + per-group rates per LLM."""
+    SUB_COLS = ["GSR", "GR", "SO", "OA"]
+
+    # Build raw lookup for per-group rates
+    raw_lookup = _build_raw_lookup(raw) if raw is not None else {}
+
+    # Build data rows
+    row_labels = []
     rows = []
     for fb in fb_types:
+        row_data = []
         for llm in llms:
             key = (fb, llm)
             if key not in M:
+                row_data.extend(["--"] * len(SUB_COLS))
                 continue
             df = M[key]
-            n = len(df)
-            rows.append({
-                "Method": _method_label(fb, llm, multi_llm),
-                "Successes": f"{int(df['success'].sum())}/{n}",
-                "Success %": f"{df['success'].mean():.0%}",
-                "Avg LTL Score": f"{df['final_ltl_score'].mean():.3f}",
-                "Med. Cost": f"{df['final_cost'].median():.3f}",
-                "Med. Iters": f"{df['num_iterations'].median():.1f}",
-                "Med. TTS (s)": f"{df['total_time'].median():.1f}",
-            })
+            gsr = df["success"].mean() * 100
+
+            # Per-group rates from raw data
+            if key in raw_lookup:
+                rates = _compute_group_rates(raw_lookup[key])
+            else:
+                rates = {"GSR": gsr, "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+
+            for sc in SUB_COLS:
+                v = rates[sc]
+                row_data.append(f"{v:.2f}" if not np.isnan(v) else "--")
+        row_labels.append(fb)
+        rows.append(row_data)
 
     if not rows:
         return
-    tdf = pd.DataFrame(rows)
 
     # Console output
     print("\n  RQ1 Summary Table:")
-    print(tdf.to_string(index=False))
+    header = f"{'Method':<14}" + "".join(f"  {llm:>36}" for llm in llms)
+    print(header)
+    for rl, rd in zip(row_labels, rows):
+        print(f"{rl:<14}" + "  ".join(f"{v:>8}" for v in rd))
 
     # LaTeX table
-    _save_latex_table(tdf, os.path.join(out_dir, "rq1_table.txt"))
+    _save_multicolumn_latex_table(
+        rows, row_labels, llms, SUB_COLS,
+        os.path.join(out_dir, "rq1_table.txt"),
+        caption="RQ1: Effect of Feedback",
+        label="tab:rq1",
+    )
 
-    # Figure
-    fig, ax = plt.subplots(figsize=(12, max(1.8, len(rows) * 0.45 + 1.2)))
+    # Also save the old-style simple table as a figure
+    flat_cols = ["Method"]
+    for llm in llms:
+        for sc in SUB_COLS:
+            flat_cols.append(f"{sc}" if not multi_llm else f"{llm} {sc}")
+    flat_rows = []
+    for rl, rd in zip(row_labels, rows):
+        flat_rows.append([rl] + rd)
+    tdf = pd.DataFrame(flat_rows, columns=flat_cols)
+
+    fig, ax = plt.subplots(figsize=(max(12, len(flat_cols) * 1.2), max(1.8, len(rows) * 0.45 + 1.2)))
     ax.axis("off")
     ax.set_title("RQ1: Summary Metrics", fontsize=13, pad=20)
     tbl = ax.table(cellText=tdf.values, colLabels=tdf.columns,
                    cellLoc="center", loc="center")
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(9)
+    tbl.set_fontsize(8)
     tbl.auto_set_column_width(list(range(len(tdf.columns))))
     for j in range(len(tdf.columns)):
         tbl[0, j].set_facecolor("#2C3E50")
@@ -558,6 +850,65 @@ def _rq1_failure_reasons(raw, out_dir):
     _save(fig, os.path.join(out_dir, "rq1_failure_reasons.png"))
 
 
+def _rq1_proximity_table(fb_types, llms, out_dir, raw):
+    """Multicolumn proximity-to-success table for failed samples (RQ1)."""
+    SUB_COLS = ["All", "GR", "SO", "OA", "Max"]
+    raw_lookup = _build_raw_lookup(raw)
+
+    row_labels = []
+    rows = []
+    for fb in fb_types:
+        row_data = []
+        for llm in llms:
+            key = (fb, llm)
+            if key in raw_lookup:
+                prox = _compute_proximity(raw_lookup[key])
+            else:
+                prox = {k: float("nan") for k in SUB_COLS}
+            for sc in SUB_COLS:
+                v = prox[sc]
+                row_data.append(f"{v:.4f}" if not np.isnan(v) else "N/A")
+        row_labels.append(fb)
+        rows.append(row_data)
+
+    if not rows:
+        return
+
+    print("\n  RQ1 Proximity Table:")
+    for rl, rd in zip(row_labels, rows):
+        print(f"  {rl:<14}" + "  ".join(f"{v:>8}" for v in rd))
+
+    _save_multicolumn_latex_table(
+        rows, row_labels, llms, SUB_COLS,
+        os.path.join(out_dir, "rq1_proximity_table.txt"),
+        caption="RQ1: Proximity to Success (Failed Samples)",
+        label="tab:rq1_proximity",
+        lower_is_better=True,
+    )
+
+    # Figure
+    flat_cols = ["Method"]
+    for llm in llms:
+        for sc in SUB_COLS:
+            flat_cols.append(f"{llm} {sc}")
+    flat_rows = [[rl] + rd for rl, rd in zip(row_labels, rows)]
+    tdf = pd.DataFrame(flat_rows, columns=flat_cols)
+
+    fig, ax = plt.subplots(figsize=(max(12, len(flat_cols) * 1.2),
+                                    max(1.8, len(rows) * 0.45 + 1.2)))
+    ax.axis("off")
+    ax.set_title("RQ1: Proximity to Success (Failed Samples)", fontsize=13, pad=20)
+    tbl = ax.table(cellText=tdf.values, colLabels=tdf.columns,
+                   cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8)
+    tbl.auto_set_column_width(list(range(len(tdf.columns))))
+    for j in range(len(tdf.columns)):
+        tbl[0, j].set_facecolor("#2C3E50")
+        tbl[0, j].set_text_props(color="white", fontweight="bold")
+    _save(fig, os.path.join(out_dir, "rq1_proximity_table.png"))
+
+
 # ──────────────────────────────────────────────
 # RQ2: Comparative Analysis
 # ──────────────────────────────────────────────
@@ -593,7 +944,7 @@ def _build_rq2_methods(summaries):
     return ordered, methods
 
 
-def rq2(summaries, out_dir):
+def rq2(summaries, out_dir, raw=None):
     print("\n=== RQ2: Comparative Analysis ===")
 
     ordered, methods = _build_rq2_methods(summaries)
@@ -604,8 +955,10 @@ def rq2(summaries, out_dir):
     _rq2_tts_bar(ordered, methods, out_dir)
     _rq2_success_grouped_bar(ordered, methods, out_dir)
     _rq2_success_heatmap(ordered, methods, out_dir)
-    _rq2_table(ordered, methods, out_dir)
+    _rq2_table(ordered, methods, out_dir, raw=raw)
     _rq2_scaling(ordered, methods, out_dir)
+    if raw is not None:
+        _rq2_proximity_table(ordered, methods, out_dir, raw)
 
 
 def _method_color(fb_type):
@@ -700,7 +1053,141 @@ def _rq2_success_heatmap(ordered, M, out_dir):
     _save(fig, os.path.join(out_dir, "rq2_success_heatmap.png"))
 
 
-def _rq2_table(ordered, M, out_dir):
+def _rq2_table(ordered, M, out_dir, raw=None):
+    """Multicolumn table: columns = LLMs + RL, rows = feedback types,
+    sub-columns = GSR / GR / SO / OA."""
+    SUB_COLS = ["GSR", "GR", "SO", "OA"]
+
+    raw_lookup = _build_raw_lookup(raw) if raw is not None else {}
+
+    # Determine which LLMs and feedback types are present
+    llm_set = set()
+    fb_set = set()
+    has_rl = False
+    for name in ordered:
+        df, fb = M[name]
+        if fb == "RL":
+            has_rl = True
+        else:
+            _, llm = None, None
+            for model_name in (raw or {}):
+                mfb, mllm = parse_model_name(model_name)
+                lbl = _method_label(mfb, mllm, True) if mllm else mfb
+                if lbl == name:
+                    llm_set.add(mllm)
+                    fb_set.add(mfb)
+                    break
+
+    # Fallback: extract from display names
+    if not llm_set:
+        for name in ordered:
+            if name == "RL":
+                continue
+            if " (" in name:
+                fb_part, llm_part = name.split(" (", 1)
+                llm_set.add(llm_part.rstrip(")"))
+                fb_set.add(fb_part)
+            else:
+                fb_set.add(name)
+
+    llms = sorted(llm_set)
+    fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
+
+    # Column groups: LLMs first, then RL if present
+    col_groups = list(llms)
+    if has_rl:
+        col_groups.append("RL")
+
+    # Compute RL rates once
+    rl_rates = None
+    if has_rl and ("RL", None) in raw_lookup:
+        rl_rates = _compute_group_rates(raw_lookup[("RL", None)])
+    elif has_rl:
+        # Fallback from summary
+        rl_df = M.get("RL", (None, None))[0]
+        if rl_df is not None:
+            rl_rates = {"GSR": rl_df["success"].mean() * 100,
+                        "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+
+    # Build rows
+    row_labels = []
+    rows = []
+    for fb in fb_types:
+        row_data = []
+        for llm in llms:
+            # Find the display name for this (fb, llm) combo
+            key = (fb, llm)
+            if key in raw_lookup:
+                rates = _compute_group_rates(raw_lookup[key])
+            else:
+                # Try to find from summaries
+                disp = f"{fb} ({llm})"
+                if disp in M:
+                    rates = {"GSR": M[disp][0]["success"].mean() * 100,
+                             "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+                elif fb in M:
+                    rates = {"GSR": M[fb][0]["success"].mean() * 100,
+                             "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+                else:
+                    rates = {"GSR": float("nan"), "GR": float("nan"),
+                             "SO": float("nan"), "OA": float("nan")}
+            for sc in SUB_COLS:
+                v = rates[sc]
+                row_data.append(f"{v:.2f}" if not np.isnan(v) else "--")
+
+        # RL column (same values for every row)
+        if has_rl and rl_rates:
+            for sc in SUB_COLS:
+                v = rl_rates[sc]
+                row_data.append(f"{v:.2f}" if not np.isnan(v) else "--")
+        elif has_rl:
+            row_data.extend(["--"] * len(SUB_COLS))
+
+        row_labels.append(fb)
+        rows.append(row_data)
+
+    if not rows:
+        # Fallback to old-style table
+        _rq2_table_fallback(ordered, M, out_dir)
+        return
+
+    # Console output
+    print("\n  RQ2 Summary Table:")
+    for rl, rd in zip(row_labels, rows):
+        print(f"  {rl:<14}" + "  ".join(f"{v:>8}" for v in rd))
+
+    # LaTeX table
+    _save_multicolumn_latex_table(
+        rows, row_labels, col_groups, SUB_COLS,
+        os.path.join(out_dir, "rq2_table.txt"),
+        caption="RQ2: Comparative Analysis",
+        label="tab:rq2",
+    )
+
+    # Figure
+    flat_cols = ["Method"]
+    for cg in col_groups:
+        for sc in SUB_COLS:
+            flat_cols.append(f"{cg} {sc}")
+    flat_rows = [[rl] + rd for rl, rd in zip(row_labels, rows)]
+    tdf = pd.DataFrame(flat_rows, columns=flat_cols)
+
+    fig, ax = plt.subplots(figsize=(max(12, len(flat_cols) * 1.2), max(1.8, len(rows) * 0.45 + 1.2)))
+    ax.axis("off")
+    ax.set_title("RQ2: Comparative Summary", fontsize=13, pad=20)
+    tbl = ax.table(cellText=tdf.values, colLabels=tdf.columns,
+                   cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8)
+    tbl.auto_set_column_width(list(range(len(tdf.columns))))
+    for j in range(len(tdf.columns)):
+        tbl[0, j].set_facecolor("#2C3E50")
+        tbl[0, j].set_text_props(color="white", fontweight="bold")
+    _save(fig, os.path.join(out_dir, "rq2_table.png"))
+
+
+def _rq2_table_fallback(ordered, M, out_dir):
+    """Old-style flat table as fallback when raw data isn't available."""
     rows = []
     for n in ordered:
         df = M[n][0]
@@ -714,25 +1201,101 @@ def _rq2_table(ordered, M, out_dir):
             "Med. TTS (s)": f"{df['total_time'].median():.1f}",
         })
     tdf = pd.DataFrame(rows)
-
-    print("\n  RQ2 Summary Table:")
+    print("\n  RQ2 Summary Table (fallback):")
     print(tdf.to_string(index=False))
-
-    # LaTeX table
     _save_latex_table(tdf, os.path.join(out_dir, "rq2_table.txt"))
 
-    fig, ax = plt.subplots(figsize=(12, max(1.8, len(rows) * 0.45 + 1.2)))
+
+def _rq2_proximity_table(ordered, M, out_dir, raw):
+    """Multicolumn proximity-to-success table for RQ2 (LLMs + RL)."""
+    SUB_COLS = ["All", "GR", "SO", "OA", "Max"]
+    raw_lookup = _build_raw_lookup(raw)
+
+    # Determine LLMs, feedback types, RL presence (same logic as _rq2_table)
+    llm_set = set()
+    fb_set = set()
+    has_rl = False
+    for model_name in raw:
+        fb, llm = parse_model_name(model_name)
+        if fb == "RL":
+            has_rl = True
+        elif llm is not None:
+            llm_set.add(llm)
+            fb_set.add(fb)
+
+    llms = sorted(llm_set)
+    fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
+
+    col_groups = list(llms)
+    if has_rl:
+        col_groups.append("RL")
+
+    # Compute RL proximity once
+    rl_prox = None
+    if has_rl and ("RL", None) in raw_lookup:
+        rl_prox = _compute_proximity(raw_lookup[("RL", None)])
+
+    # Build rows
+    row_labels = []
+    rows = []
+    for fb in fb_types:
+        row_data = []
+        for llm in llms:
+            key = (fb, llm)
+            if key in raw_lookup:
+                prox = _compute_proximity(raw_lookup[key])
+            else:
+                prox = {k: float("nan") for k in SUB_COLS}
+            for sc in SUB_COLS:
+                v = prox[sc]
+                row_data.append(f"{v:.4f}" if not np.isnan(v) else "N/A")
+
+        if has_rl and rl_prox:
+            for sc in SUB_COLS:
+                v = rl_prox[sc]
+                row_data.append(f"{v:.4f}" if not np.isnan(v) else "N/A")
+        elif has_rl:
+            row_data.extend(["N/A"] * len(SUB_COLS))
+
+        row_labels.append(fb)
+        rows.append(row_data)
+
+    if not rows:
+        return
+
+    print("\n  RQ2 Proximity Table:")
+    for rl, rd in zip(row_labels, rows):
+        print(f"  {rl:<14}" + "  ".join(f"{v:>8}" for v in rd))
+
+    _save_multicolumn_latex_table(
+        rows, row_labels, col_groups, SUB_COLS,
+        os.path.join(out_dir, "rq2_proximity_table.txt"),
+        caption="RQ2: Proximity to Success (Failed Samples)",
+        label="tab:rq2_proximity",
+        lower_is_better=True,
+    )
+
+    # Figure
+    flat_cols = ["Method"]
+    for cg in col_groups:
+        for sc in SUB_COLS:
+            flat_cols.append(f"{cg} {sc}")
+    flat_rows = [[rl] + rd for rl, rd in zip(row_labels, rows)]
+    tdf = pd.DataFrame(flat_rows, columns=flat_cols)
+
+    fig, ax = plt.subplots(figsize=(max(12, len(flat_cols) * 1.2),
+                                    max(1.8, len(rows) * 0.45 + 1.2)))
     ax.axis("off")
-    ax.set_title("RQ2: Comparative Summary", fontsize=13, pad=20)
+    ax.set_title("RQ2: Proximity to Success (Failed Samples)", fontsize=13, pad=20)
     tbl = ax.table(cellText=tdf.values, colLabels=tdf.columns,
                    cellLoc="center", loc="center")
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(9)
+    tbl.set_fontsize(8)
     tbl.auto_set_column_width(list(range(len(tdf.columns))))
     for j in range(len(tdf.columns)):
         tbl[0, j].set_facecolor("#2C3E50")
         tbl[0, j].set_text_props(color="white", fontweight="bold")
-    _save(fig, os.path.join(out_dir, "rq2_table.png"))
+    _save(fig, os.path.join(out_dir, "rq2_proximity_table.png"))
 
 
 def _rq2_scaling(ordered, M, out_dir):
@@ -776,7 +1339,7 @@ def rq3(summaries, out_dir):
             llm_items.append((label, df, fb))
 
     if not llm_items:
-        print("  No LLM methods found – skipping RQ3.")
+        print("  No LLM methods found - skipping RQ3.")
         return
 
     # Sort by feedback order
@@ -806,7 +1369,7 @@ def rq3(summaries, out_dir):
 # ──────────────────────────────────────────────
 
 ## ── Change this to plot a specific run, or leave None for latest ──
-RUN_FOLDER = "20_20260210_21-24-57"
+RUN_FOLDER = "100_20260210_22-18-20"
 
 
 def main():
@@ -834,7 +1397,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     rq1(summaries, out_dir, raw=raw)
-    rq2(summaries, out_dir)
+    rq2(summaries, out_dir, raw=raw)
     rq3(summaries, out_dir)
 
     print(f"\nAll plots saved to: {out_dir}")

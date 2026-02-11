@@ -5,7 +5,7 @@ RESULTS_PATH = "PRISM-Guided-Learning/out/results/"
 
 # RL Termination Settings
 RL_TIME_BUDGET = 1600  # Wall-clock seconds per gridworld before graceful termination
-RL_CONVERGENCE_EPSILON = 0.001  # Min change in probabilities to continue
+RL_CONVERGENCE_EPSILON = 0.0001  # Min change in probabilities to continue
 GOAL_REACHABILITY_THRESHOLD = 0.8
 SEQUENCE_ORDERING_THRESHOLD = 0.8
 OBSTACLE_AVOIDANCE_THRESHOLD = 0.7
