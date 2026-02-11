@@ -16,7 +16,7 @@ from verification.PrismModelGenerator import PrismModelGenerator
 from environment.GridWorld import GridWorld
 
 from environment.GridWorldStepper import GridWorldMover
-from config.Settings import PRISM_PATH, RL_MAX_EPISODES, RL_TIME_BUDGET, RL_CONVERGENCE_EPSILON, RL_MIN_EPISODES_BEFORE_CONVERGENCE, get_threshold_for_key
+from config.Settings import PRISM_PATH, RL_TIME_BUDGET, RL_CONVERGENCE_EPSILON, RL_MIN_EPISODES_BEFORE_CONVERGENCE, get_threshold_for_key
 from utils.Logging import setup_logger, create_run_directory
 
 
@@ -38,7 +38,6 @@ def _evaluate_single_gridworld(args: Tuple) -> Dict:
     
     # Create a new agent instance for this process
     agent = LTLGuidedQLearningWithObstacle()
-    agent.max_episodes = config.get('max_episodes', RL_MAX_EPISODES)
     agent.time_budget = config.get('time_budget', RL_TIME_BUDGET)
     agent.convergence_epsilon = config.get('convergence_epsilon', RL_CONVERGENCE_EPSILON)
     agent.min_episodes_before_convergence = config.get('min_episodes_before_convergence', RL_MIN_EPISODES_BEFORE_CONVERGENCE)
@@ -109,7 +108,6 @@ class LTLGuidedQLearningWithObstacle:
         self.K = 5  # Counterfactual depth
         
         # Training configuration
-        self.max_episodes = RL_MAX_EPISODES
         self.time_budget = RL_TIME_BUDGET  # Wall-clock seconds
         self.convergence_epsilon = RL_CONVERGENCE_EPSILON
         self.min_episodes_before_convergence = RL_MIN_EPISODES_BEFORE_CONVERGENCE
@@ -168,7 +166,6 @@ class LTLGuidedQLearningWithObstacle:
 
         # Prepare arguments for parallel execution
         config = {
-            'max_episodes': self.max_episodes,
             'time_budget': self.time_budget,
             'convergence_epsilon': self.convergence_epsilon,
             'min_episodes_before_convergence': self.min_episodes_before_convergence,
@@ -541,9 +538,8 @@ class LTLGuidedQLearningWithObstacle:
         Termination triggers:
         1. Wall-clock time budget exceeded
         2. All probabilities meet their per-key thresholds
+        3. Convergence (after min_episodes_before_convergence)
         """
-        self._update_previous_probs()
-
         if self.train_start_time is not None:
             elapsed = time() - self.train_start_time
             if elapsed >= self.time_budget:
@@ -552,11 +548,14 @@ class LTLGuidedQLearningWithObstacle:
         if self._all_probs_meet_threshold():
             return "all probabilities meet threshold"
 
-        return None
+        if episode >= self.min_episodes_before_convergence and self._check_convergence():
+            return f"converged (prob changes < {self.convergence_epsilon} after episode {episode})"
 
-    def _update_previous_probs(self):
-        """Update previous_probs without checking convergence."""
-        self.previous_probs = self.prism_probs.copy()
+        # Update previous_probs for next convergence check (only if we didn't already in _check_convergence)
+        if episode < self.min_episodes_before_convergence:
+            self.previous_probs = self.prism_probs.copy()
+
+        return None
 
     def _all_probs_meet_threshold(self) -> bool:
         """Check if all probabilities >= their per-key thresholds."""
@@ -587,7 +586,7 @@ class LTLGuidedQLearningWithObstacle:
         Termination conditions:
         1. Wall-clock time budget exceeded (RL_TIME_BUDGET seconds)
         2. All probabilities meet their per-key thresholds
-        3. Max episodes reached
+        3. Convergence (after RL_MIN_EPISODES_BEFORE_CONVERGENCE)
 
         Args:
             verify_interval: Frequency of PRISM verification
@@ -601,7 +600,7 @@ class LTLGuidedQLearningWithObstacle:
             best_episode = 0
             episode = 0
 
-            while episode < self.max_episodes:
+            while True:
                 # Periodic verification (before episode training)
                 if episode % verify_interval == 0:
                     try:
