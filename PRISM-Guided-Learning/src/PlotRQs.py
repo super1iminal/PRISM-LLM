@@ -103,7 +103,14 @@ def load_results(run_dir):
     results = {}
     for f in sorted(Path(run_dir).glob("*_results.parquet")):
         model_name = f.stem.replace("_results", "")
-        results[model_name] = pd.read_parquet(f)
+        df = pd.read_parquet(f)
+        print(f"  LOAD {model_name}: shape={df.shape}, index={type(df.index).__name__}, "
+              f"index.names={df.index.names}, cols={df.columns.tolist()[:5]}...")
+        # Ensure MultiIndex (sample_id, iteration) even if saved as columns
+        if not isinstance(df.index, pd.MultiIndex):
+            if "sample_id" in df.columns and "iteration" in df.columns:
+                df = df.set_index(["sample_id", "iteration"])
+        results[model_name] = df
     return results
 
 
@@ -1596,7 +1603,7 @@ def rq3(summaries, out_dir):
 # ──────────────────────────────────────────────
 
 ## ── Change this to plot a specific run, or leave None for latest ──
-RUN_FOLDER = "50_20260211_05-59-39"
+RUN_FOLDER = "100_20260211_08-03-04"
 
 
 def main():
@@ -1618,6 +1625,11 @@ def main():
 
     print(f"Found {len(raw)} model(s): {', '.join(raw.keys())}")
 
+    empty_models = [name for name, df in raw.items() if df.empty]
+    if empty_models:
+        print(f"WARNING: {len(empty_models)} model(s) have empty results and will be skipped: "
+              f"{', '.join(empty_models)}")
+    raw = {name: df for name, df in raw.items() if not df.empty}
     summaries = {name: summarize_samples(df) for name, df in raw.items()}
 
     out_dir = os.path.join(run_dir, "plots")

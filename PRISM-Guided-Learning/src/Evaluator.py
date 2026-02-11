@@ -50,23 +50,26 @@ class EvalModel(Enum):
 
 def main():
     """Main entry point - runs evaluation and saves results to CSV."""
-    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_20_samples.csv")
+    dataloader = DataLoader("PRISM-Guided-Learning/data/grid_100_balanced.csv")
     dataloader.load_data()
 
     models = [
         EvalModel.RL, 
         # EvalModel.LLM_VANILLA_GPT5_NANO, 
-        # EvalModel.LLM_VANILLA_GPT5_MINI,
-        # EvalModel.LLM_VANILLA_GEMINI_PRO,
         # EvalModel.LLM_VANILLA_PLUS_GPT5_NANO,
-        # EvalModel.LLM_VANILLA_PLUS_GPT5_MINI,
-        # EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO,
         # EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO,
+        # EvalModel.LLM_FEEDBACK_GPT5_NANO,  
+        # EvalModel.LLM_FEEDBACK_SIMPLIFIED_GPT5_NANO,
+        # EvalModel.LLM_VANILLA_GPT5_MINI,
+        # EvalModel.LLM_VANILLA_PLUS_GPT5_MINI,
         # EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI,
-        # EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO,
-        # EvalModel.LLM_FEEDBACK_GPT5_NANO,         
         # EvalModel.LLM_FEEDBACK_GPT5_MINI,
-        # EvalModel.LLM_FEEDBACK_GEMINI_PRO 
+        # EvalModel.LLM_FEEDBACK_SIMPLIFIED_GPT5_MINI,
+        # EvalModel.LLM_VANILLA_GEMINI_PRO,
+        # EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO,
+        # EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO,
+        # EvalModel.LLM_FEEDBACK_GEMINI_PRO,
+        # EvalModel.LLM_FEEDBACK_SIMPLIFIED_GEMINI_PRO,
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
@@ -145,54 +148,54 @@ def get_model(model_type: EvalModel):
     elif model_type == EvalModel.LLM_VANILLA_PLUS_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_VANILLA_PLUS_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
-        return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return VanillaPlusLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     # Feedback Minus LLM planners (multiple iterations, probabilities only - no NL problems)
     elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
-        return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackMinusLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     # Feedback Simplified LLM planners (multiple iterations, focused repair prompt)
     elif model_type == EvalModel.LLM_FEEDBACK_SIMPLIFIED_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_FEEDBACK_SIMPLIFIED_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_FEEDBACK_SIMPLIFIED_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
-        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackSimplifiedLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     # Feedback LLM planners (multiple iterations, full feedback)
     elif model_type == EvalModel.LLM_FEEDBACK_GPT5_NANO:
         model_name = "gpt-5-nano-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_FEEDBACK_GPT5_MINI:
         model_name = "gpt-5-mini-2025-08-07"
         model = ChatOpenAI(model_name=model_name).with_structured_output(ActionPolicy)
-        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     elif model_type == EvalModel.LLM_FEEDBACK_GEMINI_PRO:
         model_name = "gemini-2.5-pro"
         model = ChatGoogleGenerativeAI(model=model_name).with_structured_output(ActionPolicy)
-        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=3)
+        return FeedbackLLMPlanner(model=model, model_name=model_name, max_attempts=5)
     # Other planners
     elif model_type == EvalModel.RL:
         return LTLGuidedQLearningWithObstacle()

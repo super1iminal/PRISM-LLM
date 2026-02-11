@@ -1,0 +1,3244 @@
+2026-02-11 05:59:39,885 - INFO - SimplifiedVerifier initialized with 3 goals, 9 requirements
+2026-02-11 05:59:39,885 - INFO - Policy initialized with 288 states.
+2026-02-11 05:59:39,885 - INFO - LLM planning for goal 1 at position (4, 5)
+2026-02-11 05:59:39,886 - INFO - === PROMPT for goal 1 ===
+You are an expert path planner working on formulating paths that meet formal requirements.
+
+Your task is to create a best-action policy for a grid world — choose one action per cell that guides the agent from any position to the goal while avoiding static obstacles, future goals, and moving obstacles.
+
+The grid world is 6 x 6. Here is the visual layout:
+
+  0 1 2 3 4 5
+0 S . . X . .
+1 . . . . . .
+2 . . . X F .
+3 X . . . . .
+4 . . . M . G
+5 F . . M M .
+
+Legend:
+- 'S' = Start position (0,0) - the initial state
+- 'G' = Current goal position you must reach
+- 'X' = Static obstacle (CANNOT enter - you will bounce back)
+- 'F' = Future goal (treat as obstacle for now - avoid it)
+- 'M' = Moving obstacle patrol path (avoid if possible)
+- '.' = Empty cell you can move through
+
+COORDINATE SYSTEM:
+- Position format: (row, col) where row is Y-axis, col is X-axis
+- (0,0) is in the TOP-LEFT corner
+- Row increases DOWNWARD (0 → 1 → 2...)
+- Column increases RIGHTWARD (0 → 1 → 2...)
+
+ACTIONS - pick ONE best action per state:
+- 0 = UP: Move to (row-1, col) - DECREASES row
+- 1 = RIGHT: Move to (row, col+1) - INCREASES column
+- 2 = DOWN: Move to (row+1, col) - INCREASES row
+- 3 = LEFT: Move to (row, col-1) - DECREASES column
+TASK DETAILS:
+- Static obstacles: [(2, 3), (0, 3), (3, 0)] (marked as 'X')
+- Future goals to avoid: [(2, 4), (5, 0)] (marked as 'F')
+- Moving obstacles: [(4, 3), (5, 3), (5, 4), (5, 3)] (marked as 'M', which could be anywhere along their patrol path)
+- Your current goal: (4, 5) (marked as 'G')
+
+STOCHASTIC EXECUTION:
+When you choose an action, the agent executes it with uncertainty:
+- 70% probability: Moves in the intended direction
+- 15% probability: Slips 90° LEFT of intended direction
+- 15% probability: Slips 90° RIGHT of intended direction
+
+Example: If you choose DOWN, there's a 70% chance of going DOWN, 15% chance of going LEFT, and 15% chance of going RIGHT.
+
+This means your paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+
+
+
+CRITICAL REQUIREMENTS:
+1. You MUST provide the best action for ALL 36 states in the 6x6 grid
+2. Never plan a path through obstacles (X) or future goals (F)
+2a. Avoid moving obstacles (M) along their patrol paths if possible
+3. The best action should create a path from ANY position to the goal
+4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)
+
+
+=== EXAMPLE 1 ===
+Grid (6x6):
+  0 1 2 3 4 5
+0 S . . . . F
+1 . . . . . X
+2 . X . F G .
+3 M M . . . .
+4 M M . . X .
+5 . . X . . .
+
+Goal: (2,4)
+Static obstacles: [(1,5), (2,1), (4,4), (5,2)]
+Future goals: [(0,5), (2,3)]
+Moving obstacles: [(3,0), (3,1), (4,0), (4,1)]
+Stochastic: 70% forward, 15% slip-left, 15% slip-right
+
+Reasoning:
+
+1. SAFE APPROACH TO GOAL
+Check each neighbor of (2,4) for slip safety:
+- From (1,4) via DOWN: slip-right lands on (1,5) X — 15% collision risk.
+- From (2,3) via RIGHT: (2,3) is F — cannot use as approach cell.
+- From (2,5) via LEFT: slip-left lands on (1,5) X — 15% collision risk.
+- From (3,4) via UP: slips land on (3,3) and (3,5), both clear — SAFE.
+Best approach: (3,4) -> UP.
+
+2. MAIN CORRIDOR
+Work backward from (3,4):
+- Row 3 moving RIGHT from col 2-4 is clean: (3,2)->RIGHT, (3,3)->RIGHT, (3,4)->UP.
+  Slip risk at (3,3): 15% up into (2,3) F — acceptable, only alternative is worse.
+- Feed into row 3 via column 2 going DOWN: (0,2)->DOWN, (1,2)->DOWN, (2,2)->DOWN.
+  Squeeze at (2,2)->DOWN: 15% slips hit (2,1) X and (2,3) F — unavoidable bottleneck.
+
+3. PROBLEM ZONES
+- (2,0) is squeezed: DOWN->(3,0) M, RIGHT->(2,1) X. Only safe exit is UP.
+- Cells (3,0), (3,1), (4,0), (4,1) are M — assign escape actions to exit M zone.
+- (5,4) cannot go UP (70% into (4,4) X) — go LEFT instead, only 15% slip-up risk.
+
+4. OVERALL FLOW
+- Top rows: move RIGHT along row 0-1 to reach column 2, then DOWN.
+- Bottom rows: move UP toward row 3 highway, then RIGHT to (3,4), then UP to goal.
+- Right side: (2,5)->LEFT and (3,5)->LEFT feed directly toward goal area.
+
+Policy:
+(0,0)=1  (0,1)=1  (0,2)=2  (0,3)=2  (0,4)=2  (0,5)=3
+(1,0)=1  (1,1)=1  (1,2)=2  (1,3)=1  (1,4)=2  (1,5)=3
+(2,0)=0  (2,1)=0  (2,2)=2  (2,3)=1  (2,4)=0  (2,5)=3
+(3,0)=0  (3,1)=1  (3,2)=1  (3,3)=1  (3,4)=0  (3,5)=3
+(4,0)=2  (4,1)=1  (4,2)=0  (4,3)=0  (4,4)=0  (4,5)=0
+(5,0)=1  (5,1)=0  (5,2)=0  (5,3)=0  (5,4)=3  (5,5)=0
+
+=== EXAMPLE 2 ===
+Grid (6x6):
+  0 1 2 3 4 5
+0 S . . . G .
+1 . F . . . .
+2 X . . M M .
+3 . X . . . .
+4 . X F . . .
+5 . . X . . .
+
+Goal: (0,4)
+Static obstacles: [(2,0), (3,1), (4,1), (5,2)]
+Future goals: [(1,1), (4,2)]
+Moving obstacles: [(2,3), (2,4)]
+Stochastic: 70% forward, 15% slip-left, 15% slip-right
+
+Reasoning:
+
+1. SAFE APPROACH TO GOAL
+Check each neighbor of (0,4) for slip safety:
+- From (0,3) via RIGHT: slips hit wall-bounce and (1,3), both clear — SAFE.
+- From (1,4) via UP: slips hit (1,3) and (1,5), both clear — SAFE.
+- From (0,5) via LEFT: slips hit wall-bounce and (1,5), both clear — SAFE.
+Multiple safe approaches — good. Policy can funnel from multiple directions.
+
+2. MAIN CORRIDORS
+- Row 0 express: (0,0)->RIGHT, (0,1)->RIGHT, (0,2)->RIGHT, (0,3)->RIGHT to goal.
+  All slips are wall-bounces (up) or row-1 cells. Only risk: (0,1)->RIGHT has 15% slip into (1,1) F.
+- Eastern column: cells on right side go UP through rows to reach row 0-1.
+- Central: avoid M cells at (2,3) and (2,4). Route around via (3,3)->RIGHT, (3,4)->RIGHT,
+  (3,5)->UP instead of going directly UP through M row.
+
+3. PROBLEM ZONES
+- TRAPPED POCKET: (3,0), (4,0), (5,0), (5,1) are walled in by X at (2,0), (3,1), (4,1), (5,2).
+  No stochastically reliable exit. Assign best-effort actions but these cells effectively cannot reach goal.
+- (2,1) is squeezed: UP->(1,1) F, LEFT->(2,0) X, DOWN->(3,1) X. Only option is RIGHT (70% safe).
+  Slips hit F and X at 15% each — unavoidable.
+- Cells near M row: (3,3) and (3,4) use RIGHT instead of UP to avoid 70% chance of entering M.
+
+4. OVERALL FLOW
+- Top half: row-0 express lane going RIGHT, row-1 feeds UP into row 0.
+- Bottom-right: go UP through columns 3-5, routing around M cells.
+- Bottom-left: trapped pocket, minimal reachability.
+
+Policy:
+(0,0)=1  (0,1)=1  (0,2)=1  (0,3)=1  (0,4)=0  (0,5)=3
+(1,0)=0  (1,1)=0  (1,2)=1  (1,3)=0  (1,4)=0  (1,5)=0
+(2,0)=0  (2,1)=1  (2,2)=0  (2,3)=0  (2,4)=0  (2,5)=0
+(3,0)=2  (3,1)=0  (3,2)=0  (3,3)=1  (3,4)=1  (3,5)=0
+(4,0)=2  (4,1)=1  (4,2)=0  (4,3)=0  (4,4)=0  (4,5)=0
+(5,0)=0  (5,1)=3  (5,2)=1  (5,3)=0  (5,4)=0  (5,5)=0
+
+
+INSTRUCTIONS:
+Before producing your policy, reason through the following:
+1. Which neighbor of the goal has the safest slip profile?
+2. What corridor feeds that approach cell?
+3. Which cells are squeezed between obstacles (high unavoidable risk)?
+4. Are any cells trapped / unreachable?
+
+Now provide the best action for all states.
+
+2026-02-11 06:01:30,155 - INFO - LLM Response received for goal 1.
+2026-02-11 06:01:30,155 - INFO - Applying response for goal 1
+2026-02-11 06:01:30,155 - INFO - LLM planning for goal 2 at position (2, 4)
+2026-02-11 06:01:30,155 - INFO - === PROMPT for goal 2 ===
+You are an expert path planner working on formulating paths that meet formal requirements.
+
+Your task is to create a best-action policy for a grid world — choose one action per cell that guides the agent from any position to the goal while avoiding static obstacles, future goals, and moving obstacles.
+
+The grid world is 6 x 6. Here is the visual layout:
+
+  0 1 2 3 4 5
+0 S . . X . .
+1 . . . . . .
+2 . . . X G .
+3 X . . . . .
+4 . . . M . .
+5 F . . M M .
+
+Legend:
+- 'S' = Start position (0,0) - the initial state
+- 'G' = Current goal position you must reach
+- 'X' = Static obstacle (CANNOT enter - you will bounce back)
+- 'F' = Future goal (treat as obstacle for now - avoid it)
+- 'M' = Moving obstacle patrol path (avoid if possible)
+- '.' = Empty cell you can move through
+
+COORDINATE SYSTEM:
+- Position format: (row, col) where row is Y-axis, col is X-axis
+- (0,0) is in the TOP-LEFT corner
+- Row increases DOWNWARD (0 → 1 → 2...)
+- Column increases RIGHTWARD (0 → 1 → 2...)
+
+ACTIONS - pick ONE best action per state:
+- 0 = UP: Move to (row-1, col) - DECREASES row
+- 1 = RIGHT: Move to (row, col+1) - INCREASES column
+- 2 = DOWN: Move to (row+1, col) - INCREASES row
+- 3 = LEFT: Move to (row, col-1) - DECREASES column
+TASK DETAILS:
+- Static obstacles: [(2, 3), (0, 3), (3, 0)] (marked as 'X')
+- Future goals to avoid: [(5, 0)] (marked as 'F')
+- Moving obstacles: [(4, 3), (5, 3), (5, 4), (5, 3)] (marked as 'M', which could be anywhere along their patrol path)
+- Your current goal: (2, 4) (marked as 'G')
+
+STOCHASTIC EXECUTION:
+When you choose an action, the agent executes it with uncertainty:
+- 70% probability: Moves in the intended direction
+- 15% probability: Slips 90° LEFT of intended direction
+- 15% probability: Slips 90° RIGHT of intended direction
+
+Example: If you choose DOWN, there's a 70% chance of going DOWN, 15% chance of going LEFT, and 15% chance of going RIGHT.
+
+This means your paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+
+
+
+CRITICAL REQUIREMENTS:
+1. You MUST provide the best action for ALL 36 states in the 6x6 grid
+2. Never plan a path through obstacles (X) or future goals (F)
+2a. Avoid moving obstacles (M) along their patrol paths if possible
+3. The best action should create a path from ANY position to the goal
+4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)
+
+
+=== EXAMPLE 1 ===
+Grid (6x6):
+  0 1 2 3 4 5
+0 S . . . . F
+1 . . . . . X
+2 . X . F G .
+3 M M . . . .
+4 M M . . X .
+5 . . X . . .
+
+Goal: (2,4)
+Static obstacles: [(1,5), (2,1), (4,4), (5,2)]
+Future goals: [(0,5), (2,3)]
+Moving obstacles: [(3,0), (3,1), (4,0), (4,1)]
+Stochastic: 70% forward, 15% slip-left, 15% slip-right
+
+Reasoning:
+
+1. SAFE APPROACH TO GOAL
+Check each neighbor of (2,4) for slip safety:
+- From (1,4) via DOWN: slip-right lands on (1,5) X — 15% collision risk.
+- From (2,3) via RIGHT: (2,3) is F — cannot use as approach cell.
+- From (2,5) via LEFT: slip-left lands on (1,5) X — 15% collision risk.
+- From (3,4) via UP: slips land on (3,3) and (3,5), both clear — SAFE.
+Best approach: (3,4) -> UP.
+
+2. MAIN CORRIDOR
+Work backward from (3,4):
+- Row 3 moving RIGHT from col 2-4 is clean: (3,2)->RIGHT, (3,3)->RIGHT, (3,4)->UP.
+  Slip risk at (3,3): 15% up into (2,3) F — acceptable, only alternative is worse.
+- Feed into row 3 via column 2 going DOWN: (0,2)->DOWN, (1,2)->DOWN, (2,2)->DOWN.
+  Squeeze at (2,2)->DOWN: 15% slips hit (2,1) X and (2,3) F — unavoidable bottleneck.
+
+3. PROBLEM ZONES
+- (2,0) is squeezed: DOWN->(3,0) M, RIGHT->(2,1) X. Only safe exit is UP.
+- Cells (3,0), (3,1), (4,0), (4,1) are M — assign escape actions to exit M zone.
+- (5,4) cannot go UP (70% into (4,4) X) — go LEFT instead, only 15% slip-up risk.
+
+4. OVERALL FLOW
+- Top rows: move RIGHT along row 0-1 to reach column 2, then DOWN.
+- Bottom rows: move UP toward row 3 highway, then RIGHT to (3,4), then UP to goal.
+- Right side: (2,5)->LEFT and (3,5)->LEFT feed directly toward goal area.
+
+Policy:
+(0,0)=1  (0,1)=1  (0,2)=2  (0,3)=2  (0,4)=2  (0,5)=3
+(1,0)=1  (1,1)=1  (1,2)=2  (1,3)=1  (1,4)=2  (1,5)=3
+(2,0)=0  (2,1)=0  (2,2)=2  (2,3)=1  (2,4)=0  (2,5)=3
+(3,0)=0  (3,1)=1  (3,2)=1  (3,3)=1  (3,4)=0  (3,5)=3
+(4,0)=2  (4,1)=1  (4,2)=0  (4,3)=0  (4,4)=0  (4,5)=0
+(5,0)=1  (5,1)=0  (5,2)=0  (5,3)=0  (5,4)=3  (5,5)=0
+
+=== EXAMPLE 2 ===
+Grid (6x6):
+  0 1 2 3 4 5
+0 S . . . G .
+1 . F . . . .
+2 X . . M M .
+3 . X . . . .
+4 . X F . . .
+5 . . X . . .
+
+Goal: (0,4)
+Static obstacles: [(2,0), (3,1), (4,1), (5,2)]
+Future goals: [(1,1), (4,2)]
+Moving obstacles: [(2,3), (2,4)]
+Stochastic: 70% forward, 15% slip-left, 15% slip-right
+
+Reasoning:
+
+1. SAFE APPROACH TO GOAL
+Check each neighbor of (0,4) for slip safety:
+- From (0,3) via RIGHT: slips hit wall-bounce and (1,3), both clear — SAFE.
+- From (1,4) via UP: slips hit (1,3) and (1,5), both clear — SAFE.
+- From (0,5) via LEFT: slips hit wall-bounce and (1,5), both clear — SAFE.
+Multiple safe approaches — good. Policy can funnel from multiple directions.
+
+2. MAIN CORRIDORS
+- Row 0 express: (0,0)->RIGHT, (0,1)->RIGHT, (0,2)->RIGHT, (0,3)->RIGHT to goal.
+  All slips are wall-bounces (up) or row-1 cells. Only risk: (0,1)->RIGHT has 15% slip into (1,1) F.
+- Eastern column: cells on right side go UP through rows to reach row 0-1.
+- Central: avoid M cells at (2,3) and (2,4). Route around via (3,3)->RIGHT, (3,4)->RIGHT,
+  (3,5)->UP instead of going directly UP through M row.
+
+3. PROBLEM ZONES
+- TRAPPED POCKET: (3,0), (4,0), (5,0), (5,1) are walled in by X at (2,0), (3,1), (4,1), (5,2).
+  No stochastically reliable exit. Assign best-effort actions but these cells effectively cannot reach goal.
+- (2,1) is squeezed: UP->(1,1) F, LEFT->(2,0) X, DOWN->(3,1) X. Only option is RIGHT (70% safe).
+  Slips hit F and X at 15% each — unavoidable.
+- Cells near M row: (3,3) and (3,4) use RIGHT instead of UP to avoid 70% chance of entering M.
+
+4. OVERALL FLOW
+- Top half: row-0 express lane going RIGHT, row-1 feeds UP into row 0.
+- Bottom-right: go UP through columns 3-5, routing around M cells.
+- Bottom-left: trapped pocket, minimal reachability.
+
+Policy:
+(0,0)=1  (0,1)=1  (0,2)=1  (0,3)=1  (0,4)=0  (0,5)=3
+(1,0)=0  (1,1)=0  (1,2)=1  (1,3)=0  (1,4)=0  (1,5)=0
+(2,0)=0  (2,1)=1  (2,2)=0  (2,3)=0  (2,4)=0  (2,5)=0
+(3,0)=2  (3,1)=0  (3,2)=0  (3,3)=1  (3,4)=1  (3,5)=0
+(4,0)=2  (4,1)=1  (4,2)=0  (4,3)=0  (4,4)=0  (4,5)=0
+(5,0)=0  (5,1)=3  (5,2)=1  (5,3)=0  (5,4)=0  (5,5)=0
+
+
+INSTRUCTIONS:
+Before producing your policy, reason through the following:
+1. Which neighbor of the goal has the safest slip profile?
+2. What corridor feeds that approach cell?
+3. Which cells are squeezed between obstacles (high unavoidable risk)?
+4. Are any cells trapped / unreachable?
+
+Now provide the best action for all states.
+
+2026-02-11 06:03:31,323 - INFO - LLM Response received for goal 2.
+2026-02-11 06:03:31,324 - INFO - Applying response for goal 2
+2026-02-11 06:03:31,324 - INFO - LLM planning for goal 3 at position (5, 0)
+2026-02-11 06:03:31,324 - INFO - === PROMPT for goal 3 ===
+You are an expert path planner working on formulating paths that meet formal requirements.
+
+Your task is to create a best-action policy for a grid world — choose one action per cell that guides the agent from any position to the goal while avoiding static obstacles, future goals, and moving obstacles.
+
+The grid world is 6 x 6. Here is the visual layout:
+
+  0 1 2 3 4 5
+0 S . . X . .
+1 . . . . . .
+2 . . . X . .
+3 X . . . . .
+4 . . . M . .
+5 G . . M M .
+
+Legend:
+- 'S' = Start position (0,0) - the initial state
+- 'G' = Current goal position you must reach
+- 'X' = Static obstacle (CANNOT enter - you will bounce back)
+- 'F' = Future goal (treat as obstacle for now - avoid it)
+- 'M' = Moving obstacle patrol path (avoid if possible)
+- '.' = Empty cell you can move through
+
+COORDINATE SYSTEM:
+- Position format: (row, col) where row is Y-axis, col is X-axis
+- (0,0) is in the TOP-LEFT corner
+- Row increases DOWNWARD (0 → 1 → 2...)
+- Column increases RIGHTWARD (0 → 1 → 2...)
+
+ACTIONS - pick ONE best action per state:
+- 0 = UP: Move to (row-1, col) - DECREASES row
+- 1 = RIGHT: Move to (row, col+1) - INCREASES column
+- 2 = DOWN: Move to (row+1, col) - INCREASES row
+- 3 = LEFT: Move to (row, col-1) - DECREASES column
+TASK DETAILS:
+- Static obstacles: [(2, 3), (0, 3), (3, 0)] (marked as 'X')
+- Future goals to avoid: [] (marked as 'F')
+- Moving obstacles: [(4, 3), (5, 3), (5, 4), (5, 3)] (marked as 'M', which could be anywhere along their patrol path)
+- Your current goal: (5, 0) (marked as 'G')
+
+STOCHASTIC EXECUTION:
+When you choose an action, the agent executes it with uncertainty:
+- 70% probability: Moves in the intended direction
+- 15% probability: Slips 90° LEFT of intended direction
+- 15% probability: Slips 90° RIGHT of intended direction
+
+Example: If you choose DOWN, there's a 70% chance of going DOWN, 15% chance of going LEFT, and 15% chance of going RIGHT.
+
+This means your paths should be ROBUST - avoid routes that pass adjacent to obstacles since slips could cause collisions.
+
+
+
+CRITICAL REQUIREMENTS:
+1. You MUST provide the best action for ALL 36 states in the 6x6 grid
+2. Never plan a path through obstacles (X) or future goals (F)
+2a. Avoid moving obstacles (M) along their patrol paths if possible
+3. The best action should create a path from ANY position to the goal
+4. If a cell is an obstacle (X, M) or future goal (F), provide an escape action (how to exit if accidentally there due to stochastic slip)
+
+
+=== EXAMPLE 1 ===
+Grid (6x6):
+  0 1 2 3 4 5
+0 S . . . . F
+1 . . . . . X
+2 . X . F G .
+3 M M . . . .
+4 M M . . X .
+5 . . X . . .
+
+Goal: (2,4)
+Static obstacles: [(1,5), (2,1), (4,4), (5,2)]
+Future goals: [(0,5), (2,3)]
+Moving obstacles: [(3,0), (3,1), (4,0), (4,1)]
+Stochastic: 70% forward, 15% slip-left, 15% slip-right
+
+Reasoning:
+
+1. SAFE APPROACH TO GOAL
+Check each neighbor of (2,4) for slip safety:
+- From (1,4) via DOWN: slip-right lands on (1,5) X — 15% collision risk.
+- From (2,3) via RIGHT: (2,3) is F — cannot use as approach cell.
+- From (2,5) via LEFT: slip-left lands on (1,5) X — 15% collision risk.
+- From (3,4) via UP: slips land on (3,3) and (3,5), both clear — SAFE.
+Best approach: (3,4) -> UP.
+
+2. MAIN CORRIDOR
+Work backward from (3,4):
+- Row 3 moving RIGHT from col 2-4 is clean: (3,2)->RIGHT, (3,3)->RIGHT, (3,4)->UP.
+  Slip risk at (3,3): 15% up into (2,3) F — acceptable, only alternative is worse.
+- Feed into row 3 via column 2 going DOWN: (0,2)->DOWN, (1,2)->DOWN, (2,2)->DOWN.
+  Squeeze at (2,2)->DOWN: 15% slips hit (2,1) X and (2,3) F — unavoidable bottleneck.
+
+3. PROBLEM ZONES
+- (2,0) is squeezed: DOWN->(3,0) M, RIGHT->(2,1) X. Only safe exit is UP.
+- Cells (3,0), (3,1), (4,0), (4,1) are M — assign escape actions to exit M zone.
+- (5,4) cannot go UP (70% into (4,4) X) — go LEFT instead, only 15% slip-up risk.
+
+4. OVERALL FLOW
+- Top rows: move RIGHT along row 0-1 to reach column 2, then DOWN.
+- Bottom rows: move UP toward row 3 highway, then RIGHT to (3,4), then UP to goal.
+- Right side: (2,5)->LEFT and (3,5)->LEFT feed directly toward goal area.
+
+Policy:
+(0,0)=1  (0,1)=1  (0,2)=2  (0,3)=2  (0,4)=2  (0,5)=3
+(1,0)=1  (1,1)=1  (1,2)=2  (1,3)=1  (1,4)=2  (1,5)=3
+(2,0)=0  (2,1)=0  (2,2)=2  (2,3)=1  (2,4)=0  (2,5)=3
+(3,0)=0  (3,1)=1  (3,2)=1  (3,3)=1  (3,4)=0  (3,5)=3
+(4,0)=2  (4,1)=1  (4,2)=0  (4,3)=0  (4,4)=0  (4,5)=0
+(5,0)=1  (5,1)=0  (5,2)=0  (5,3)=0  (5,4)=3  (5,5)=0
+
+=== EXAMPLE 2 ===
+Grid (6x6):
+  0 1 2 3 4 5
+0 S . . . G .
+1 . F . . . .
+2 X . . M M .
+3 . X . . . .
+4 . X F . . .
+5 . . X . . .
+
+Goal: (0,4)
+Static obstacles: [(2,0), (3,1), (4,1), (5,2)]
+Future goals: [(1,1), (4,2)]
+Moving obstacles: [(2,3), (2,4)]
+Stochastic: 70% forward, 15% slip-left, 15% slip-right
+
+Reasoning:
+
+1. SAFE APPROACH TO GOAL
+Check each neighbor of (0,4) for slip safety:
+- From (0,3) via RIGHT: slips hit wall-bounce and (1,3), both clear — SAFE.
+- From (1,4) via UP: slips hit (1,3) and (1,5), both clear — SAFE.
+- From (0,5) via LEFT: slips hit wall-bounce and (1,5), both clear — SAFE.
+Multiple safe approaches — good. Policy can funnel from multiple directions.
+
+2. MAIN CORRIDORS
+- Row 0 express: (0,0)->RIGHT, (0,1)->RIGHT, (0,2)->RIGHT, (0,3)->RIGHT to goal.
+  All slips are wall-bounces (up) or row-1 cells. Only risk: (0,1)->RIGHT has 15% slip into (1,1) F.
+- Eastern column: cells on right side go UP through rows to reach row 0-1.
+- Central: avoid M cells at (2,3) and (2,4). Route around via (3,3)->RIGHT, (3,4)->RIGHT,
+  (3,5)->UP instead of going directly UP through M row.
+
+3. PROBLEM ZONES
+- TRAPPED POCKET: (3,0), (4,0), (5,0), (5,1) are walled in by X at (2,0), (3,1), (4,1), (5,2).
+  No stochastically reliable exit. Assign best-effort actions but these cells effectively cannot reach goal.
+- (2,1) is squeezed: UP->(1,1) F, LEFT->(2,0) X, DOWN->(3,1) X. Only option is RIGHT (70% safe).
+  Slips hit F and X at 15% each — unavoidable.
+- Cells near M row: (3,3) and (3,4) use RIGHT instead of UP to avoid 70% chance of entering M.
+
+4. OVERALL FLOW
+- Top half: row-0 express lane going RIGHT, row-1 feeds UP into row 0.
+- Bottom-right: go UP through columns 3-5, routing around M cells.
+- Bottom-left: trapped pocket, minimal reachability.
+
+Policy:
+(0,0)=1  (0,1)=1  (0,2)=1  (0,3)=1  (0,4)=0  (0,5)=3
+(1,0)=0  (1,1)=0  (1,2)=1  (1,3)=0  (1,4)=0  (1,5)=0
+(2,0)=0  (2,1)=1  (2,2)=0  (2,3)=0  (2,4)=0  (2,5)=0
+(3,0)=2  (3,1)=0  (3,2)=0  (3,3)=1  (3,4)=1  (3,5)=0
+(4,0)=2  (4,1)=1  (4,2)=0  (4,3)=0  (4,4)=0  (4,5)=0
+(5,0)=0  (5,1)=3  (5,2)=1  (5,3)=0  (5,4)=0  (5,5)=0
+
+
+INSTRUCTIONS:
+Before producing your policy, reason through the following:
+1. Which neighbor of the goal has the safest slip profile?
+2. What corridor feeds that approach cell?
+3. Which cells are squeezed between obstacles (high unavoidable risk)?
+4. Are any cells trapped / unreachable?
+
+Now provide the best action for all states.
+
+2026-02-11 06:04:54,485 - INFO - LLM Response received for goal 3.
+2026-02-11 06:04:54,485 - INFO - Applying response for goal 3
+2026-02-11 06:04:54,491 - DEBUG - PRISM Model:
+2026-02-11 06:04:54,491 - DEBUG - dtmc
+
+const int N = 6;
+
+module gridworld
+  x : [0..5] init 0;
+  y : [0..5] init 0;
+  g1 : bool init false;
+  g2 : bool init false;
+  g3 : bool init false;
+
+  [step] (x=0 & y=0 & g1=false & g2=false & g3=false) -> 0.7:(x'=0) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=0 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=0 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=0 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=0 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=0 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=0 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=0 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=1 & g1=false & g2=false & g3=false) -> 0.7:(x'=0) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=1 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=1 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=1 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=1 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=1 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=1 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=1 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=2 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=2 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=2 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=2 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=2 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=2 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=2 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=2 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=3 & g1=false & g2=false & g3=false) -> 0.7:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=3 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=3 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=3 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=3 & g1=true & g2=false & g3=false) -> 0.7:(x'=0) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=3 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=3 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=3 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=4 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=4 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=4 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=4 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=4 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=4 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=4 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=4 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=5 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=5 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=5 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=5 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=0 & y=5 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=0 & y=5 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=0 & y=5 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=0 & y=5 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=0 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=0 & g1=false & g2=false & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=0 & g1=false & g2=true & g3=false) -> 0.7:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=0 & g1=false & g2=true & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=0 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=0 & g1=true & g2=false & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=0 & g1=true & g2=true & g3=false) -> 0.7:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=0 & g1=true & g2=true & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=1 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=1 & g1=false & g2=false & g3=true) -> 0.7:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=1 & g1=false & g2=true & g3=false) -> 0.7:(x'=2) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=1 & g1=false & g2=true & g3=true) -> 0.7:(x'=2) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=1 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=1 & g1=true & g2=false & g3=true) -> 0.7:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=1 & g1=true & g2=true & g3=false) -> 0.7:(x'=2) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=1 & g1=true & g2=true & g3=true) -> 0.7:(x'=2) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=2 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=2 & g1=false & g2=false & g3=true) -> 0.7:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=2 & g1=false & g2=true & g3=false) -> 0.7:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=2 & g1=false & g2=true & g3=true) -> 0.7:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=2 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=2 & g1=true & g2=false & g3=true) -> 0.7:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=2 & g1=true & g2=true & g3=false) -> 0.7:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=2 & g1=true & g2=true & g3=true) -> 0.7:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=3 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=3 & g1=false & g2=false & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=3 & g1=false & g2=true & g3=false) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=3 & g1=false & g2=true & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=3 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=3 & g1=true & g2=false & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=3 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=3 & g1=true & g2=true & g3=true) -> 0.7:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=4 & g1=false & g2=false & g3=false) -> 0.7:(x'=1) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=4 & g1=false & g2=false & g3=true) -> 0.7:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=4 & g1=false & g2=true & g3=false) -> 0.7:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=4 & g1=false & g2=true & g3=true) -> 0.7:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=4 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=4 & g1=true & g2=false & g3=true) -> 0.7:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=4 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=4 & g1=true & g2=true & g3=true) -> 0.7:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=5 & g1=false & g2=false & g3=false) -> 0.7:(x'=2) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=5 & g1=false & g2=false & g3=true) -> 0.7:(x'=2) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=5 & g1=false & g2=true & g3=false) -> 0.7:(x'=2) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=5 & g1=false & g2=true & g3=true) -> 0.7:(x'=2) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=1 & y=5 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=1 & y=5 & g1=true & g2=false & g3=true) -> 0.7:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=1 & y=5 & g1=true & g2=true & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=0) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=1 & y=5 & g1=true & g2=true & g3=true) -> 0.7:(x'=2) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=0 & g1=false & g2=false & g3=false) -> 0.7:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=0 & g1=false & g2=false & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=0 & g1=false & g2=true & g3=false) -> 0.7:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=0 & g1=false & g2=true & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=0 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=0 & g1=true & g2=false & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=0 & g1=true & g2=true & g3=false) -> 0.7:(x'=2) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=0 & g1=true & g2=true & g3=true) -> 0.7:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=1 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=1 & g1=false & g2=false & g3=true) -> 0.7:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=1 & g1=false & g2=true & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=1 & g1=false & g2=true & g3=true) -> 0.7:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=1 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=1 & g1=true & g2=false & g3=true) -> 0.7:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=1 & g1=true & g2=true & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=1 & g1=true & g2=true & g3=true) -> 0.7:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=2 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=2 & g1=false & g2=false & g3=true) -> 0.7:(x'=3) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=2 & g1=false & g2=true & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=2 & g1=false & g2=true & g3=true) -> 0.7:(x'=3) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=2 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=2 & g1=true & g2=false & g3=true) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=2 & g1=true & g2=true & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=2 & g1=true & g2=true & g3=true) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=3 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=3 & g1=false & g2=false & g3=true) -> 0.7:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=3 & g1=false & g2=true & g3=false) -> 0.7:(x'=3) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=3 & g1=false & g2=true & g3=true) -> 0.7:(x'=3) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=3 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=3 & g1=true & g2=false & g3=true) -> 0.7:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=3 & g1=true & g2=true & g3=false) -> 0.7:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=3 & g1=true & g2=true & g3=true) -> 0.7:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=4 & g1=false & g2=false & g3=false) -> 0.7:(x'=2) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=1) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=4 & g1=false & g2=false & g3=true) -> 0.7:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=4 & g1=false & g2=true & g3=false) -> 0.7:(x'=3) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=4 & g1=false & g2=true & g3=true) -> 0.7:(x'=3) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=4 & g1=true & g2=false & g3=false) -> 0.7:(x'=1) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=4 & g1=true & g2=false & g3=true) -> 0.7:(x'=3) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=4 & g1=true & g2=true & g3=false) -> 0.7:(x'=2) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=1) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=4 & g1=true & g2=true & g3=true) -> 0.7:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=5 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=2 & y=5 & g1=false & g2=false & g3=true) -> 0.7:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=2 & y=5 & g1=false & g2=true & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=5 & g1=false & g2=true & g3=true) -> 0.7:(x'=3) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=5 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=5 & g1=true & g2=false & g3=true) -> 0.7:(x'=3) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=2 & y=5 & g1=true & g2=true & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=2 & y=5 & g1=true & g2=true & g3=true) -> 0.7:(x'=3) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=0 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=0 & g1=false & g2=false & g3=true) -> 0.7:(x'=4) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=0 & g1=false & g2=true & g3=false) -> 0.7:(x'=4) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=0 & g1=false & g2=true & g3=true) -> 0.7:(x'=4) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=0 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=0 & g1=true & g2=false & g3=true) -> 0.7:(x'=4) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=0 & g1=true & g2=true & g3=false) -> 0.7:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=2) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=0 & g1=true & g2=true & g3=true) -> 0.7:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=1 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=1 & g1=false & g2=false & g3=true) -> 0.7:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=1 & g1=false & g2=true & g3=false) -> 0.7:(x'=4) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=1 & g1=false & g2=true & g3=true) -> 0.7:(x'=4) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=1 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=1 & g1=true & g2=false & g3=true) -> 0.7:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=1 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=1 & g1=true & g2=true & g3=true) -> 0.7:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=2 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=2 & g1=false & g2=false & g3=true) -> 0.7:(x'=4) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=2 & g1=false & g2=true & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=2 & g1=false & g2=true & g3=true) -> 0.7:(x'=4) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=2 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=2 & g1=true & g2=false & g3=true) -> 0.7:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=2 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=2 & g1=true & g2=true & g3=true) -> 0.7:(x'=4) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=3 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=3 & g1=false & g2=false & g3=true) -> 0.7:(x'=4) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=3 & g1=false & g2=true & g3=false) -> 0.7:(x'=4) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=3 & g1=false & g2=true & g3=true) -> 0.7:(x'=4) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=3 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=3 & g1=true & g2=false & g3=true) -> 0.7:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=3 & g1=true & g2=true & g3=false) -> 0.7:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=3 & g1=true & g2=true & g3=true) -> 0.7:(x'=4) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=4 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=4 & g1=false & g2=false & g3=true) -> 0.7:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=4 & g1=false & g2=true & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=4 & g1=false & g2=true & g3=true) -> 0.7:(x'=4) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=4 & g1=true & g2=false & g3=false) -> 0.7:(x'=2) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=4 & g1=true & g2=false & g3=true) -> 0.7:(x'=4) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=4 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=4 & g1=true & g2=true & g3=true) -> 0.7:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=5 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=5 & g1=false & g2=false & g3=true) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=5 & g1=false & g2=true & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=5 & g1=false & g2=true & g3=true) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=3 & y=5 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=2) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=3 & y=5 & g1=true & g2=false & g3=true) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=3 & y=5 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=3 & y=5 & g1=true & g2=true & g3=true) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=0 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=0 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=0 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=0 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=0 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=0 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=0 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=0 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=1 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=1 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=1 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=1 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=1 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=1 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=1 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=1 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=2 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=2 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=2 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=2 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=2 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=2 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=2 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=2 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=3 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=3 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=3 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=3 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=3 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=3 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=3 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=3 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=4 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=4 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=4 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=4 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=4 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=4 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=4 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=3) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=4 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=5 & g1=false & g2=false & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=5 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=5 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=5 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=4 & y=5 & g1=true & g2=false & g3=false) -> 0.7:(x'=3) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=4 & y=5 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=4 & y=5 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=4 & y=5 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=0 & g1=false & g2=false & g3=false) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=0 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=0 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=0 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=0 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=0 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=0 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=0 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=1 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=1 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=1 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=1 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=1 & g1=true & g2=false & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=1 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=1 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=1 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=0) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=2 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=2 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=2 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=2 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=2 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=2 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=2 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=2 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=1) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=3 & g1=false & g2=false & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=3 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=3 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=3 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=3 & g1=true & g2=false & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=3 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=3 & g1=true & g2=true & g3=false) -> 0.7:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=4) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=3 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=2) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=4 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=4 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=4 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=4 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=4 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=4 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=4 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=4 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=3) & (g1'=true) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=5 & g1=false & g2=false & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=5 & g1=false & g2=false & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=5 & g1=false & g2=true & g3=false) -> 0.7:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=5 & g1=false & g2=true & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=false) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=false) & (g2'=true) & (g3'=true);
+  [step] (x=5 & y=5 & g1=true & g2=false & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=false);
+  [step] (x=5 & y=5 & g1=true & g2=false & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=false) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=false) & (g3'=true);
+  [step] (x=5 & y=5 & g1=true & g2=true & g3=false) -> 0.7:(x'=4) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=false) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=false);
+  [step] (x=5 & y=5 & g1=true & g2=true & g3=true) -> 0.7:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=5) & (g1'=true) & (g2'=true) & (g3'=true) + 0.15:(x'=5) & (y'=4) & (g1'=true) & (g2'=true) & (g3'=true);
+endmodule
+
+module obstacle
+  obs_idx : [0..3] init 0;
+  [step] (obs_idx < 3) -> (obs_idx'=obs_idx+1);
+  [step] (obs_idx = 3) -> (obs_idx'=0);
+endmodule
+
+// Labels for properties
+label "at_goal1" = x=4 & y=5;
+label "at_goal2" = x=2 & y=4;
+label "at_goal3" = x=5 & y=0;
+label "at_moving_obs" = (obs_idx=0 & x=4 & y=3) | (obs_idx=1 & x=5 & y=3) | (obs_idx=2 & x=5 & y=4) | (obs_idx=3 & x=5 & y=3);
+label "in_seg1" = !g1;
+label "in_seg2" = g1 & !g2;
+label "in_seg3" = g2 & !g3;
+2026-02-11 06:04:54,495 - DEBUG - Properties:
+2026-02-11 06:04:54,495 - DEBUG - P=? [ F "at_goal1" ];
+P=? [ F "at_goal2" ];
+P=? [ F "at_goal3" ];
+P=? [ !"at_goal2" U "at_goal1" ];
+P=? [ !"at_goal3" U ("at_goal1" & (!"at_goal3" U "at_goal2")) ];
+P=? [ (!"at_goal2" U "at_goal1") & (!"at_goal3" U ("at_goal1" & (!"at_goal3" U "at_goal2"))) ];
+P=? [ G ("in_seg1" => !"at_moving_obs") ];
+P=? [ G ("in_seg2" => !"at_moving_obs") ];
+P=? [ G ("in_seg3" => !"at_moving_obs") ];
+
+2026-02-11 06:04:54,495 - DEBUG - Running PRISM command: /u/asherarya/prism-4.10-src/prism/bin/prism /tmp/tmpufy8b0te.nm /tmp/tmplu7wrl5y.props -explicit -javamaxmem 4g -maxiters 1000000 -power -verbose -exportstates PRISM-Guided-Learning/out/logs/states.txt
+2026-02-11 06:04:55,923 - DEBUG - PRISM stdout:
+2026-02-11 06:04:55,923 - DEBUG - PRISM
+=====
+
+Version: 4.10
+Date: Wed Feb 11 06:04:54 EST 2026
+Hostname: comps1
+Memory limits: cudd=1g, java(heap)=4g
+Command line: prism /tmp/tmpufy8b0te.nm /tmp/tmplu7wrl5y.props -explicit -javamaxmem 4g -maxiters 1000000 -power -verbose -exportstates PRISM-Guided-Learning/out/logs/states.txt
+
+Parsing PRISM model file "/tmp/tmpufy8b0te.nm"...
+
+Type:        DTMC
+Modules:     gridworld obstacle
+Actions:     [step]
+Variables:   x y g1 g2 g3 obs_idx
+Labels:      "at_goal1" "at_goal2" "at_goal3" "at_moving_obs" "in_seg1" "in_seg2" "in_seg3"
+
+Parsing properties file "/tmp/tmplu7wrl5y.props"...
+
+9 properties:
+(1) P=? [ F "at_goal1" ]
+(2) P=? [ F "at_goal2" ]
+(3) P=? [ F "at_goal3" ]
+(4) P=? [ !"at_goal2" U "at_goal1" ]
+(5) P=? [ !"at_goal3" U ("at_goal1"&(!"at_goal3" U "at_goal2")) ]
+(6) P=? [ (!"at_goal2" U "at_goal1")&(!"at_goal3" U ("at_goal1"&(!"at_goal3" U "at_goal2"))) ]
+(7) P=? [ G ("in_seg1"=>!"at_moving_obs") ]
+(8) P=? [ G ("in_seg2"=>!"at_moving_obs") ]
+(9) P=? [ G ("in_seg3"=>!"at_moving_obs") ]
+
+Building model (engine:explicit)...
+
+Computing reachable states... 320 states
+Reachable states exploration and model construction done in 0.042 secs.
+Sorting reachable states list...
+
+Time for model construction: 0.097 seconds.
+
+Type:        DTMC
+States:      320 (1 initial)
+Transitions: 940
+
+Exporting reachable states in plain text format to file "PRISM-Guided-Learning/out/logs/states.txt"...
+
+Error: Could not open file "PRISM-Guided-Learning/out/logs/states.txt" for output.
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ F "at_goal1" ]
+
+Starting probabilistic reachability...
+Calculating predecessor relation for discrete-time Markov chain...  done (0.003 seconds)
+Starting Prob0...
+Prob0 took 0.004 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=8, yes=136, no=24, maybe=160
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 1263 iterations, 596136 multiplications and 0.013 seconds.
+Probabilistic reachability took 0.03 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=1.0
+1:(0,0,false,false,false,1)=1.0
+2:(0,0,false,false,false,2)=1.0
+3:(0,0,false,false,false,3)=1.0
+4:(0,1,false,false,false,0)=1.0
+5:(0,1,false,false,false,1)=1.0
+6:(0,1,false,false,false,2)=1.0
+7:(0,1,false,false,false,3)=1.0
+8:(0,2,false,false,false,0)=1.0
+9:(0,2,false,false,false,1)=1.0
+10:(0,2,false,false,false,2)=1.0
+11:(0,2,false,false,false,3)=1.0
+12:(0,4,false,false,false,0)=1.0
+13:(0,4,false,false,false,1)=1.0
+14:(0,4,false,false,false,2)=1.0
+15:(0,4,false,false,false,3)=1.0
+16:(0,4,true,true,false,0)=0.991263981322965
+17:(0,4,true,true,false,1)=0.991263981322965
+18:(0,4,true,true,false,2)=0.991263981322965
+19:(0,4,true,true,false,3)=0.991263981322965
+20:(0,5,false,false,false,0)=1.0
+21:(0,5,false,false,false,1)=1.0
+22:(0,5,false,false,false,2)=1.0
+23:(0,5,false,false,false,3)=1.0
+24:(0,5,true,true,false,0)=0.9916858191089185
+25:(0,5,true,true,false,1)=0.9916858191089185
+26:(0,5,true,true,false,2)=0.9916858191089185
+27:(0,5,true,true,false,3)=0.9916858191089185
+28:(1,0,false,false,false,0)=1.0
+29:(1,0,false,false,false,1)=1.0
+30:(1,0,false,false,false,2)=1.0
+31:(1,0,false,false,false,3)=1.0
+32:(1,0,true,false,false,0)=0.9930244678995412
+33:(1,0,true,false,false,1)=0.9930244678995412
+34:(1,0,true,false,false,2)=0.9930244678995412
+35:(1,0,true,false,false,3)=0.9930244678995412
+36:(1,1,false,false,false,0)=1.0
+37:(1,1,false,false,false,1)=1.0
+38:(1,1,false,false,false,2)=1.0
+39:(1,1,false,false,false,3)=1.0
+40:(1,1,true,false,false,0)=0.9930257504941401
+41:(1,1,true,false,false,1)=0.9930257504941401
+42:(1,1,true,false,false,2)=0.9930257504941401
+43:(1,1,true,false,false,3)=0.9930257504941401
+44:(1,2,false,false,false,0)=1.0
+45:(1,2,false,false,false,1)=1.0
+46:(1,2,false,false,false,2)=1.0
+47:(1,2,false,false,false,3)=1.0
+48:(1,2,true,false,false,0)=0.9930266275161701
+49:(1,2,true,false,false,1)=0.9930266275161701
+50:(1,2,true,false,false,2)=0.9930266275161701
+51:(1,2,true,false,false,3)=0.9930266275161701
+52:(1,3,false,false,false,0)=1.0
+53:(1,3,false,false,false,1)=1.0
+54:(1,3,false,false,false,2)=1.0
+55:(1,3,false,false,false,3)=1.0
+56:(1,3,true,false,false,0)=0.9930252339127956
+57:(1,3,true,false,false,1)=0.9930252339127956
+58:(1,3,true,false,false,2)=0.9930252339127956
+59:(1,3,true,false,false,3)=0.9930252339127956
+60:(1,3,true,true,false,0)=0.9911735875116892
+61:(1,3,true,true,false,1)=0.9911735875116892
+62:(1,3,true,true,false,2)=0.9911735875116892
+63:(1,3,true,true,false,3)=0.9911735875116892
+64:(1,4,false,false,false,0)=1.0
+65:(1,4,false,false,false,1)=1.0
+66:(1,4,false,false,false,2)=1.0
+67:(1,4,false,false,false,3)=1.0
+68:(1,4,true,true,false,0)=0.9911735875116894
+69:(1,4,true,true,false,1)=0.9911735875116894
+70:(1,4,true,true,false,2)=0.9911735875116894
+71:(1,4,true,true,false,3)=0.9911735875116894
+72:(1,5,false,false,false,0)=1.0
+73:(1,5,false,false,false,1)=1.0
+74:(1,5,false,false,false,2)=1.0
+75:(1,5,false,false,false,3)=1.0
+76:(1,5,true,true,false,0)=0.9917762129201944
+77:(1,5,true,true,false,1)=0.9917762129201944
+78:(1,5,true,true,false,2)=0.9917762129201944
+79:(1,5,true,true,false,3)=0.9917762129201944
+80:(2,0,false,false,false,0)=1.0
+81:(2,0,false,false,false,1)=1.0
+82:(2,0,false,false,false,2)=1.0
+83:(2,0,false,false,false,3)=1.0
+84:(2,0,true,false,false,0)=0.9930255944231715
+85:(2,0,true,false,false,1)=0.9930255944231715
+86:(2,0,true,false,false,2)=0.9930255944231715
+87:(2,0,true,false,false,3)=0.9930255944231715
+88:(2,1,false,false,false,0)=1.0
+89:(2,1,false,false,false,1)=1.0
+90:(2,1,false,false,false,2)=1.0
+91:(2,1,false,false,false,3)=1.0
+92:(2,1,true,false,false,0)=0.9930272257714416
+93:(2,1,true,false,false,1)=0.9930272257714416
+94:(2,1,true,false,false,2)=0.9930272257714416
+95:(2,1,true,false,false,3)=0.9930272257714416
+96:(2,2,false,false,false,0)=1.0
+97:(2,2,false,false,false,1)=1.0
+98:(2,2,false,false,false,2)=1.0
+99:(2,2,false,false,false,3)=1.0
+100:(2,2,true,false,false,0)=0.9930284935608508
+101:(2,2,true,false,false,1)=0.9930284935608508
+102:(2,2,true,false,false,2)=0.9930284935608508
+103:(2,2,true,false,false,3)=0.9930284935608508
+104:(2,4,false,false,false,0)=1.0
+105:(2,4,false,false,false,1)=1.0
+106:(2,4,false,false,false,2)=1.0
+107:(2,4,false,false,false,3)=1.0
+108:(2,4,true,true,false,0)=0.9910831937004152
+109:(2,4,true,true,false,1)=0.9910831937004152
+110:(2,4,true,true,false,2)=0.9910831937004152
+111:(2,4,true,true,false,3)=0.9910831937004152
+112:(2,5,false,false,false,0)=1.0
+113:(2,5,false,false,false,1)=1.0
+114:(2,5,false,false,false,2)=1.0
+115:(2,5,false,false,false,3)=1.0
+116:(2,5,true,false,false,0)=0.9927289711501487
+117:(2,5,true,false,false,1)=0.9927289711501487
+118:(2,5,true,false,false,2)=0.9927289711501487
+119:(2,5,true,false,false,3)=0.9927289711501487
+120:(2,5,true,true,false,0)=0.9946788586378277
+121:(2,5,true,true,false,1)=0.9946788586378277
+122:(2,5,true,true,false,2)=0.9946788586378277
+123:(2,5,true,true,false,3)=0.9946788586378277
+124:(3,1,false,false,false,0)=1.0
+125:(3,1,false,false,false,1)=1.0
+126:(3,1,false,false,false,2)=1.0
+127:(3,1,false,false,false,3)=1.0
+128:(3,1,true,false,false,0)=0.9930286770969294
+129:(3,1,true,false,false,1)=0.9930286770969294
+130:(3,1,true,false,false,2)=0.9930286770969294
+131:(3,1,true,false,false,3)=0.9930286770969294
+132:(3,2,false,false,false,0)=1.0
+133:(3,2,false,false,false,1)=1.0
+134:(3,2,false,false,false,2)=1.0
+135:(3,2,false,false,false,3)=1.0
+136:(3,2,true,false,false,0)=0.9930301258036113
+137:(3,2,true,false,false,1)=0.9930301258036113
+138:(3,2,true,false,false,2)=0.9930301258036113
+139:(3,2,true,false,false,3)=0.9930301258036113
+140:(3,3,false,false,false,0)=1.0
+141:(3,3,false,false,false,1)=1.0
+142:(3,3,false,false,false,2)=1.0
+143:(3,3,false,false,false,3)=1.0
+144:(3,3,true,false,false,0)=0.9930317412079204
+145:(3,3,true,false,false,1)=0.9930317412079204
+146:(3,3,true,false,false,2)=0.9930317412079204
+147:(3,3,true,false,false,3)=0.9930317412079204
+148:(3,3,true,true,false,0)=0.9525155389049043
+149:(3,3,true,true,false,1)=0.9525155389049043
+150:(3,3,true,true,false,2)=0.9525155389049043
+151:(3,3,true,true,false,3)=0.9525155389049043
+152:(3,4,false,false,false,0)=1.0
+153:(3,4,false,false,false,1)=1.0
+154:(3,4,false,false,false,2)=1.0
+155:(3,4,false,false,false,3)=1.0
+156:(3,4,true,false,false,0)=0.9916751054974663
+157:(3,4,true,false,false,1)=0.9916751054974663
+158:(3,4,true,false,false,2)=0.9916751054974663
+159:(3,4,true,false,false,3)=0.9916751054974663
+160:(3,4,true,true,false,0)=0.9742130301812162
+161:(3,4,true,true,false,1)=0.9742130301812162
+162:(3,4,true,true,false,2)=0.9742130301812162
+163:(3,4,true,true,false,3)=0.9742130301812162
+164:(3,5,false,false,false,0)=1.0
+165:(3,5,false,false,false,1)=1.0
+166:(3,5,false,false,false,2)=1.0
+167:(3,5,false,false,false,3)=1.0
+168:(3,5,true,false,false,0)=0.993081790643132
+169:(3,5,true,false,false,1)=0.993081790643132
+170:(3,5,true,false,false,2)=0.993081790643132
+171:(3,5,true,false,false,3)=0.993081790643132
+172:(3,5,true,true,false,0)=0.9954493582672734
+173:(3,5,true,true,false,1)=0.9954493582672734
+174:(3,5,true,true,false,2)=0.9954493582672734
+175:(3,5,true,true,false,3)=0.9954493582672734
+176:(4,0,false,false,false,0)=1.0
+177:(4,0,false,false,false,1)=1.0
+178:(4,0,false,false,false,2)=1.0
+179:(4,0,false,false,false,3)=1.0
+180:(4,0,true,true,false,0)=0.0047791455905120215
+181:(4,0,true,true,false,1)=0.0047791455905120215
+182:(4,0,true,true,false,2)=0.0047791455905120215
+183:(4,0,true,true,false,3)=0.0047791455905120215
+184:(4,1,false,false,false,0)=1.0
+185:(4,1,false,false,false,1)=1.0
+186:(4,1,false,false,false,2)=1.0
+187:(4,1,false,false,false,3)=1.0
+188:(4,1,true,false,false,0)=0.9930297084558403
+189:(4,1,true,false,false,1)=0.9930297084558403
+190:(4,1,true,false,false,2)=0.9930297084558403
+191:(4,1,true,false,false,3)=0.9930297084558403
+192:(4,1,true,true,false,0)=0.027081825012901455
+193:(4,1,true,true,false,1)=0.027081825012901455
+194:(4,1,true,true,false,2)=0.027081825012901455
+195:(4,1,true,true,false,3)=0.027081825012901455
+196:(4,2,false,false,false,0)=1.0
+197:(4,2,false,false,false,1)=1.0
+198:(4,2,false,false,false,2)=1.0
+199:(4,2,false,false,false,3)=1.0
+200:(4,2,true,false,false,0)=0.9930314341168968
+201:(4,2,true,false,false,1)=0.9930314341168968
+202:(4,2,true,false,false,2)=0.9930314341168968
+203:(4,2,true,false,false,3)=0.9930314341168968
+204:(4,2,true,true,false,0)=0.15346367507310826
+205:(4,2,true,true,false,1)=0.15346367507310826
+206:(4,2,true,true,false,2)=0.15346367507310826
+207:(4,2,true,true,false,3)=0.15346367507310826
+208:(4,3,false,false,false,0)=1.0
+209:(4,3,false,false,false,1)=1.0
+210:(4,3,false,false,false,2)=1.0
+211:(4,3,false,false,false,3)=1.0
+212:(4,3,true,false,false,0)=0.9930454755333848
+213:(4,3,true,false,false,1)=0.9930454755333848
+214:(4,3,true,false,false,2)=0.9930454755333848
+215:(4,3,true,false,false,3)=0.9930454755333848
+216:(4,3,true,true,false,0)=0.8512605796154498
+217:(4,3,true,true,false,1)=0.8512605796154498
+218:(4,3,true,true,false,2)=0.8512605796154498
+219:(4,3,true,true,false,3)=0.8512605796154498
+220:(4,4,false,false,false,0)=1.0
+221:(4,4,false,false,false,1)=1.0
+222:(4,4,false,false,false,2)=1.0
+223:(4,4,false,false,false,3)=1.0
+224:(4,4,true,false,false,0)=0.9931291567858325
+225:(4,4,true,false,false,1)=0.9931291567858325
+226:(4,4,true,false,false,2)=0.9931291567858325
+227:(4,4,true,false,false,3)=0.9931291567858325
+228:(4,4,true,true,false,0)=0.9743118508648423
+229:(4,4,true,true,false,1)=0.9743118508648423
+230:(4,4,true,true,false,2)=0.9743118508648423
+231:(4,4,true,true,false,3)=0.9743118508648423
+232:(4,5,true,false,false,0)=1.0
+233:(4,5,true,false,false,1)=1.0
+234:(4,5,true,false,false,2)=1.0
+235:(4,5,true,false,false,3)=1.0
+236:(4,5,true,true,false,0)=1.0
+237:(4,5,true,true,false,1)=1.0
+238:(4,5,true,true,false,2)=1.0
+239:(4,5,true,true,false,3)=1.0
+240:(5,0,false,false,false,0)=1.0
+241:(5,0,false,false,false,1)=1.0
+242:(5,0,false,false,false,2)=1.0
+243:(5,0,false,false,false,3)=1.0
+248:(5,1,false,false,false,0)=1.0
+249:(5,1,false,false,false,1)=1.0
+250:(5,1,false,false,false,2)=1.0
+251:(5,1,false,false,false,3)=1.0
+252:(5,1,true,false,false,0)=0.9930289786245659
+253:(5,1,true,false,false,1)=0.9930289786245659
+254:(5,1,true,false,false,2)=0.9930289786245659
+255:(5,1,true,false,false,3)=0.9930289786245659
+256:(5,1,true,true,false,0)=0.0047791455905120215
+257:(5,1,true,true,false,1)=0.0047791455905120215
+258:(5,1,true,true,false,2)=0.0047791455905120215
+259:(5,1,true,true,false,3)=0.0047791455905120215
+264:(5,2,false,false,false,0)=1.0
+265:(5,2,false,false,false,1)=1.0
+266:(5,2,false,false,false,2)=1.0
+267:(5,2,false,false,false,3)=1.0
+268:(5,2,true,false,false,0)=0.9930301778906365
+269:(5,2,true,false,false,1)=0.9930301778906365
+270:(5,2,true,false,false,2)=0.9930301778906365
+271:(5,2,true,false,false,3)=0.9930301778906365
+272:(5,2,true,true,false,0)=0.031017591969793708
+273:(5,2,true,true,false,1)=0.031017591969793708
+274:(5,2,true,true,false,2)=0.031017591969793708
+275:(5,2,true,true,false,3)=0.031017591969793708
+280:(5,3,false,false,false,0)=1.0
+281:(5,3,false,false,false,1)=1.0
+282:(5,3,false,false,false,2)=1.0
+283:(5,3,false,false,false,3)=1.0
+284:(5,3,true,false,false,0)=0.9930317844640799
+285:(5,3,true,false,false,1)=0.9930317844640799
+286:(5,3,true,false,false,2)=0.9930317844640799
+287:(5,3,true,false,false,3)=0.9930317844640799
+288:(5,3,true,true,false,0)=0.1757663544954977
+289:(5,3,true,true,false,1)=0.1757663544954977
+290:(5,3,true,true,false,2)=0.1757663544954977
+291:(5,3,true,true,false,3)=0.1757663544954977
+296:(5,4,false,false,false,0)=1.0
+297:(5,4,false,false,false,1)=1.0
+298:(5,4,false,false,false,2)=1.0
+299:(5,4,false,false,false,3)=1.0
+300:(5,4,true,true,false,0)=0.8545326422510658
+301:(5,4,true,true,false,1)=0.8545326422510658
+302:(5,4,true,true,false,2)=0.8545326422510658
+303:(5,4,true,true,false,3)=0.8545326422510658
+308:(5,5,false,false,false,0)=1.0
+309:(5,5,false,false,false,1)=1.0
+310:(5,5,false,false,false,2)=1.0
+311:(5,5,false,false,false,3)=1.0
+312:(5,5,true,true,false,0)=0.9743292898090116
+313:(5,5,true,true,false,1)=0.9743292898090116
+314:(5,5,true,true,false,2)=0.9743292898090116
+315:(5,5,true,true,false,3)=0.9743292898090116
+
+Value in the initial state: 1.0
+
+Time for model checking: 0.042 seconds.
+
+Result: 1.0 (+/- 9.949033836881716E-6 estimated; rel err 9.949033836881716E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ F "at_goal2" ]
+
+Starting probabilistic reachability...
+Starting Prob0...
+Prob0 took 0.0 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=8, yes=216, no=80, maybe=24
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 167 iterations, 11356 multiplications and 0.0 seconds.
+Probabilistic reachability took 0.001 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=1.0
+1:(0,0,false,false,false,1)=1.0
+2:(0,0,false,false,false,2)=1.0
+3:(0,0,false,false,false,3)=1.0
+4:(0,1,false,false,false,0)=1.0
+5:(0,1,false,false,false,1)=1.0
+6:(0,1,false,false,false,2)=1.0
+7:(0,1,false,false,false,3)=1.0
+8:(0,2,false,false,false,0)=1.0
+9:(0,2,false,false,false,1)=1.0
+10:(0,2,false,false,false,2)=1.0
+11:(0,2,false,false,false,3)=1.0
+12:(0,4,false,false,false,0)=1.0
+13:(0,4,false,false,false,1)=1.0
+14:(0,4,false,false,false,2)=1.0
+15:(0,4,false,false,false,3)=1.0
+16:(0,4,true,true,false,0)=0.9585803765625313
+17:(0,4,true,true,false,1)=0.9585803765625313
+18:(0,4,true,true,false,2)=0.9585803765625313
+19:(0,4,true,true,false,3)=0.9585803765625313
+20:(0,5,false,false,false,0)=1.0
+21:(0,5,false,false,false,1)=1.0
+22:(0,5,false,false,false,2)=1.0
+23:(0,5,false,false,false,3)=1.0
+24:(0,5,true,true,false,0)=0.8619659828044645
+25:(0,5,true,true,false,1)=0.8619659828044645
+26:(0,5,true,true,false,2)=0.8619659828044645
+27:(0,5,true,true,false,3)=0.8619659828044645
+28:(1,0,false,false,false,0)=1.0
+29:(1,0,false,false,false,1)=1.0
+30:(1,0,false,false,false,2)=1.0
+31:(1,0,false,false,false,3)=1.0
+32:(1,0,true,false,false,0)=1.0
+33:(1,0,true,false,false,1)=1.0
+34:(1,0,true,false,false,2)=1.0
+35:(1,0,true,false,false,3)=1.0
+36:(1,1,false,false,false,0)=1.0
+37:(1,1,false,false,false,1)=1.0
+38:(1,1,false,false,false,2)=1.0
+39:(1,1,false,false,false,3)=1.0
+40:(1,1,true,false,false,0)=1.0
+41:(1,1,true,false,false,1)=1.0
+42:(1,1,true,false,false,2)=1.0
+43:(1,1,true,false,false,3)=1.0
+44:(1,2,false,false,false,0)=1.0
+45:(1,2,false,false,false,1)=1.0
+46:(1,2,false,false,false,2)=1.0
+47:(1,2,false,false,false,3)=1.0
+48:(1,2,true,false,false,0)=1.0
+49:(1,2,true,false,false,1)=1.0
+50:(1,2,true,false,false,2)=1.0
+51:(1,2,true,false,false,3)=1.0
+52:(1,3,false,false,false,0)=1.0
+53:(1,3,false,false,false,1)=1.0
+54:(1,3,false,false,false,2)=1.0
+55:(1,3,false,false,false,3)=1.0
+56:(1,3,true,false,false,0)=1.0
+57:(1,3,true,false,false,1)=1.0
+58:(1,3,true,false,false,2)=1.0
+59:(1,3,true,false,false,3)=1.0
+60:(1,3,true,true,false,0)=0.9792834436043292
+61:(1,3,true,true,false,1)=0.9792834436043292
+62:(1,3,true,true,false,2)=0.9792834436043292
+63:(1,3,true,true,false,3)=0.9792834436043292
+64:(1,4,false,false,false,0)=1.0
+65:(1,4,false,false,false,1)=1.0
+66:(1,4,false,false,false,2)=1.0
+67:(1,4,false,false,false,3)=1.0
+68:(1,4,true,true,false,0)=0.9792846812540772
+69:(1,4,true,true,false,1)=0.9792846812540772
+70:(1,4,true,true,false,2)=0.9792846812540772
+71:(1,4,true,true,false,3)=0.9792846812540772
+72:(1,5,false,false,false,0)=1.0
+73:(1,5,false,false,false,1)=1.0
+74:(1,5,false,false,false,2)=1.0
+75:(1,5,false,false,false,3)=1.0
+76:(1,5,true,true,false,0)=0.8412640453724173
+77:(1,5,true,true,false,1)=0.8412640453724173
+78:(1,5,true,true,false,2)=0.8412640453724173
+79:(1,5,true,true,false,3)=0.8412640453724173
+80:(2,0,false,false,false,0)=1.0
+81:(2,0,false,false,false,1)=1.0
+82:(2,0,false,false,false,2)=1.0
+83:(2,0,false,false,false,3)=1.0
+84:(2,0,true,false,false,0)=1.0
+85:(2,0,true,false,false,1)=1.0
+86:(2,0,true,false,false,2)=1.0
+87:(2,0,true,false,false,3)=1.0
+88:(2,1,false,false,false,0)=1.0
+89:(2,1,false,false,false,1)=1.0
+90:(2,1,false,false,false,2)=1.0
+91:(2,1,false,false,false,3)=1.0
+92:(2,1,true,false,false,0)=1.0
+93:(2,1,true,false,false,1)=1.0
+94:(2,1,true,false,false,2)=1.0
+95:(2,1,true,false,false,3)=1.0
+96:(2,2,false,false,false,0)=1.0
+97:(2,2,false,false,false,1)=1.0
+98:(2,2,false,false,false,2)=1.0
+99:(2,2,false,false,false,3)=1.0
+100:(2,2,true,false,false,0)=1.0
+101:(2,2,true,false,false,1)=1.0
+102:(2,2,true,false,false,2)=1.0
+103:(2,2,true,false,false,3)=1.0
+104:(2,4,false,false,false,0)=1.0
+105:(2,4,false,false,false,1)=1.0
+106:(2,4,false,false,false,2)=1.0
+107:(2,4,false,false,false,3)=1.0
+108:(2,4,true,true,false,0)=1.0
+109:(2,4,true,true,false,1)=1.0
+110:(2,4,true,true,false,2)=1.0
+111:(2,4,true,true,false,3)=1.0
+112:(2,5,false,false,false,0)=1.0
+113:(2,5,false,false,false,1)=1.0
+114:(2,5,false,false,false,2)=1.0
+115:(2,5,false,false,false,3)=1.0
+116:(2,5,true,false,false,0)=1.0
+117:(2,5,true,false,false,1)=1.0
+118:(2,5,true,false,false,2)=1.0
+119:(2,5,true,false,false,3)=1.0
+120:(2,5,true,true,false,0)=0.1764705882352941
+121:(2,5,true,true,false,1)=0.1764705882352941
+122:(2,5,true,true,false,2)=0.1764705882352941
+123:(2,5,true,true,false,3)=0.1764705882352941
+124:(3,1,false,false,false,0)=1.0
+125:(3,1,false,false,false,1)=1.0
+126:(3,1,false,false,false,2)=1.0
+127:(3,1,false,false,false,3)=1.0
+128:(3,1,true,false,false,0)=1.0
+129:(3,1,true,false,false,1)=1.0
+130:(3,1,true,false,false,2)=1.0
+131:(3,1,true,false,false,3)=1.0
+132:(3,2,false,false,false,0)=1.0
+133:(3,2,false,false,false,1)=1.0
+134:(3,2,false,false,false,2)=1.0
+135:(3,2,false,false,false,3)=1.0
+136:(3,2,true,false,false,0)=1.0
+137:(3,2,true,false,false,1)=1.0
+138:(3,2,true,false,false,2)=1.0
+139:(3,2,true,false,false,3)=1.0
+140:(3,3,false,false,false,0)=1.0
+141:(3,3,false,false,false,1)=1.0
+142:(3,3,false,false,false,2)=1.0
+143:(3,3,false,false,false,3)=1.0
+144:(3,3,true,false,false,0)=1.0
+145:(3,3,true,false,false,1)=1.0
+146:(3,3,true,false,false,2)=1.0
+147:(3,3,true,false,false,3)=1.0
+152:(3,4,false,false,false,0)=1.0
+153:(3,4,false,false,false,1)=1.0
+154:(3,4,false,false,false,2)=1.0
+155:(3,4,false,false,false,3)=1.0
+156:(3,4,true,false,false,0)=1.0
+157:(3,4,true,false,false,1)=1.0
+158:(3,4,true,false,false,2)=1.0
+159:(3,4,true,false,false,3)=1.0
+164:(3,5,false,false,false,0)=1.0
+165:(3,5,false,false,false,1)=1.0
+166:(3,5,false,false,false,2)=1.0
+167:(3,5,false,false,false,3)=1.0
+168:(3,5,true,false,false,0)=1.0
+169:(3,5,true,false,false,1)=1.0
+170:(3,5,true,false,false,2)=1.0
+171:(3,5,true,false,false,3)=1.0
+176:(4,0,false,false,false,0)=1.0
+177:(4,0,false,false,false,1)=1.0
+178:(4,0,false,false,false,2)=1.0
+179:(4,0,false,false,false,3)=1.0
+184:(4,1,false,false,false,0)=1.0
+185:(4,1,false,false,false,1)=1.0
+186:(4,1,false,false,false,2)=1.0
+187:(4,1,false,false,false,3)=1.0
+188:(4,1,true,false,false,0)=1.0
+189:(4,1,true,false,false,1)=1.0
+190:(4,1,true,false,false,2)=1.0
+191:(4,1,true,false,false,3)=1.0
+196:(4,2,false,false,false,0)=1.0
+197:(4,2,false,false,false,1)=1.0
+198:(4,2,false,false,false,2)=1.0
+199:(4,2,false,false,false,3)=1.0
+200:(4,2,true,false,false,0)=1.0
+201:(4,2,true,false,false,1)=1.0
+202:(4,2,true,false,false,2)=1.0
+203:(4,2,true,false,false,3)=1.0
+208:(4,3,false,false,false,0)=1.0
+209:(4,3,false,false,false,1)=1.0
+210:(4,3,false,false,false,2)=1.0
+211:(4,3,false,false,false,3)=1.0
+212:(4,3,true,false,false,0)=1.0
+213:(4,3,true,false,false,1)=1.0
+214:(4,3,true,false,false,2)=1.0
+215:(4,3,true,false,false,3)=1.0
+220:(4,4,false,false,false,0)=1.0
+221:(4,4,false,false,false,1)=1.0
+222:(4,4,false,false,false,2)=1.0
+223:(4,4,false,false,false,3)=1.0
+224:(4,4,true,false,false,0)=1.0
+225:(4,4,true,false,false,1)=1.0
+226:(4,4,true,false,false,2)=1.0
+227:(4,4,true,false,false,3)=1.0
+232:(4,5,true,false,false,0)=1.0
+233:(4,5,true,false,false,1)=1.0
+234:(4,5,true,false,false,2)=1.0
+235:(4,5,true,false,false,3)=1.0
+240:(5,0,false,false,false,0)=1.0
+241:(5,0,false,false,false,1)=1.0
+242:(5,0,false,false,false,2)=1.0
+243:(5,0,false,false,false,3)=1.0
+248:(5,1,false,false,false,0)=1.0
+249:(5,1,false,false,false,1)=1.0
+250:(5,1,false,false,false,2)=1.0
+251:(5,1,false,false,false,3)=1.0
+252:(5,1,true,false,false,0)=1.0
+253:(5,1,true,false,false,1)=1.0
+254:(5,1,true,false,false,2)=1.0
+255:(5,1,true,false,false,3)=1.0
+264:(5,2,false,false,false,0)=1.0
+265:(5,2,false,false,false,1)=1.0
+266:(5,2,false,false,false,2)=1.0
+267:(5,2,false,false,false,3)=1.0
+268:(5,2,true,false,false,0)=1.0
+269:(5,2,true,false,false,1)=1.0
+270:(5,2,true,false,false,2)=1.0
+271:(5,2,true,false,false,3)=1.0
+280:(5,3,false,false,false,0)=1.0
+281:(5,3,false,false,false,1)=1.0
+282:(5,3,false,false,false,2)=1.0
+283:(5,3,false,false,false,3)=1.0
+284:(5,3,true,false,false,0)=1.0
+285:(5,3,true,false,false,1)=1.0
+286:(5,3,true,false,false,2)=1.0
+287:(5,3,true,false,false,3)=1.0
+296:(5,4,false,false,false,0)=1.0
+297:(5,4,false,false,false,1)=1.0
+298:(5,4,false,false,false,2)=1.0
+299:(5,4,false,false,false,3)=1.0
+308:(5,5,false,false,false,0)=1.0
+309:(5,5,false,false,false,1)=1.0
+310:(5,5,false,false,false,2)=1.0
+311:(5,5,false,false,false,3)=1.0
+
+Value in the initial state: 1.0
+
+Time for model checking: 0.004 seconds.
+
+Result: 1.0 (+/- 9.963150028600972E-6 estimated; rel err 9.963150028600972E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ F "at_goal3" ]
+
+Starting probabilistic reachability...
+Starting Prob0...
+Prob0 took 0.001 seconds.
+Starting Prob1...
+Prob1 took 0.0 seconds.
+target=8, yes=320, no=0, maybe=0
+Probabilistic reachability took 0.002 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=1.0
+1:(0,0,false,false,false,1)=1.0
+2:(0,0,false,false,false,2)=1.0
+3:(0,0,false,false,false,3)=1.0
+4:(0,1,false,false,false,0)=1.0
+5:(0,1,false,false,false,1)=1.0
+6:(0,1,false,false,false,2)=1.0
+7:(0,1,false,false,false,3)=1.0
+8:(0,2,false,false,false,0)=1.0
+9:(0,2,false,false,false,1)=1.0
+10:(0,2,false,false,false,2)=1.0
+11:(0,2,false,false,false,3)=1.0
+12:(0,4,false,false,false,0)=1.0
+13:(0,4,false,false,false,1)=1.0
+14:(0,4,false,false,false,2)=1.0
+15:(0,4,false,false,false,3)=1.0
+16:(0,4,true,true,false,0)=1.0
+17:(0,4,true,true,false,1)=1.0
+18:(0,4,true,true,false,2)=1.0
+19:(0,4,true,true,false,3)=1.0
+20:(0,5,false,false,false,0)=1.0
+21:(0,5,false,false,false,1)=1.0
+22:(0,5,false,false,false,2)=1.0
+23:(0,5,false,false,false,3)=1.0
+24:(0,5,true,true,false,0)=1.0
+25:(0,5,true,true,false,1)=1.0
+26:(0,5,true,true,false,2)=1.0
+27:(0,5,true,true,false,3)=1.0
+28:(1,0,false,false,false,0)=1.0
+29:(1,0,false,false,false,1)=1.0
+30:(1,0,false,false,false,2)=1.0
+31:(1,0,false,false,false,3)=1.0
+32:(1,0,true,false,false,0)=1.0
+33:(1,0,true,false,false,1)=1.0
+34:(1,0,true,false,false,2)=1.0
+35:(1,0,true,false,false,3)=1.0
+36:(1,1,false,false,false,0)=1.0
+37:(1,1,false,false,false,1)=1.0
+38:(1,1,false,false,false,2)=1.0
+39:(1,1,false,false,false,3)=1.0
+40:(1,1,true,false,false,0)=1.0
+41:(1,1,true,false,false,1)=1.0
+42:(1,1,true,false,false,2)=1.0
+43:(1,1,true,false,false,3)=1.0
+44:(1,2,false,false,false,0)=1.0
+45:(1,2,false,false,false,1)=1.0
+46:(1,2,false,false,false,2)=1.0
+47:(1,2,false,false,false,3)=1.0
+48:(1,2,true,false,false,0)=1.0
+49:(1,2,true,false,false,1)=1.0
+50:(1,2,true,false,false,2)=1.0
+51:(1,2,true,false,false,3)=1.0
+52:(1,3,false,false,false,0)=1.0
+53:(1,3,false,false,false,1)=1.0
+54:(1,3,false,false,false,2)=1.0
+55:(1,3,false,false,false,3)=1.0
+56:(1,3,true,false,false,0)=1.0
+57:(1,3,true,false,false,1)=1.0
+58:(1,3,true,false,false,2)=1.0
+59:(1,3,true,false,false,3)=1.0
+60:(1,3,true,true,false,0)=1.0
+61:(1,3,true,true,false,1)=1.0
+62:(1,3,true,true,false,2)=1.0
+63:(1,3,true,true,false,3)=1.0
+64:(1,4,false,false,false,0)=1.0
+65:(1,4,false,false,false,1)=1.0
+66:(1,4,false,false,false,2)=1.0
+67:(1,4,false,false,false,3)=1.0
+68:(1,4,true,true,false,0)=1.0
+69:(1,4,true,true,false,1)=1.0
+70:(1,4,true,true,false,2)=1.0
+71:(1,4,true,true,false,3)=1.0
+72:(1,5,false,false,false,0)=1.0
+73:(1,5,false,false,false,1)=1.0
+74:(1,5,false,false,false,2)=1.0
+75:(1,5,false,false,false,3)=1.0
+76:(1,5,true,true,false,0)=1.0
+77:(1,5,true,true,false,1)=1.0
+78:(1,5,true,true,false,2)=1.0
+79:(1,5,true,true,false,3)=1.0
+80:(2,0,false,false,false,0)=1.0
+81:(2,0,false,false,false,1)=1.0
+82:(2,0,false,false,false,2)=1.0
+83:(2,0,false,false,false,3)=1.0
+84:(2,0,true,false,false,0)=1.0
+85:(2,0,true,false,false,1)=1.0
+86:(2,0,true,false,false,2)=1.0
+87:(2,0,true,false,false,3)=1.0
+88:(2,1,false,false,false,0)=1.0
+89:(2,1,false,false,false,1)=1.0
+90:(2,1,false,false,false,2)=1.0
+91:(2,1,false,false,false,3)=1.0
+92:(2,1,true,false,false,0)=1.0
+93:(2,1,true,false,false,1)=1.0
+94:(2,1,true,false,false,2)=1.0
+95:(2,1,true,false,false,3)=1.0
+96:(2,2,false,false,false,0)=1.0
+97:(2,2,false,false,false,1)=1.0
+98:(2,2,false,false,false,2)=1.0
+99:(2,2,false,false,false,3)=1.0
+100:(2,2,true,false,false,0)=1.0
+101:(2,2,true,false,false,1)=1.0
+102:(2,2,true,false,false,2)=1.0
+103:(2,2,true,false,false,3)=1.0
+104:(2,4,false,false,false,0)=1.0
+105:(2,4,false,false,false,1)=1.0
+106:(2,4,false,false,false,2)=1.0
+107:(2,4,false,false,false,3)=1.0
+108:(2,4,true,true,false,0)=1.0
+109:(2,4,true,true,false,1)=1.0
+110:(2,4,true,true,false,2)=1.0
+111:(2,4,true,true,false,3)=1.0
+112:(2,5,false,false,false,0)=1.0
+113:(2,5,false,false,false,1)=1.0
+114:(2,5,false,false,false,2)=1.0
+115:(2,5,false,false,false,3)=1.0
+116:(2,5,true,false,false,0)=1.0
+117:(2,5,true,false,false,1)=1.0
+118:(2,5,true,false,false,2)=1.0
+119:(2,5,true,false,false,3)=1.0
+120:(2,5,true,true,false,0)=1.0
+121:(2,5,true,true,false,1)=1.0
+122:(2,5,true,true,false,2)=1.0
+123:(2,5,true,true,false,3)=1.0
+124:(3,1,false,false,false,0)=1.0
+125:(3,1,false,false,false,1)=1.0
+126:(3,1,false,false,false,2)=1.0
+127:(3,1,false,false,false,3)=1.0
+128:(3,1,true,false,false,0)=1.0
+129:(3,1,true,false,false,1)=1.0
+130:(3,1,true,false,false,2)=1.0
+131:(3,1,true,false,false,3)=1.0
+132:(3,2,false,false,false,0)=1.0
+133:(3,2,false,false,false,1)=1.0
+134:(3,2,false,false,false,2)=1.0
+135:(3,2,false,false,false,3)=1.0
+136:(3,2,true,false,false,0)=1.0
+137:(3,2,true,false,false,1)=1.0
+138:(3,2,true,false,false,2)=1.0
+139:(3,2,true,false,false,3)=1.0
+140:(3,3,false,false,false,0)=1.0
+141:(3,3,false,false,false,1)=1.0
+142:(3,3,false,false,false,2)=1.0
+143:(3,3,false,false,false,3)=1.0
+144:(3,3,true,false,false,0)=1.0
+145:(3,3,true,false,false,1)=1.0
+146:(3,3,true,false,false,2)=1.0
+147:(3,3,true,false,false,3)=1.0
+148:(3,3,true,true,false,0)=1.0
+149:(3,3,true,true,false,1)=1.0
+150:(3,3,true,true,false,2)=1.0
+151:(3,3,true,true,false,3)=1.0
+152:(3,4,false,false,false,0)=1.0
+153:(3,4,false,false,false,1)=1.0
+154:(3,4,false,false,false,2)=1.0
+155:(3,4,false,false,false,3)=1.0
+156:(3,4,true,false,false,0)=1.0
+157:(3,4,true,false,false,1)=1.0
+158:(3,4,true,false,false,2)=1.0
+159:(3,4,true,false,false,3)=1.0
+160:(3,4,true,true,false,0)=1.0
+161:(3,4,true,true,false,1)=1.0
+162:(3,4,true,true,false,2)=1.0
+163:(3,4,true,true,false,3)=1.0
+164:(3,5,false,false,false,0)=1.0
+165:(3,5,false,false,false,1)=1.0
+166:(3,5,false,false,false,2)=1.0
+167:(3,5,false,false,false,3)=1.0
+168:(3,5,true,false,false,0)=1.0
+169:(3,5,true,false,false,1)=1.0
+170:(3,5,true,false,false,2)=1.0
+171:(3,5,true,false,false,3)=1.0
+172:(3,5,true,true,false,0)=1.0
+173:(3,5,true,true,false,1)=1.0
+174:(3,5,true,true,false,2)=1.0
+175:(3,5,true,true,false,3)=1.0
+176:(4,0,false,false,false,0)=1.0
+177:(4,0,false,false,false,1)=1.0
+178:(4,0,false,false,false,2)=1.0
+179:(4,0,false,false,false,3)=1.0
+180:(4,0,true,true,false,0)=1.0
+181:(4,0,true,true,false,1)=1.0
+182:(4,0,true,true,false,2)=1.0
+183:(4,0,true,true,false,3)=1.0
+184:(4,1,false,false,false,0)=1.0
+185:(4,1,false,false,false,1)=1.0
+186:(4,1,false,false,false,2)=1.0
+187:(4,1,false,false,false,3)=1.0
+188:(4,1,true,false,false,0)=1.0
+189:(4,1,true,false,false,1)=1.0
+190:(4,1,true,false,false,2)=1.0
+191:(4,1,true,false,false,3)=1.0
+192:(4,1,true,true,false,0)=1.0
+193:(4,1,true,true,false,1)=1.0
+194:(4,1,true,true,false,2)=1.0
+195:(4,1,true,true,false,3)=1.0
+196:(4,2,false,false,false,0)=1.0
+197:(4,2,false,false,false,1)=1.0
+198:(4,2,false,false,false,2)=1.0
+199:(4,2,false,false,false,3)=1.0
+200:(4,2,true,false,false,0)=1.0
+201:(4,2,true,false,false,1)=1.0
+202:(4,2,true,false,false,2)=1.0
+203:(4,2,true,false,false,3)=1.0
+204:(4,2,true,true,false,0)=1.0
+205:(4,2,true,true,false,1)=1.0
+206:(4,2,true,true,false,2)=1.0
+207:(4,2,true,true,false,3)=1.0
+208:(4,3,false,false,false,0)=1.0
+209:(4,3,false,false,false,1)=1.0
+210:(4,3,false,false,false,2)=1.0
+211:(4,3,false,false,false,3)=1.0
+212:(4,3,true,false,false,0)=1.0
+213:(4,3,true,false,false,1)=1.0
+214:(4,3,true,false,false,2)=1.0
+215:(4,3,true,false,false,3)=1.0
+216:(4,3,true,true,false,0)=1.0
+217:(4,3,true,true,false,1)=1.0
+218:(4,3,true,true,false,2)=1.0
+219:(4,3,true,true,false,3)=1.0
+220:(4,4,false,false,false,0)=1.0
+221:(4,4,false,false,false,1)=1.0
+222:(4,4,false,false,false,2)=1.0
+223:(4,4,false,false,false,3)=1.0
+224:(4,4,true,false,false,0)=1.0
+225:(4,4,true,false,false,1)=1.0
+226:(4,4,true,false,false,2)=1.0
+227:(4,4,true,false,false,3)=1.0
+228:(4,4,true,true,false,0)=1.0
+229:(4,4,true,true,false,1)=1.0
+230:(4,4,true,true,false,2)=1.0
+231:(4,4,true,true,false,3)=1.0
+232:(4,5,true,false,false,0)=1.0
+233:(4,5,true,false,false,1)=1.0
+234:(4,5,true,false,false,2)=1.0
+235:(4,5,true,false,false,3)=1.0
+236:(4,5,true,true,false,0)=1.0
+237:(4,5,true,true,false,1)=1.0
+238:(4,5,true,true,false,2)=1.0
+239:(4,5,true,true,false,3)=1.0
+240:(5,0,false,false,false,0)=1.0
+241:(5,0,false,false,false,1)=1.0
+242:(5,0,false,false,false,2)=1.0
+243:(5,0,false,false,false,3)=1.0
+244:(5,0,true,true,true,0)=1.0
+245:(5,0,true,true,true,1)=1.0
+246:(5,0,true,true,true,2)=1.0
+247:(5,0,true,true,true,3)=1.0
+248:(5,1,false,false,false,0)=1.0
+249:(5,1,false,false,false,1)=1.0
+250:(5,1,false,false,false,2)=1.0
+251:(5,1,false,false,false,3)=1.0
+252:(5,1,true,false,false,0)=1.0
+253:(5,1,true,false,false,1)=1.0
+254:(5,1,true,false,false,2)=1.0
+255:(5,1,true,false,false,3)=1.0
+256:(5,1,true,true,false,0)=1.0
+257:(5,1,true,true,false,1)=1.0
+258:(5,1,true,true,false,2)=1.0
+259:(5,1,true,true,false,3)=1.0
+260:(5,1,true,true,true,0)=1.0
+261:(5,1,true,true,true,1)=1.0
+262:(5,1,true,true,true,2)=1.0
+263:(5,1,true,true,true,3)=1.0
+264:(5,2,false,false,false,0)=1.0
+265:(5,2,false,false,false,1)=1.0
+266:(5,2,false,false,false,2)=1.0
+267:(5,2,false,false,false,3)=1.0
+268:(5,2,true,false,false,0)=1.0
+269:(5,2,true,false,false,1)=1.0
+270:(5,2,true,false,false,2)=1.0
+271:(5,2,true,false,false,3)=1.0
+272:(5,2,true,true,false,0)=1.0
+273:(5,2,true,true,false,1)=1.0
+274:(5,2,true,true,false,2)=1.0
+275:(5,2,true,true,false,3)=1.0
+276:(5,2,true,true,true,0)=1.0
+277:(5,2,true,true,true,1)=1.0
+278:(5,2,true,true,true,2)=1.0
+279:(5,2,true,true,true,3)=1.0
+280:(5,3,false,false,false,0)=1.0
+281:(5,3,false,false,false,1)=1.0
+282:(5,3,false,false,false,2)=1.0
+283:(5,3,false,false,false,3)=1.0
+284:(5,3,true,false,false,0)=1.0
+285:(5,3,true,false,false,1)=1.0
+286:(5,3,true,false,false,2)=1.0
+287:(5,3,true,false,false,3)=1.0
+288:(5,3,true,true,false,0)=1.0
+289:(5,3,true,true,false,1)=1.0
+290:(5,3,true,true,false,2)=1.0
+291:(5,3,true,true,false,3)=1.0
+292:(5,3,true,true,true,0)=1.0
+293:(5,3,true,true,true,1)=1.0
+294:(5,3,true,true,true,2)=1.0
+295:(5,3,true,true,true,3)=1.0
+296:(5,4,false,false,false,0)=1.0
+297:(5,4,false,false,false,1)=1.0
+298:(5,4,false,false,false,2)=1.0
+299:(5,4,false,false,false,3)=1.0
+300:(5,4,true,true,false,0)=1.0
+301:(5,4,true,true,false,1)=1.0
+302:(5,4,true,true,false,2)=1.0
+303:(5,4,true,true,false,3)=1.0
+304:(5,4,true,true,true,0)=1.0
+305:(5,4,true,true,true,1)=1.0
+306:(5,4,true,true,true,2)=1.0
+307:(5,4,true,true,true,3)=1.0
+308:(5,5,false,false,false,0)=1.0
+309:(5,5,false,false,false,1)=1.0
+310:(5,5,false,false,false,2)=1.0
+311:(5,5,false,false,false,3)=1.0
+312:(5,5,true,true,false,0)=1.0
+313:(5,5,true,true,false,1)=1.0
+314:(5,5,true,true,false,2)=1.0
+315:(5,5,true,true,false,3)=1.0
+316:(5,5,true,true,true,0)=1.0
+317:(5,5,true,true,true,1)=1.0
+318:(5,5,true,true,true,2)=1.0
+319:(5,5,true,true,true,3)=1.0
+
+Value in the initial state: 1.0
+
+Time for model checking: 0.004 seconds.
+
+Result: 1.0 (exact floating point)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ !"at_goal2" U "at_goal1" ]
+
+Starting probabilistic reachability...
+Starting Prob0...
+Prob0 took 0.0 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=8, yes=8, no=32, maybe=280
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 1256 iterations, 1039968 multiplications and 0.005 seconds.
+Probabilistic reachability took 0.006 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=0.6860251755866064
+1:(0,0,false,false,false,1)=0.6860251755866064
+2:(0,0,false,false,false,2)=0.6860251755866064
+3:(0,0,false,false,false,3)=0.6860251755866064
+4:(0,1,false,false,false,0)=0.6795464363272683
+5:(0,1,false,false,false,1)=0.6795464363272683
+6:(0,1,false,false,false,2)=0.6795464363272683
+7:(0,1,false,false,false,3)=0.6795464363272683
+8:(0,2,false,false,false,0)=0.675094437996159
+9:(0,2,false,false,false,1)=0.675094437996159
+10:(0,2,false,false,false,2)=0.675094437996159
+11:(0,2,false,false,false,3)=0.675094437996159
+12:(0,4,false,false,false,0)=0.6570434705360635
+13:(0,4,false,false,false,1)=0.6570434705360635
+14:(0,4,false,false,false,2)=0.6570434705360635
+15:(0,4,false,false,false,3)=0.6570434705360635
+16:(0,4,true,true,false,0)=0.04121808055921009
+17:(0,4,true,true,false,1)=0.04121808055921009
+18:(0,4,true,true,false,2)=0.04121808055921009
+19:(0,4,true,true,false,3)=0.04121808055921009
+20:(0,5,false,false,false,0)=0.7496469126921531
+21:(0,5,false,false,false,1)=0.7496469126921531
+22:(0,5,false,false,false,2)=0.7496469126921531
+23:(0,5,false,false,false,3)=0.7496469126921531
+24:(0,5,true,true,false,0)=0.13739360186403374
+25:(0,5,true,true,false,1)=0.13739360186403374
+26:(0,5,true,true,false,2)=0.13739360186403374
+27:(0,5,true,true,false,3)=0.13739360186403374
+28:(1,0,false,false,false,0)=0.7162592921301846
+29:(1,0,false,false,false,1)=0.7162592921301846
+30:(1,0,false,false,false,2)=0.7162592921301846
+31:(1,0,false,false,false,3)=0.7162592921301846
+32:(1,0,true,false,false,0)=0.23318693020849637
+33:(1,0,true,false,false,1)=0.23318693020849637
+34:(1,0,true,false,false,2)=0.23318693020849637
+35:(1,0,true,false,false,3)=0.23318693020849637
+36:(1,1,false,false,false,0)=0.7003224285391121
+37:(1,1,false,false,false,1)=0.7003224285391121
+38:(1,1,false,false,false,2)=0.7003224285391121
+39:(1,1,false,false,false,3)=0.7003224285391121
+40:(1,1,true,false,false,0)=0.23318723151636572
+41:(1,1,true,false,false,1)=0.23318723151636572
+42:(1,1,true,false,false,2)=0.23318723151636572
+43:(1,1,true,false,false,3)=0.23318723151636572
+44:(1,2,false,false,false,0)=0.6741404383537786
+45:(1,2,false,false,false,1)=0.6741404383537786
+46:(1,2,false,false,false,2)=0.6741404383537786
+47:(1,2,false,false,false,3)=0.6741404383537786
+48:(1,2,true,false,false,0)=0.23318743754689125
+49:(1,2,true,false,false,1)=0.23318743754689125
+50:(1,2,true,false,false,2)=0.23318743754689125
+51:(1,2,true,false,false,3)=0.23318743754689125
+52:(1,3,false,false,false,0)=0.63719987578833
+53:(1,3,false,false,false,1)=0.63719987578833
+54:(1,3,false,false,false,2)=0.63719987578833
+55:(1,3,false,false,false,3)=0.63719987578833
+56:(1,3,true,false,false,0)=0.23318711016077573
+57:(1,3,true,false,false,1)=0.23318711016077573
+58:(1,3,true,false,false,2)=0.23318711016077573
+59:(1,3,true,false,false,3)=0.23318711016077573
+60:(1,3,true,true,false,0)=0.02060904027960503
+61:(1,3,true,true,false,1)=0.02060904027960503
+62:(1,3,true,true,false,2)=0.02060904027960503
+63:(1,3,true,true,false,3)=0.02060904027960503
+64:(1,4,false,false,false,0)=0.6371998757883302
+65:(1,4,false,false,false,1)=0.6371998757883302
+66:(1,4,false,false,false,2)=0.6371998757883302
+67:(1,4,false,false,false,3)=0.6371998757883302
+68:(1,4,true,true,false,0)=0.020609040279605032
+69:(1,4,true,true,false,1)=0.020609040279605032
+70:(1,4,true,true,false,2)=0.020609040279605032
+71:(1,4,true,true,false,3)=0.020609040279605032
+72:(1,5,false,false,false,0)=0.7694905074398867
+73:(1,5,false,false,false,1)=0.7694905074398867
+74:(1,5,false,false,false,2)=0.7694905074398867
+75:(1,5,false,false,false,3)=0.7694905074398867
+76:(1,5,true,true,false,0)=0.1580026421436388
+77:(1,5,true,true,false,1)=0.1580026421436388
+78:(1,5,true,true,false,2)=0.1580026421436388
+79:(1,5,true,true,false,3)=0.1580026421436388
+80:(2,0,false,false,false,0)=0.8208654387654348
+81:(2,0,false,false,false,1)=0.8208654387654348
+82:(2,0,false,false,false,2)=0.8208654387654348
+83:(2,0,false,false,false,3)=0.8208654387654348
+84:(2,0,true,false,false,0)=0.23318719485208297
+85:(2,0,true,false,false,1)=0.23318719485208297
+86:(2,0,true,false,false,2)=0.23318719485208297
+87:(2,0,true,false,false,3)=0.23318719485208297
+88:(2,1,false,false,false,0)=0.8432810416158457
+89:(2,1,false,false,false,1)=0.8432810416158457
+90:(2,1,false,false,false,2)=0.8432810416158457
+91:(2,1,false,false,false,3)=0.8432810416158457
+92:(2,1,true,false,false,0)=0.23318757808936774
+93:(2,1,true,false,false,1)=0.23318757808936774
+94:(2,1,true,false,false,2)=0.23318757808936774
+95:(2,1,true,false,false,3)=0.23318757808936774
+96:(2,2,false,false,false,0)=0.845575730683491
+97:(2,2,false,false,false,1)=0.845575730683491
+98:(2,2,false,false,false,2)=0.845575730683491
+99:(2,2,false,false,false,3)=0.845575730683491
+100:(2,2,true,false,false,0)=0.23318787591919327
+101:(2,2,true,false,false,1)=0.23318787591919327
+102:(2,2,true,false,false,2)=0.23318787591919327
+103:(2,2,true,false,false,3)=0.23318787591919327
+112:(2,5,false,false,false,0)=0.7978384999366489
+113:(2,5,false,false,false,1)=0.7978384999366489
+114:(2,5,false,false,false,2)=0.7978384999366489
+115:(2,5,false,false,false,3)=0.7978384999366489
+116:(2,5,true,false,false,0)=0.18625894450177813
+117:(2,5,true,false,false,1)=0.18625894450177813
+118:(2,5,true,false,false,2)=0.18625894450177813
+119:(2,5,true,false,false,3)=0.18625894450177813
+120:(2,5,true,true,false,0)=0.8197818244554015
+121:(2,5,true,true,false,1)=0.8197818244554015
+122:(2,5,true,true,false,2)=0.8197818244554015
+123:(2,5,true,true,false,3)=0.8197818244554015
+124:(3,1,false,false,false,0)=0.847592665997867
+125:(3,1,false,false,false,1)=0.847592665997867
+126:(3,1,false,false,false,2)=0.847592665997867
+127:(3,1,false,false,false,3)=0.847592665997867
+128:(3,1,true,false,false,0)=0.2331879190355956
+129:(3,1,true,false,false,1)=0.2331879190355956
+130:(3,1,true,false,false,2)=0.2331879190355956
+131:(3,1,true,false,false,3)=0.2331879190355956
+132:(3,2,false,false,false,0)=0.8460674497694152
+133:(3,2,false,false,false,1)=0.8460674497694152
+134:(3,2,false,false,false,2)=0.8460674497694152
+135:(3,2,false,false,false,3)=0.8460674497694152
+136:(3,2,true,false,false,0)=0.2331882593666122
+137:(3,2,true,false,false,1)=0.2331882593666122
+138:(3,2,true,false,false,2)=0.2331882593666122
+139:(3,2,true,false,false,3)=0.2331882593666122
+140:(3,3,false,false,false,0)=0.8429055346317789
+141:(3,3,false,false,false,1)=0.8429055346317789
+142:(3,3,false,false,false,2)=0.8429055346317789
+143:(3,3,false,false,false,3)=0.8429055346317789
+144:(3,3,true,false,false,0)=0.23318863885833227
+145:(3,3,true,false,false,1)=0.23318863885833227
+146:(3,3,true,false,false,2)=0.23318863885833227
+147:(3,3,true,false,false,3)=0.23318863885833227
+148:(3,3,true,true,false,0)=0.9525155389049043
+149:(3,3,true,true,false,1)=0.9525155389049043
+150:(3,3,true,true,false,2)=0.9525155389049043
+151:(3,3,true,true,false,3)=0.9525155389049043
+152:(3,4,false,false,false,0)=0.8232220590878945
+153:(3,4,false,false,false,1)=0.8232220590878945
+154:(3,4,false,false,false,2)=0.8232220590878945
+155:(3,4,false,false,false,3)=0.8232220590878945
+156:(3,4,true,false,false,0)=0.06890399997963406
+157:(3,4,true,false,false,1)=0.06890399997963406
+158:(3,4,true,false,false,2)=0.06890399997963406
+159:(3,4,true,false,false,3)=0.06890399997963406
+160:(3,4,true,true,false,0)=0.9742130301812162
+161:(3,4,true,true,false,1)=0.9742130301812162
+162:(3,4,true,true,false,2)=0.9742130301812162
+163:(3,4,true,true,false,3)=0.9742130301812162
+164:(3,5,false,false,false,0)=0.9688038927802166
+165:(3,5,false,false,false,1)=0.9688038927802166
+166:(3,5,false,false,false,2)=0.9688038927802166
+167:(3,5,false,false,false,3)=0.9688038927802166
+168:(3,5,true,false,false,0)=0.22617161138500583
+169:(3,5,true,false,false,1)=0.22617161138500583
+170:(3,5,true,false,false,2)=0.22617161138500583
+171:(3,5,true,false,false,3)=0.22617161138500583
+172:(3,5,true,true,false,0)=0.9954493582672734
+173:(3,5,true,true,false,1)=0.9954493582672734
+174:(3,5,true,true,false,2)=0.9954493582672734
+175:(3,5,true,true,false,3)=0.9954493582672734
+176:(4,0,false,false,false,0)=0.8591313964270645
+177:(4,0,false,false,false,1)=0.8591313964270645
+178:(4,0,false,false,false,2)=0.8591313964270645
+179:(4,0,false,false,false,3)=0.8591313964270645
+180:(4,0,true,true,false,0)=0.0047791455905120215
+181:(4,0,true,true,false,1)=0.0047791455905120215
+182:(4,0,true,true,false,2)=0.0047791455905120215
+183:(4,0,true,true,false,3)=0.0047791455905120215
+184:(4,1,false,false,false,0)=0.8590219661126637
+185:(4,1,false,false,false,1)=0.8590219661126637
+186:(4,1,false,false,false,2)=0.8590219661126637
+187:(4,1,false,false,false,3)=0.8590219661126637
+188:(4,1,true,false,false,0)=0.233188161323031
+189:(4,1,true,false,false,1)=0.233188161323031
+190:(4,1,true,false,false,2)=0.233188161323031
+191:(4,1,true,false,false,3)=0.233188161323031
+192:(4,1,true,true,false,0)=0.027081825012901455
+193:(4,1,true,true,false,1)=0.027081825012901455
+194:(4,1,true,true,false,2)=0.027081825012901455
+195:(4,1,true,true,false,3)=0.027081825012901455
+196:(4,2,false,false,false,0)=0.861314772830976
+197:(4,2,false,false,false,1)=0.861314772830976
+198:(4,2,false,false,false,2)=0.861314772830976
+199:(4,2,false,false,false,3)=0.861314772830976
+200:(4,2,true,false,false,0)=0.23318856671633034
+201:(4,2,true,false,false,1)=0.23318856671633034
+202:(4,2,true,false,false,2)=0.23318856671633034
+203:(4,2,true,false,false,3)=0.23318856671633034
+204:(4,2,true,true,false,0)=0.15346367507310826
+205:(4,2,true,true,false,1)=0.15346367507310826
+206:(4,2,true,true,false,2)=0.15346367507310826
+207:(4,2,true,true,false,3)=0.15346367507310826
+208:(4,3,false,false,false,0)=0.9347617538365731
+209:(4,3,false,false,false,1)=0.9347617538365731
+210:(4,3,false,false,false,2)=0.9347617538365731
+211:(4,3,false,false,false,3)=0.9347617538365731
+212:(4,3,true,false,false,0)=0.23319186533406097
+213:(4,3,true,false,false,1)=0.23319186533406097
+214:(4,3,true,false,false,2)=0.23319186533406097
+215:(4,3,true,false,false,3)=0.23319186533406097
+216:(4,3,true,true,false,0)=0.8512605796154498
+217:(4,3,true,true,false,1)=0.8512605796154498
+218:(4,3,true,true,false,2)=0.8512605796154498
+219:(4,3,true,true,false,3)=0.8512605796154498
+220:(4,4,false,false,false,0)=0.9670622276116195
+221:(4,4,false,false,false,1)=0.9670622276116195
+222:(4,4,false,false,false,2)=0.9670622276116195
+223:(4,4,false,false,false,3)=0.9670622276116195
+224:(4,4,true,false,false,0)=0.2332115237825713
+225:(4,4,true,false,false,1)=0.2332115237825713
+226:(4,4,true,false,false,2)=0.2332115237825713
+227:(4,4,true,false,false,3)=0.2332115237825713
+228:(4,4,true,true,false,0)=0.9743118508648423
+229:(4,4,true,true,false,1)=0.9743118508648423
+230:(4,4,true,true,false,2)=0.9743118508648423
+231:(4,4,true,true,false,3)=0.9743118508648423
+232:(4,5,true,false,false,0)=1.0
+233:(4,5,true,false,false,1)=1.0
+234:(4,5,true,false,false,2)=1.0
+235:(4,5,true,false,false,3)=1.0
+236:(4,5,true,true,false,0)=1.0
+237:(4,5,true,true,false,1)=1.0
+238:(4,5,true,true,false,2)=1.0
+239:(4,5,true,true,false,3)=1.0
+240:(5,0,false,false,false,0)=0.8596420712276022
+241:(5,0,false,false,false,1)=0.8596420712276022
+242:(5,0,false,false,false,2)=0.8596420712276022
+243:(5,0,false,false,false,3)=0.8596420712276022
+248:(5,1,false,false,false,0)=0.8597515015420033
+249:(5,1,false,false,false,1)=0.8597515015420033
+250:(5,1,false,false,false,2)=0.8597515015420033
+251:(5,1,false,false,false,3)=0.8597515015420033
+252:(5,1,true,false,false,0)=0.23318798987064343
+253:(5,1,true,false,false,1)=0.23318798987064343
+254:(5,1,true,false,false,2)=0.23318798987064343
+255:(5,1,true,false,false,3)=0.23318798987064343
+256:(5,1,true,true,false,0)=0.0047791455905120215
+257:(5,1,true,true,false,1)=0.0047791455905120215
+258:(5,1,true,true,false,2)=0.0047791455905120215
+259:(5,1,true,true,false,3)=0.0047791455905120215
+264:(5,2,false,false,false,0)=0.8632654305266563
+265:(5,2,false,false,false,1)=0.8632654305266563
+266:(5,2,false,false,false,2)=0.8632654305266563
+267:(5,2,false,false,false,3)=0.8632654305266563
+268:(5,2,true,false,false,0)=0.2331882716029265
+269:(5,2,true,false,false,1)=0.2331882716029265
+270:(5,2,true,false,false,2)=0.2331882716029265
+271:(5,2,true,false,false,3)=0.2331882716029265
+272:(5,2,true,true,false,0)=0.031017591969793708
+273:(5,2,true,true,false,1)=0.031017591969793708
+274:(5,2,true,true,false,2)=0.031017591969793708
+275:(5,2,true,true,false,3)=0.031017591969793708
+280:(5,3,false,false,false,0)=0.875882428757818
+281:(5,3,false,false,false,1)=0.875882428757818
+282:(5,3,false,false,false,2)=0.875882428757818
+283:(5,3,false,false,false,3)=0.875882428757818
+284:(5,3,true,false,false,0)=0.23318864902009448
+285:(5,3,true,false,false,1)=0.23318864902009448
+286:(5,3,true,false,false,2)=0.23318864902009448
+287:(5,3,true,false,false,3)=0.23318864902009448
+288:(5,3,true,true,false,0)=0.1757663544954977
+289:(5,3,true,true,false,1)=0.1757663544954977
+290:(5,3,true,true,false,2)=0.1757663544954977
+291:(5,3,true,true,false,3)=0.1757663544954977
+296:(5,4,false,false,false,0)=0.957192791656236
+297:(5,4,false,false,false,1)=0.957192791656236
+298:(5,4,false,false,false,2)=0.957192791656236
+299:(5,4,false,false,false,3)=0.957192791656236
+300:(5,4,true,true,false,0)=0.8545326422510658
+301:(5,4,true,true,false,1)=0.8545326422510658
+302:(5,4,true,true,false,2)=0.8545326422510658
+303:(5,4,true,true,false,3)=0.8545326422510658
+308:(5,5,false,false,false,0)=0.9924457867628651
+309:(5,5,false,false,false,1)=0.9924457867628651
+310:(5,5,false,false,false,2)=0.9924457867628651
+311:(5,5,false,false,false,3)=0.9924457867628651
+312:(5,5,true,true,false,0)=0.9743292898090116
+313:(5,5,true,true,false,1)=0.9743292898090116
+314:(5,5,true,true,false,2)=0.9743292898090116
+315:(5,5,true,true,false,3)=0.9743292898090116
+
+Value in the initial state: 0.6860251755866064
+
+Time for model checking: 0.011 seconds.
+
+Result: 0.6860251755866064 (+/- 6.828066996026244E-6 estimated; rel err 9.953085162199332E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ !"at_goal3" U ("at_goal1"&(!"at_goal3" U "at_goal2")) ]
+
+Building deterministic automaton (for "L0" U ("L1"&("L0" U "L2")))...
+DFA has 4 states, 1 goal states.
+Time for DFA translation: 0.069 seconds.
+Constructing DTMC-DFA product...
+Time for product construction: 0.012 seconds, product has 632 states (1 initial), 1856 transitions.
+
+Skipping BSCC computation since acceptance is defined via goal states...
+
+Computing reachability probabilities...
+
+Starting probabilistic reachability...
+Calculating predecessor relation for discrete-time Markov chain...  done (0.001 seconds)
+Starting Prob0...
+Prob0 took 0.0 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=108, yes=192, no=320, maybe=120
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 54 iterations, 19224 multiplications and 0.011 seconds.
+Probabilistic reachability took 0.013 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=0.9989894971620477
+
+Value in the initial state: 0.9989894971620477
+
+Time for model checking: 0.105 seconds.
+
+Result: 0.9989894971620477 (+/- 7.687740119743649E-6 estimated; rel err 7.695516460966965E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ (!"at_goal2" U "at_goal1")&(!"at_goal3" U ("at_goal1"&(!"at_goal3" U "at_goal2"))) ]
+
+Building deterministic automaton (for ("L0" U "L1")&("L2" U ("L1"&("L2" U !"L0"))))...
+DFA has 4 states, 1 goal states.
+Time for DFA translation: 0.003 seconds.
+Constructing DTMC-DFA product...
+Time for product construction: 0.003 seconds, product has 628 states (1 initial), 1844 transitions.
+
+Skipping BSCC computation since acceptance is defined via goal states...
+
+Computing reachability probabilities...
+
+Starting probabilistic reachability...
+Calculating predecessor relation for discrete-time Markov chain...  done (0.001 seconds)
+Starting Prob0...
+Prob0 took 0.0 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=108, yes=192, no=320, maybe=116
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 52 iterations, 17888 multiplications and 0.003 seconds.
+Probabilistic reachability took 0.005 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=0.6851701258609267
+
+Value in the initial state: 0.6851701258609267
+
+Time for model checking: 0.011 seconds.
+
+Result: 0.6851701258609267 (+/- 5.119595394023952E-6 estimated; rel err 7.472006149700561E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ G ("in_seg1"=>!"at_moving_obs") ]
+
+Starting probabilistic reachability...
+Starting Prob0...
+Prob0 took 0.001 seconds.
+Starting Prob1...
+Prob1 took 0.0 seconds.
+target=4, yes=4, no=192, maybe=124
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 52 iterations, 19136 multiplications and 0.001 seconds.
+Probabilistic reachability took 0.002 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=0.9838760257153188
+1:(0,0,false,false,false,1)=0.9741407289227745
+2:(0,0,false,false,false,2)=0.9861736183919041
+3:(0,0,false,false,false,3)=0.9784990468611704
+4:(0,1,false,false,false,0)=0.9809780893298822
+5:(0,1,false,false,false,1)=0.9863217958294269
+6:(0,1,false,false,false,2)=0.9767049734353068
+7:(0,1,false,false,false,3)=0.9882664368457914
+8:(0,2,false,false,false,0)=0.9898322662672597
+9:(0,2,false,false,false,1)=0.982425072745517
+10:(0,2,false,false,false,2)=0.9883149356358464
+11:(0,2,false,false,false,3)=0.978283406123232
+12:(0,4,false,false,false,0)=0.9985906131490672
+13:(0,4,false,false,false,1)=0.9974963630294905
+14:(0,4,false,false,false,2)=0.9983028515702413
+15:(0,4,false,false,false,3)=0.9971290696396337
+16:(0,4,true,true,false,0)=1.0
+17:(0,4,true,true,false,1)=1.0
+18:(0,4,true,true,false,2)=1.0
+19:(0,4,true,true,false,3)=1.0
+20:(0,5,false,false,false,0)=0.99725529684559
+21:(0,5,false,false,false,1)=0.9986400203955637
+22:(0,5,false,false,false,2)=0.9978363518614976
+23:(0,5,false,false,false,3)=0.9983274740943742
+24:(0,5,true,true,false,0)=1.0
+25:(0,5,true,true,false,1)=1.0
+26:(0,5,true,true,false,2)=1.0
+27:(0,5,true,true,false,3)=1.0
+28:(1,0,false,false,false,0)=0.9615531320864189
+29:(1,0,false,false,false,1)=0.9821976988964642
+30:(1,0,false,false,false,2)=0.9501413186638616
+31:(1,0,false,false,false,3)=0.9840816693694509
+32:(1,0,true,false,false,0)=1.0
+33:(1,0,true,false,false,1)=1.0
+34:(1,0,true,false,false,2)=1.0
+35:(1,0,true,false,false,3)=1.0
+36:(1,1,false,false,false,0)=0.9882475299482136
+37:(1,1,false,false,false,1)=0.96888177647423
+38:(1,1,false,false,false,2)=0.9866372668685828
+39:(1,1,false,false,false,3)=0.9577774711300554
+40:(1,1,true,false,false,0)=1.0
+41:(1,1,true,false,false,1)=1.0
+42:(1,1,true,false,false,2)=1.0
+43:(1,1,true,false,false,3)=1.0
+44:(1,2,false,false,false,0)=0.9752312119022966
+45:(1,2,false,false,false,1)=0.9921717629270106
+46:(1,2,false,false,false,2)=0.9823886907053573
+47:(1,2,false,false,false,3)=0.9904749384979401
+48:(1,2,true,false,false,0)=1.0
+49:(1,2,true,false,false,1)=1.0
+50:(1,2,true,false,false,2)=1.0
+51:(1,2,true,false,false,3)=1.0
+52:(1,3,false,false,false,0)=0.9984279692066881
+53:(1,3,false,false,false,1)=0.9975260452036729
+54:(1,3,false,false,false,2)=0.998168542203279
+55:(1,3,false,false,false,3)=0.9972805739411629
+56:(1,3,true,false,false,0)=1.0
+57:(1,3,true,false,false,1)=1.0
+58:(1,3,true,false,false,2)=1.0
+59:(1,3,true,false,false,3)=1.0
+60:(1,3,true,true,false,0)=1.0
+61:(1,3,true,true,false,1)=1.0
+62:(1,3,true,true,false,2)=1.0
+63:(1,3,true,true,false,3)=1.0
+64:(1,4,false,false,false,0)=0.9967888325709292
+65:(1,4,false,false,false,1)=0.9988145078146017
+66:(1,4,false,false,false,2)=0.9972506889577817
+67:(1,4,false,false,false,3)=0.9985490997491541
+68:(1,4,true,true,false,0)=1.0
+69:(1,4,true,true,false,1)=1.0
+70:(1,4,true,true,false,2)=1.0
+71:(1,4,true,true,false,3)=1.0
+72:(1,5,false,false,false,0)=0.998500838984307
+73:(1,5,false,false,false,1)=0.9969069131791273
+74:(1,5,false,false,false,2)=0.9988844852461125
+75:(1,5,false,false,false,3)=0.9978826716890864
+76:(1,5,true,true,false,0)=1.0
+77:(1,5,true,true,false,1)=1.0
+78:(1,5,true,true,false,2)=1.0
+79:(1,5,true,true,false,3)=1.0
+80:(2,0,false,false,false,0)=0.9648465487792952
+81:(2,0,false,false,false,1)=0.9147651716409348
+82:(2,0,false,false,false,2)=0.9575037455827423
+83:(2,0,false,false,false,3)=0.886148185377456
+84:(2,0,true,false,false,0)=1.0
+85:(2,0,true,false,false,1)=1.0
+86:(2,0,true,false,false,2)=1.0
+87:(2,0,true,false,false,3)=1.0
+88:(2,1,false,false,false,0)=0.8531260298887049
+89:(2,1,false,false,false,1)=0.9718601600794798
+90:(2,1,false,false,false,2)=0.8980262922716955
+91:(2,1,false,false,false,3)=0.9670989429265072
+92:(2,1,true,false,false,0)=1.0
+93:(2,1,true,false,false,1)=1.0
+94:(2,1,true,false,false,2)=1.0
+95:(2,1,true,false,false,3)=1.0
+96:(2,2,false,false,false,0)=0.9540034485568976
+97:(2,2,false,false,false,1)=0.8639947901863384
+98:(2,2,false,false,false,2)=0.9680436085882681
+99:(2,2,false,false,false,3)=0.9169985138515668
+100:(2,2,true,false,false,0)=1.0
+101:(2,2,true,false,false,1)=1.0
+102:(2,2,true,false,false,2)=1.0
+103:(2,2,true,false,false,3)=1.0
+104:(2,4,false,false,false,0)=0.9987328012866947
+105:(2,4,false,false,false,1)=0.9955302586713483
+106:(2,4,false,false,false,2)=0.9989996013991028
+107:(2,4,false,false,false,3)=0.9944230548566073
+108:(2,4,true,true,false,0)=1.0
+109:(2,4,true,true,false,1)=1.0
+110:(2,4,true,true,false,2)=1.0
+111:(2,4,true,true,false,3)=1.0
+112:(2,5,false,false,false,0)=0.9979846011683285
+113:(2,5,false,false,false,1)=0.9987751796624714
+114:(2,5,false,false,false,2)=0.9964094813637664
+115:(2,5,false,false,false,3)=0.9991710277832336
+116:(2,5,true,false,false,0)=1.0
+117:(2,5,true,false,false,1)=1.0
+118:(2,5,true,false,false,2)=1.0
+119:(2,5,true,false,false,3)=1.0
+120:(2,5,true,true,false,0)=1.0
+121:(2,5,true,true,false,1)=1.0
+122:(2,5,true,true,false,2)=1.0
+123:(2,5,true,true,false,3)=1.0
+124:(3,1,false,false,false,0)=0.9703877581199452
+125:(3,1,false,false,false,1)=0.8375886185417459
+126:(3,1,false,false,false,2)=0.9757543566832598
+127:(3,1,false,false,false,3)=0.8965061203557002
+128:(3,1,true,false,false,0)=1.0
+129:(3,1,true,false,false,1)=1.0
+130:(3,1,true,false,false,2)=1.0
+131:(3,1,true,false,false,3)=1.0
+132:(3,2,false,false,false,0)=0.9227558394257067
+133:(3,2,false,false,false,1)=0.9694645764938474
+134:(3,2,false,false,false,2)=0.8344061463172572
+135:(3,2,false,false,false,3)=0.9791842672986377
+136:(3,2,true,false,false,0)=1.0
+137:(3,2,true,false,false,1)=1.0
+138:(3,2,true,false,false,2)=1.0
+139:(3,2,true,false,false,3)=1.0
+140:(3,3,false,false,false,0)=0.9867789523518337
+141:(3,3,false,false,false,1)=0.956981045935061
+142:(3,3,false,false,false,2)=0.9684780885969138
+143:(3,3,false,false,false,3)=0.8308225519541323
+144:(3,3,true,false,false,0)=1.0
+145:(3,3,true,false,false,1)=1.0
+146:(3,3,true,false,false,2)=1.0
+147:(3,3,true,false,false,3)=1.0
+148:(3,3,true,true,false,0)=1.0
+149:(3,3,true,true,false,1)=1.0
+150:(3,3,true,true,false,2)=1.0
+151:(3,3,true,true,false,3)=1.0
+152:(3,4,false,false,false,0)=0.9754367269573807
+153:(3,4,false,false,false,1)=0.9984533284877123
+154:(3,4,false,false,false,2)=0.9897067886501787
+155:(3,4,false,false,false,3)=0.9986501126556215
+156:(3,4,true,false,false,0)=1.0
+157:(3,4,true,false,false,1)=1.0
+158:(3,4,true,false,false,2)=1.0
+159:(3,4,true,false,false,3)=1.0
+160:(3,4,true,true,false,0)=1.0
+161:(3,4,true,true,false,1)=1.0
+162:(3,4,true,true,false,2)=1.0
+163:(3,4,true,true,false,3)=1.0
+164:(3,5,false,false,false,0)=0.9995191675908387
+165:(3,5,false,false,false,1)=0.9983411219921523
+166:(3,5,false,false,false,2)=0.9992340245508772
+167:(3,5,false,false,false,3)=0.9962433842009977
+168:(3,5,true,false,false,0)=1.0
+169:(3,5,true,false,false,1)=1.0
+170:(3,5,true,false,false,2)=1.0
+171:(3,5,true,false,false,3)=1.0
+172:(3,5,true,true,false,0)=1.0
+173:(3,5,true,true,false,1)=1.0
+174:(3,5,true,true,false,2)=1.0
+175:(3,5,true,true,false,3)=1.0
+176:(4,0,false,false,false,0)=0.9447688657268625
+177:(4,0,false,false,false,1)=0.8195336133394671
+178:(4,0,false,false,false,2)=0.9437630047122403
+179:(4,0,false,false,false,3)=0.834956253062461
+180:(4,0,true,true,false,0)=1.0
+181:(4,0,true,true,false,1)=1.0
+182:(4,0,true,true,false,2)=1.0
+183:(4,0,true,true,false,3)=1.0
+184:(4,1,false,false,false,0)=0.8173874940877515
+185:(4,1,false,false,false,1)=0.9732235172522473
+186:(4,1,false,false,false,2)=0.7920024654200295
+187:(4,1,false,false,false,3)=0.9684034971044612
+188:(4,1,true,false,false,0)=1.0
+189:(4,1,true,false,false,1)=1.0
+190:(4,1,true,false,false,2)=1.0
+191:(4,1,true,false,false,3)=1.0
+192:(4,1,true,true,false,0)=1.0
+193:(4,1,true,true,false,1)=1.0
+194:(4,1,true,true,false,2)=1.0
+195:(4,1,true,true,false,3)=1.0
+196:(4,2,false,false,false,0)=0.9689231986036445
+197:(4,2,false,false,false,1)=0.8217992542576442
+198:(4,2,false,false,false,2)=0.9754891409640691
+199:(4,2,false,false,false,3)=0.7685372143740757
+200:(4,2,true,false,false,0)=1.0
+201:(4,2,true,false,false,1)=1.0
+202:(4,2,true,false,false,2)=1.0
+203:(4,2,true,false,false,3)=1.0
+204:(4,2,true,true,false,0)=1.0
+205:(4,2,true,true,false,1)=1.0
+206:(4,2,true,true,false,2)=1.0
+207:(4,2,true,true,false,3)=1.0
+209:(4,3,false,false,false,1)=0.9620964345163292
+210:(4,3,false,false,false,2)=0.7927638696409343
+211:(4,3,false,false,false,3)=0.9653308435657602
+212:(4,3,true,false,false,0)=1.0
+213:(4,3,true,false,false,1)=1.0
+214:(4,3,true,false,false,2)=1.0
+215:(4,3,true,false,false,3)=1.0
+216:(4,3,true,true,false,0)=1.0
+217:(4,3,true,true,false,1)=1.0
+218:(4,3,true,true,false,2)=1.0
+219:(4,3,true,true,false,3)=1.0
+220:(4,4,false,false,false,0)=0.994511832767064
+221:(4,4,false,false,false,1)=0.8484560183034308
+222:(4,4,false,false,false,2)=0.9942638063742496
+223:(4,4,false,false,false,3)=0.9544864097437424
+224:(4,4,true,false,false,0)=1.0
+225:(4,4,true,false,false,1)=1.0
+226:(4,4,true,false,false,2)=1.0
+227:(4,4,true,false,false,3)=1.0
+228:(4,4,true,true,false,0)=1.0
+229:(4,4,true,true,false,1)=1.0
+230:(4,4,true,true,false,2)=1.0
+231:(4,4,true,true,false,3)=1.0
+232:(4,5,true,false,false,0)=1.0
+233:(4,5,true,false,false,1)=1.0
+234:(4,5,true,false,false,2)=1.0
+235:(4,5,true,false,false,3)=1.0
+236:(4,5,true,true,false,0)=1.0
+237:(4,5,true,true,false,1)=1.0
+238:(4,5,true,true,false,2)=1.0
+239:(4,5,true,true,false,3)=1.0
+240:(5,0,false,false,false,0)=0.8071311030260679
+241:(5,0,false,false,false,1)=0.9372157011760341
+242:(5,0,false,false,false,2)=0.8237828661542341
+243:(5,0,false,false,false,3)=0.9375807399991821
+244:(5,0,true,true,true,0)=1.0
+245:(5,0,true,true,true,1)=1.0
+246:(5,0,true,true,true,2)=1.0
+247:(5,0,true,true,true,3)=1.0
+248:(5,1,false,false,false,0)=0.9639938866162724
+249:(5,1,false,false,false,1)=0.7765981431268474
+250:(5,1,false,false,false,2)=0.9601197240854337
+251:(5,1,false,false,false,3)=0.7970033005830732
+252:(5,1,true,false,false,0)=1.0
+253:(5,1,true,false,false,1)=1.0
+254:(5,1,true,false,false,2)=1.0
+255:(5,1,true,false,false,3)=1.0
+256:(5,1,true,true,false,0)=1.0
+257:(5,1,true,true,false,1)=1.0
+258:(5,1,true,true,false,2)=1.0
+259:(5,1,true,true,false,3)=1.0
+260:(5,1,true,true,true,0)=1.0
+261:(5,1,true,true,true,1)=1.0
+262:(5,1,true,true,true,2)=1.0
+263:(5,1,true,true,true,3)=1.0
+264:(5,2,false,false,false,0)=0.6917492010054637
+265:(5,2,false,false,false,1)=0.9477004190683597
+266:(5,2,false,false,false,2)=0.6575265470072162
+267:(5,2,false,false,false,3)=0.9440010486211337
+268:(5,2,true,false,false,0)=1.0
+269:(5,2,true,false,false,1)=1.0
+270:(5,2,true,false,false,2)=1.0
+271:(5,2,true,false,false,3)=1.0
+272:(5,2,true,true,false,0)=1.0
+273:(5,2,true,true,false,1)=1.0
+274:(5,2,true,true,false,2)=1.0
+275:(5,2,true,true,false,3)=1.0
+276:(5,2,true,true,true,0)=1.0
+277:(5,2,true,true,true,1)=1.0
+278:(5,2,true,true,true,2)=1.0
+279:(5,2,true,true,true,3)=1.0
+280:(5,3,false,false,false,0)=0.8077047629079676
+282:(5,3,false,false,false,2)=0.8056003658407567
+284:(5,3,true,false,false,0)=1.0
+285:(5,3,true,false,false,1)=1.0
+286:(5,3,true,false,false,2)=1.0
+287:(5,3,true,false,false,3)=1.0
+288:(5,3,true,true,false,0)=1.0
+289:(5,3,true,true,false,1)=1.0
+290:(5,3,true,true,false,2)=1.0
+291:(5,3,true,true,false,3)=1.0
+292:(5,3,true,true,true,0)=1.0
+293:(5,3,true,true,true,1)=1.0
+294:(5,3,true,true,true,2)=1.0
+295:(5,3,true,true,true,3)=1.0
+296:(5,4,false,false,false,0)=0.721139337895291
+297:(5,4,false,false,false,1)=0.9649588882463525
+299:(5,4,false,false,false,3)=0.9631085944453993
+300:(5,4,true,true,false,0)=1.0
+301:(5,4,true,true,false,1)=1.0
+302:(5,4,true,true,false,2)=1.0
+303:(5,4,true,true,false,3)=1.0
+304:(5,4,true,true,true,0)=1.0
+305:(5,4,true,true,true,1)=1.0
+306:(5,4,true,true,true,2)=1.0
+307:(5,4,true,true,true,3)=1.0
+308:(5,5,false,false,false,0)=0.9719639585561162
+309:(5,5,false,false,false,1)=0.8481341671286716
+310:(5,5,false,false,false,2)=0.9875611136606619
+311:(5,5,false,false,false,3)=0.9539654946161303
+312:(5,5,true,true,false,0)=1.0
+313:(5,5,true,true,false,1)=1.0
+314:(5,5,true,true,false,2)=1.0
+315:(5,5,true,true,false,3)=1.0
+316:(5,5,true,true,true,0)=1.0
+317:(5,5,true,true,true,1)=1.0
+318:(5,5,true,true,true,2)=1.0
+319:(5,5,true,true,true,3)=1.0
+
+Value in the initial state: 0.9838760257153188
+
+Time for model checking: 0.005 seconds.
+
+Result: 0.9838760257153188 (+/- 9.720878187821452E-6 estimated; rel err 9.880186053678835E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ G ("in_seg2"=>!"at_moving_obs") ]
+
+Starting probabilistic reachability...
+Starting Prob0...
+Prob0 took 0.0 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=3, yes=3, no=108, maybe=209
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 679 iterations, 420301 multiplications and 0.016 seconds.
+Probabilistic reachability took 0.017 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=0.8620353213073577
+1:(0,0,false,false,false,1)=0.8591481739141305
+2:(0,0,false,false,false,2)=0.8621655805786672
+3:(0,0,false,false,false,3)=0.8592418427979298
+4:(0,1,false,false,false,0)=0.8590155653921687
+5:(0,1,false,false,false,1)=0.8622684387877043
+6:(0,1,false,false,false,2)=0.8588923197865496
+7:(0,1,false,false,false,3)=0.8624144666918946
+8:(0,2,false,false,false,0)=0.8627862518386344
+9:(0,2,false,false,false,1)=0.8586635339069509
+10:(0,2,false,false,false,2)=0.8626347386859265
+11:(0,2,false,false,false,3)=0.8585061520609291
+12:(0,4,false,false,false,0)=0.8640456859832883
+13:(0,4,false,false,false,1)=0.856875318671668
+14:(0,4,false,false,false,2)=0.8643475984000237
+15:(0,4,false,false,false,3)=0.8573217330406657
+16:(0,4,true,true,false,0)=1.0
+17:(0,4,true,true,false,1)=1.0
+18:(0,4,true,true,false,2)=1.0
+19:(0,4,true,true,false,3)=1.0
+20:(0,5,false,false,false,0)=0.8573737806213393
+21:(0,5,false,false,false,1)=0.8639836177314375
+22:(0,5,false,false,false,2)=0.856960902952961
+23:(0,5,false,false,false,3)=0.8642719412211987
+24:(0,5,true,true,false,0)=1.0
+25:(0,5,true,true,false,1)=1.0
+26:(0,5,true,true,false,2)=1.0
+27:(0,5,true,true,false,3)=1.0
+28:(1,0,false,false,false,0)=0.857504306204742
+29:(1,0,false,false,false,1)=0.8638339173833741
+30:(1,0,false,false,false,2)=0.8573247337296036
+31:(1,0,false,false,false,3)=0.86392784983101
+32:(1,0,true,false,false,0)=0.23654848659899408
+33:(1,0,true,false,false,1)=0.3489295844693132
+34:(1,0,true,false,false,2)=0.23131319128195116
+35:(1,0,true,false,false,3)=0.3503187716794859
+36:(1,1,false,false,false,0)=0.8640783506721443
+37:(1,1,false,false,false,1)=0.8574048829622019
+38:(1,1,false,false,false,2)=0.8639351381623346
+39:(1,1,false,false,false,3)=0.8571722889341002
+40:(1,1,true,false,false,0)=0.3896257662420173
+41:(1,1,true,false,false,1)=0.1976645257950722
+42:(1,1,true,false,false,2)=0.3895617691125146
+43:(1,1,true,false,false,3)=0.19038804690259636
+44:(1,2,false,false,false,0)=0.8574798238940647
+45:(1,2,false,false,false,1)=0.8637805117937098
+46:(1,2,false,false,false,2)=0.8577635319417952
+47:(1,2,false,false,false,3)=0.8635666369614329
+48:(1,2,true,false,false,0)=0.2049843602309197
+49:(1,2,true,false,false,1)=0.37646902193489473
+50:(1,2,true,false,false,2)=0.21119899697314004
+51:(1,2,true,false,false,3)=0.3754856117185228
+52:(1,3,false,false,false,0)=0.863238496657362
+53:(1,3,false,false,false,1)=0.8577388402844989
+54:(1,3,false,false,false,2)=0.8635326558886992
+55:(1,3,false,false,false,3)=0.8580803620931836
+56:(1,3,true,false,false,0)=0.3381494160028903
+57:(1,3,true,false,false,1)=0.2487353372890191
+58:(1,3,true,false,false,2)=0.33632009454934986
+59:(1,3,true,false,false,3)=0.24493388782127945
+60:(1,3,true,true,false,0)=1.0
+61:(1,3,true,true,false,1)=1.0
+62:(1,3,true,true,false,2)=1.0
+63:(1,3,true,true,false,3)=1.0
+64:(1,4,false,false,false,0)=0.8558697293132725
+65:(1,4,false,false,false,1)=0.8655953589397994
+66:(1,4,false,false,false,2)=0.8552557727563607
+67:(1,4,false,false,false,3)=0.8658693532296344
+68:(1,4,true,true,false,0)=1.0
+69:(1,4,true,true,false,1)=1.0
+70:(1,4,true,true,false,2)=1.0
+71:(1,4,true,true,false,3)=1.0
+72:(1,5,false,false,false,0)=0.8657985977396996
+73:(1,5,false,false,false,1)=0.8560640825171835
+74:(1,5,false,false,false,2)=0.8654104852867524
+75:(1,5,false,false,false,3)=0.8553169311624018
+76:(1,5,true,true,false,0)=1.0
+77:(1,5,true,true,false,1)=1.0
+78:(1,5,true,true,false,2)=1.0
+79:(1,5,true,true,false,3)=1.0
+80:(2,0,false,false,false,0)=0.8651180205542268
+81:(2,0,false,false,false,1)=0.8563238062282181
+82:(2,0,false,false,false,2)=0.8650298698632497
+83:(2,0,false,false,false,3)=0.8561190337069596
+84:(2,0,true,false,false,0)=0.3662751683670511
+85:(2,0,true,false,false,1)=0.22079860404818052
+86:(2,0,true,false,false,2)=0.3654261777464445
+87:(2,0,true,false,false,3)=0.21458166927805544
+88:(2,1,false,false,false,0)=0.8538938314830687
+89:(2,1,false,false,false,1)=0.8672775137034158
+90:(2,1,false,false,false,2)=0.8542437328677694
+91:(2,1,false,false,false,3)=0.8671754819036488
+92:(2,1,true,false,false,0)=0.17736873090577243
+93:(2,1,true,false,false,1)=0.40116485706848504
+94:(2,1,true,false,false,2)=0.1875538415140936
+95:(2,1,true,false,false,3)=0.40098730228973334
+96:(2,2,false,false,false,0)=0.8658783240649177
+97:(2,2,false,false,false,1)=0.8550867926015947
+98:(2,2,false,false,false,2)=0.8660829261583063
+99:(2,2,false,false,false,3)=0.8555423711161825
+100:(2,2,true,false,false,0)=0.38045616838211804
+101:(2,2,true,false,false,1)=0.19717727258951223
+102:(2,2,true,false,false,2)=0.38226675101904595
+103:(2,2,true,false,false,3)=0.20842958109222653
+104:(2,4,false,false,false,0)=0.8680231936034153
+105:(2,4,false,false,false,1)=0.8539566276350353
+106:(2,4,false,false,false,2)=0.8677058439287644
+107:(2,4,false,false,false,3)=0.8529044065771965
+108:(2,4,true,true,false,0)=1.0
+109:(2,4,true,true,false,1)=1.0
+110:(2,4,true,true,false,2)=1.0
+111:(2,4,true,true,false,3)=1.0
+112:(2,5,false,false,false,0)=0.8529523996588981
+113:(2,5,false,false,false,1)=0.8679279840361122
+114:(2,5,false,false,false,2)=0.8542344877564256
+115:(2,5,false,false,false,3)=0.867475060897067
+116:(2,5,true,false,false,0)=0.8882018238802509
+117:(2,5,true,false,false,1)=0.907933489210931
+118:(2,5,true,false,false,2)=0.8899926258545148
+119:(2,5,true,false,false,3)=0.9074651544286172
+120:(2,5,true,true,false,0)=1.0
+121:(2,5,true,true,false,1)=1.0
+122:(2,5,true,true,false,2)=1.0
+123:(2,5,true,true,false,3)=1.0
+124:(3,1,false,false,false,0)=0.8678943244128591
+125:(3,1,false,false,false,1)=0.8531173712840197
+126:(3,1,false,false,false,2)=0.868015130215086
+127:(3,1,false,false,false,3)=0.8535636030632829
+128:(3,1,true,false,false,0)=0.41282512037800145
+129:(3,1,true,false,false,1)=0.16381729042828308
+130:(3,1,true,false,false,2)=0.4128727144223471
+131:(3,1,true,false,false,3)=0.17728879136935904
+132:(3,2,false,false,false,0)=0.8536807790068246
+133:(3,2,false,false,false,1)=0.8678908281463087
+134:(3,2,false,false,false,2)=0.8529111303722223
+135:(3,2,false,false,false,3)=0.8681074974361879
+136:(3,2,true,false,false,0)=0.1782226253530591
+137:(3,2,true,false,false,1)=0.41529187533402145
+138:(3,2,true,false,false,2)=0.15957739352899236
+139:(3,2,true,false,false,3)=0.41550602644535994
+140:(3,3,false,false,false,0)=0.8684779311337467
+141:(3,3,false,false,false,1)=0.8536418703699429
+142:(3,3,false,false,false,2)=0.8680953289658084
+143:(3,3,false,false,false,3)=0.8523749233880789
+144:(3,3,true,false,false,0)=0.39076718479442984
+145:(3,3,true,false,false,1)=0.20887378224056963
+146:(3,3,true,false,false,2)=0.38741837320881467
+147:(3,3,true,false,false,3)=0.18337092270333366
+148:(3,3,true,true,false,0)=1.0
+149:(3,3,true,true,false,1)=1.0
+150:(3,3,true,true,false,2)=1.0
+151:(3,3,true,true,false,3)=1.0
+152:(3,4,false,false,false,0)=0.8497151012990684
+153:(3,4,false,false,false,1)=0.8708947019903889
+154:(3,4,false,false,false,2)=0.8513607868201893
+155:(3,4,false,false,false,3)=0.8706193221091486
+156:(3,4,true,false,false,0)=0.8603336332129615
+157:(3,4,true,false,false,1)=0.8919201716245658
+158:(3,4,true,false,false,2)=0.8569069639819762
+159:(3,4,true,false,false,3)=0.892379697396245
+160:(3,4,true,true,false,0)=1.0
+161:(3,4,true,true,false,1)=1.0
+162:(3,4,true,true,false,2)=1.0
+163:(3,4,true,true,false,3)=1.0
+164:(3,5,false,false,false,0)=0.8704695987125756
+165:(3,5,false,false,false,1)=0.8495280515268457
+166:(3,5,false,false,false,2)=0.8709099020574862
+167:(3,5,false,false,false,3)=0.8516822394789801
+168:(3,5,true,false,false,0)=0.8917641123650758
+169:(3,5,true,false,false,1)=0.8600167942850192
+170:(3,5,true,false,false,2)=0.892049418731507
+171:(3,5,true,false,false,3)=0.8626755038431746
+172:(3,5,true,true,false,0)=1.0
+173:(3,5,true,true,false,1)=1.0
+174:(3,5,true,true,false,2)=1.0
+175:(3,5,true,true,false,3)=1.0
+176:(4,0,false,false,false,0)=0.8661346839665061
+177:(4,0,false,false,false,1)=0.8552784870690945
+178:(4,0,false,false,false,2)=0.8660519843754726
+179:(4,0,false,false,false,3)=0.8551255115009523
+180:(4,0,true,true,false,0)=1.0
+181:(4,0,true,true,false,1)=1.0
+182:(4,0,true,true,false,2)=1.0
+183:(4,0,true,true,false,3)=1.0
+184:(4,1,false,false,false,0)=0.8526865376482607
+185:(4,1,false,false,false,1)=0.8685267719593582
+186:(4,1,false,false,false,2)=0.8529534513135206
+187:(4,1,false,false,false,3)=0.8684237314947142
+188:(4,1,true,false,false,0)=0.17285091326100344
+189:(4,1,true,false,false,1)=0.4129699791486279
+190:(4,1,true,false,false,2)=0.15986688009019034
+191:(4,1,true,false,false,3)=0.4124693371142336
+192:(4,1,true,true,false,0)=1.0
+193:(4,1,true,true,false,1)=1.0
+194:(4,1,true,true,false,2)=1.0
+195:(4,1,true,true,false,3)=1.0
+196:(4,2,false,false,false,0)=0.8686079602754426
+197:(4,2,false,false,false,1)=0.8524558292950817
+198:(4,2,false,false,false,2)=0.8687443729107313
+199:(4,2,false,false,false,3)=0.8527821888875986
+200:(4,2,true,false,false,0)=0.42138166196187077
+201:(4,2,true,false,false,1)=0.17474105684974583
+202:(4,2,true,false,false,2)=0.42178313537044965
+203:(4,2,true,false,false,3)=0.15068348059726933
+204:(4,2,true,true,false,0)=1.0
+205:(4,2,true,true,false,1)=1.0
+206:(4,2,true,true,false,2)=1.0
+207:(4,2,true,true,false,3)=1.0
+208:(4,3,false,false,false,0)=0.8486844040964501
+209:(4,3,false,false,false,1)=0.8720350879450535
+210:(4,3,false,false,false,2)=0.8498334533765011
+211:(4,3,false,false,false,3)=0.8720370998746172
+213:(4,3,true,false,false,1)=0.45820857040531404
+214:(4,3,true,false,false,2)=0.26037895249027854
+215:(4,3,true,false,false,3)=0.46039010861041774
+216:(4,3,true,true,false,0)=1.0
+217:(4,3,true,true,false,1)=1.0
+218:(4,3,true,true,false,2)=1.0
+219:(4,3,true,true,false,3)=1.0
+220:(4,4,false,false,false,0)=0.8739141402047609
+221:(4,4,false,false,false,1)=0.8463460279266212
+222:(4,4,false,false,false,2)=0.8740126066072137
+223:(4,4,false,false,false,3)=0.8483170546554917
+224:(4,4,true,false,false,0)=0.82430543631598
+225:(4,4,true,false,false,1)=0.7655747440260713
+226:(4,4,true,false,false,2)=0.8249881618587771
+227:(4,4,true,false,false,3)=0.7294452300556968
+228:(4,4,true,true,false,0)=1.0
+229:(4,4,true,true,false,1)=1.0
+230:(4,4,true,true,false,2)=1.0
+231:(4,4,true,true,false,3)=1.0
+232:(4,5,true,false,false,0)=0.8480779035089707
+233:(4,5,true,false,false,1)=0.8748658445671564
+234:(4,5,true,false,false,2)=0.8445534945884197
+235:(4,5,true,false,false,3)=0.8750923825989527
+236:(4,5,true,true,false,0)=1.0
+237:(4,5,true,true,false,1)=1.0
+238:(4,5,true,true,false,2)=1.0
+239:(4,5,true,true,false,3)=1.0
+240:(5,0,false,false,false,0)=0.8554981998404367
+241:(5,0,false,false,false,1)=0.8658271167278551
+242:(5,0,false,false,false,2)=0.8553551392818157
+243:(5,0,false,false,false,3)=0.8659103040268658
+244:(5,0,true,true,true,0)=1.0
+245:(5,0,true,true,true,1)=1.0
+246:(5,0,true,true,true,2)=1.0
+247:(5,0,true,true,true,3)=1.0
+248:(5,1,false,false,false,0)=0.8680933832807404
+249:(5,1,false,false,false,1)=0.8533318174236242
+250:(5,1,false,false,false,2)=0.8680229214241096
+251:(5,1,false,false,false,3)=0.8531425242180615
+252:(5,1,true,false,false,0)=0.3705225892975539
+253:(5,1,true,false,false,1)=0.17306239197246476
+254:(5,1,true,false,false,2)=0.37193906523017495
+255:(5,1,true,false,false,3)=0.18530083311131984
+256:(5,1,true,true,false,0)=1.0
+257:(5,1,true,true,false,1)=1.0
+258:(5,1,true,true,false,2)=1.0
+259:(5,1,true,true,false,3)=1.0
+260:(5,1,true,true,true,0)=1.0
+261:(5,1,true,true,true,1)=1.0
+262:(5,1,true,true,true,2)=1.0
+263:(5,1,true,true,true,3)=1.0
+264:(5,2,false,false,false,0)=0.852914769472604
+265:(5,2,false,false,false,1)=0.8683364633080707
+266:(5,2,false,false,false,2)=0.8530741874634733
+267:(5,2,false,false,false,3)=0.8682650918251988
+268:(5,2,true,false,false,0)=0.14827828610924876
+269:(5,2,true,false,false,1)=0.40373887984877066
+270:(5,2,true,false,false,2)=0.13327356138478652
+271:(5,2,true,false,false,3)=0.40324791385191694
+272:(5,2,true,true,false,0)=1.0
+273:(5,2,true,true,false,1)=1.0
+274:(5,2,true,true,false,2)=1.0
+275:(5,2,true,true,false,3)=1.0
+276:(5,2,true,true,true,0)=1.0
+277:(5,2,true,true,true,1)=1.0
+278:(5,2,true,true,true,2)=1.0
+279:(5,2,true,true,true,3)=1.0
+280:(5,3,false,false,false,0)=0.8668367266055538
+281:(5,3,false,false,false,1)=0.8546389126318493
+282:(5,3,false,false,false,2)=0.8667464058682769
+283:(5,3,false,false,false,3)=0.8543685107296336
+284:(5,3,true,false,false,0)=0.35134896883033895
+286:(5,3,true,false,false,2)=0.3513320559879045
+288:(5,3,true,true,false,0)=1.0
+289:(5,3,true,true,false,1)=1.0
+290:(5,3,true,true,false,2)=1.0
+291:(5,3,true,true,false,3)=1.0
+292:(5,3,true,true,true,0)=1.0
+293:(5,3,true,true,true,1)=1.0
+294:(5,3,true,true,true,2)=1.0
+295:(5,3,true,true,true,3)=1.0
+296:(5,4,false,false,false,0)=0.8480350341062112
+297:(5,4,false,false,false,1)=0.8724916244499562
+298:(5,4,false,false,false,2)=0.8496964122484252
+299:(5,4,false,false,false,3)=0.8723669364771632
+300:(5,4,true,true,false,0)=1.0
+301:(5,4,true,true,false,1)=1.0
+302:(5,4,true,true,false,2)=1.0
+303:(5,4,true,true,false,3)=1.0
+304:(5,4,true,true,true,0)=1.0
+305:(5,4,true,true,true,1)=1.0
+306:(5,4,true,true,true,2)=1.0
+307:(5,4,true,true,true,3)=1.0
+308:(5,5,false,false,false,0)=0.8706768418449311
+309:(5,5,false,false,false,1)=0.8493127458808978
+310:(5,5,false,false,false,2)=0.8711389056709773
+311:(5,5,false,false,false,3)=0.8514613158675732
+312:(5,5,true,true,false,0)=1.0
+313:(5,5,true,true,false,1)=1.0
+314:(5,5,true,true,false,2)=1.0
+315:(5,5,true,true,false,3)=1.0
+316:(5,5,true,true,true,0)=1.0
+317:(5,5,true,true,true,1)=1.0
+318:(5,5,true,true,true,2)=1.0
+319:(5,5,true,true,true,3)=1.0
+
+Value in the initial state: 0.8620353213073577
+
+Time for model checking: 0.018 seconds.
+
+Result: 0.8620353213073577 (+/- 8.565900288884629E-6 estimated; rel err 9.936832142670947E-6)
+
+---------------------------------------------------------------------
+
+Model checking: P=? [ G ("in_seg3"=>!"at_moving_obs") ]
+
+Starting probabilistic reachability...
+Starting Prob0...
+Prob0 took 0.0 seconds.
+Starting Prob1...
+Prob1 took 0.001 seconds.
+target=4, yes=4, no=24, maybe=292
+Starting value iteration (with Power method)...
+Value iteration (with Power method) took 1542 iterations, 1332288 multiplications and 0.004 seconds.
+Probabilistic reachability took 0.005 seconds.
+
+Probabilities (non-zero only) for all states:
+0:(0,0,false,false,false,0)=0.16883906428802853
+1:(0,0,false,false,false,1)=0.1671984842587304
+2:(0,0,false,false,false,2)=0.16887534187492803
+3:(0,0,false,false,false,3)=0.16719865527319833
+4:(0,1,false,false,false,0)=0.16706254358207207
+5:(0,1,false,false,false,1)=0.16897328967539205
+6:(0,1,false,false,false,2)=0.16705916803521126
+7:(0,1,false,false,false,3)=0.1690162950877483
+8:(0,2,false,false,false,0)=0.16922955035920884
+9:(0,2,false,false,false,1)=0.16685462603161993
+10:(0,2,false,false,false,2)=0.16918121938888941
+11:(0,2,false,false,false,3)=0.16684566529249523
+12:(0,4,false,false,false,0)=0.16999668293047066
+13:(0,4,false,false,false,1)=0.16598029857866403
+14:(0,4,false,false,false,2)=0.1701106883957738
+15:(0,4,false,false,false,3)=0.16602269269466874
+16:(0,4,true,true,false,0)=0.17121094780434643
+17:(0,4,true,true,false,1)=0.16496679237929135
+18:(0,4,true,true,false,2)=0.1710965784980727
+19:(0,4,true,true,false,3)=0.16480480706690326
+20:(0,5,false,false,false,0)=0.16605963821718428
+21:(0,5,false,false,false,1)=0.16996084740970063
+22:(0,5,false,false,false,2)=0.16602176648667022
+23:(0,5,false,false,false,3)=0.1700679236701591
+24:(0,5,true,true,false,0)=0.16412596304297733
+25:(0,5,true,true,false,1)=0.171862976154045
+26:(0,5,true,true,false,2)=0.16434614740761666
+27:(0,5,true,true,false,3)=0.1717397855168501
+28:(1,0,false,false,false,0)=0.1661922941576961
+29:(1,0,false,false,false,1)=0.16985322574569306
+30:(1,0,false,false,false,2)=0.1661717548573609
+31:(1,0,false,false,false,3)=0.1698940553438495
+32:(1,0,true,false,false,0)=0.16691377957288867
+33:(1,0,true,false,false,1)=0.16919996315743957
+34:(1,0,true,false,false,2)=0.1669161835810058
+35:(1,0,true,false,false,3)=0.1691983223838831
+36:(1,1,false,false,false,0)=0.16997372462306137
+37:(1,1,false,false,false,1)=0.1661220462326629
+38:(1,1,false,false,false,2)=0.16991705860638384
+39:(1,1,false,false,false,3)=0.1660981972025556
+40:(1,1,true,false,false,0)=0.16998608925014402
+41:(1,1,true,false,false,1)=0.16612441017846102
+42:(1,1,true,false,false,2)=0.16998849794395943
+43:(1,1,true,false,false,3)=0.16612794923703467
+44:(1,2,false,false,false,0)=0.16628811844407254
+45:(1,2,false,false,false,1)=0.16979336866856032
+46:(1,2,false,false,false,2)=0.16631223689630192
+47:(1,2,false,false,false,3)=0.16971699580830646
+48:(1,2,true,false,false,0)=0.16639846039951955
+49:(1,2,true,false,false,1)=0.1697143673404128
+50:(1,2,true,false,false,2)=0.1663964314923655
+51:(1,2,true,false,false,3)=0.16971679664875305
+52:(1,3,false,false,false,0)=0.16954124749459532
+53:(1,3,false,false,false,1)=0.1664524548525148
+54:(1,3,false,false,false,2)=0.16964008167803657
+55:(1,3,false,false,false,3)=0.16647661899680977
+56:(1,3,true,false,false,0)=0.16894894484908196
+57:(1,3,true,false,false,1)=0.1671628789899814
+58:(1,3,true,false,false,2)=0.16895122257600126
+59:(1,3,true,false,false,3)=0.16716442461139425
+60:(1,3,true,true,false,0)=0.17040886474362127
+61:(1,3,true,true,false,1)=0.1657412740642511
+62:(1,3,true,true,false,2)=0.170302968569377
+63:(1,3,true,true,false,3)=0.16562692986289107
+64:(1,4,false,false,false,0)=0.1651629716223708
+65:(1,4,false,false,false,1)=0.17086500887360734
+66:(1,4,false,false,false,2)=0.165086326148852
+67:(1,4,false,false,false,3)=0.17099581190093982
+68:(1,4,true,true,false,0)=0.1635775291997208
+69:(1,4,true,true,false,1)=0.17240926074906548
+70:(1,4,true,true,false,2)=0.16378626213348269
+71:(1,4,true,true,false,3)=0.1723069851578709
+72:(1,5,false,false,false,0)=0.1709418745074538
+73:(1,5,false,false,false,1)=0.16524065932693766
+74:(1,5,false,false,false,2)=0.1707728244974327
+75:(1,5,false,false,false,3)=0.16515449513845093
+76:(1,5,true,true,false,0)=0.17348464127107355
+77:(1,5,true,true,false,1)=0.16228785394710976
+78:(1,5,true,true,false,2)=0.17363795324027365
+79:(1,5,true,true,false,3)=0.1626635121715051
+80:(2,0,false,false,false,0)=0.17057612446996062
+81:(2,0,false,false,false,1)=0.16551389451176912
+82:(2,0,false,false,false,2)=0.17053320887142398
+83:(2,0,false,false,false,3)=0.16548793337344514
+84:(2,0,true,false,false,0)=0.1695178840531757
+85:(2,0,true,false,false,1)=0.16659299918750214
+86:(2,0,true,false,false,2)=0.16952035814597033
+87:(2,0,true,false,false,3)=0.16659586367060808
+88:(2,1,false,false,false,0)=0.1642464310415801
+89:(2,1,false,false,false,1)=0.17181578782823137
+90:(2,1,false,false,false,2)=0.16429735407843493
+91:(2,1,false,false,false,3)=0.1717512602911111
+92:(2,1,true,false,false,0)=0.1659004247071485
+93:(2,1,true,false,false,1)=0.17021273678230764
+94:(2,1,true,false,false,2)=0.1658964396876268
+95:(2,1,true,false,false,3)=0.1702158472041012
+96:(2,2,false,false,false,0)=0.1710234908329732
+97:(2,2,false,false,false,1)=0.16495467508888784
+98:(2,2,false,false,false,2)=0.17112084345799894
+99:(2,2,false,false,false,3)=0.1650115057263577
+100:(2,2,true,false,false,0)=0.16982247223680336
+101:(2,2,true,false,false,1)=0.16629334748912183
+102:(2,2,true,false,false,2)=0.16981914169734624
+103:(2,2,true,false,false,3)=0.16628919886431892
+104:(2,4,false,false,false,0)=0.17224556188831386
+105:(2,4,false,false,false,1)=0.16398307017348301
+106:(2,4,false,false,false,2)=0.17204950960587362
+107:(2,4,false,false,false,3)=0.16383165510956044
+108:(2,4,true,true,false,0)=0.18226091777789277
+109:(2,4,true,true,false,1)=0.1520907899856755
+110:(2,4,true,true,false,2)=0.18355130650527107
+111:(2,4,true,true,false,3)=0.15417793446282202
+112:(2,5,false,false,false,0)=0.1639122952535923
+113:(2,5,false,false,false,1)=0.17218002791446207
+114:(2,5,false,false,false,2)=0.16408826389034403
+115:(2,5,false,false,false,3)=0.1719289304414927
+116:(2,5,true,false,false,0)=0.1593716010607492
+117:(2,5,true,false,false,1)=0.17670484998166025
+118:(2,5,true,false,false,2)=0.15914310142366717
+119:(2,5,true,false,false,3)=0.17688204066038826
+120:(2,5,true,true,false,0)=0.15693564850169228
+121:(2,5,true,true,false,1)=0.18012474882413898
+122:(2,5,true,true,false,2)=0.15323698895019522
+123:(2,5,true,true,false,3)=0.18174730534824302
+124:(3,1,false,false,false,0)=0.17215878711217203
+125:(3,1,false,false,false,1)=0.16382305814808074
+126:(3,1,false,false,false,2)=0.17223953986291707
+127:(3,1,false,false,false,3)=0.16388915737327125
+128:(3,1,true,false,false,0)=0.17044855169666362
+129:(3,1,true,false,false,1)=0.16566778431907314
+130:(3,1,true,false,false,2)=0.17044543110530064
+131:(3,1,true,false,false,3)=0.16566220666794496
+132:(3,2,false,false,false,0)=0.1638869317228453
+133:(3,2,false,false,false,1)=0.17215416649959958
+134:(3,2,false,false,false,2)=0.16377420486533378
+135:(3,2,false,false,false,3)=0.17229485828833013
+136:(3,2,true,false,false,0)=0.1656142342123198
+137:(3,2,true,false,false,1)=0.17049505160699008
+138:(3,2,true,false,false,2)=0.1656228576267198
+139:(3,2,true,false,false,3)=0.1704903576519602
+140:(3,3,false,false,false,0)=0.1725065923079453
+141:(3,3,false,false,false,1)=0.16375750163110525
+142:(3,3,false,false,false,2)=0.17227042225884703
+143:(3,3,false,false,false,3)=0.16357524037086646
+144:(3,3,true,false,false,0)=0.16996210047673455
+145:(3,3,true,false,false,1)=0.1661386549955639
+146:(3,3,true,false,false,2)=0.1699707529948673
+147:(3,3,true,false,false,3)=0.16614934977062912
+148:(3,3,true,true,false,0)=0.20517603308120447
+149:(3,3,true,true,false,1)=0.1419730307247009
+150:(3,3,true,true,false,2)=0.20326289922786578
+151:(3,3,true,true,false,3)=0.12311271024335024
+152:(3,4,false,false,false,0)=0.16212294309380726
+153:(3,4,false,false,false,1)=0.17393190859461505
+154:(3,4,false,false,false,2)=0.16238889683397528
+155:(3,4,false,false,false,3)=0.17366572954950377
+156:(3,4,true,false,false,0)=0.15496698067822412
+157:(3,4,true,false,false,1)=0.18083167652182208
+158:(3,4,true,false,false,2)=0.15630785547231685
+159:(3,4,true,false,false,3)=0.17999932104742167
+160:(3,4,true,true,false,0)=0.13190900754452795
+161:(3,4,true,true,false,1)=0.20208136325757087
+162:(3,4,true,true,false,2)=0.13504638933677615
+163:(3,4,true,true,false,3)=0.20321429991880202
+164:(3,5,false,false,false,0)=0.17357870315199964
+165:(3,5,false,false,false,1)=0.16212546551173523
+166:(3,5,false,false,false,2)=0.1739419427237151
+167:(3,5,false,false,false,3)=0.16246307034368246
+168:(3,5,true,false,false,0)=0.17948149636879374
+169:(3,5,true,false,false,1)=0.15721750240314614
+170:(3,5,true,false,false,2)=0.17900098194150293
+171:(3,5,true,false,false,3)=0.1564058368236818
+172:(3,5,true,true,false,0)=0.18695402915186454
+173:(3,5,true,true,false,1)=0.1530047395431715
+174:(3,5,true,true,false,2)=0.18515214929402724
+175:(3,5,true,true,false,3)=0.14692600425505054
+176:(4,0,false,false,false,0)=0.17115416387867266
+177:(4,0,false,false,false,1)=0.1649275005764228
+178:(4,0,false,false,false,2)=0.17111903750012902
+179:(4,0,false,false,false,3)=0.16491032880525114
+180:(4,0,true,true,false,0)=0.9957504806192766
+181:(4,0,true,true,false,1)=0.9947617591682537
+182:(4,0,true,true,false,2)=0.9957846957136386
+183:(4,0,true,true,false,3)=0.9950609409442762
+184:(4,1,false,false,false,0)=0.1635411674585484
+185:(4,1,false,false,false,1)=0.17252331692028644
+186:(4,1,false,false,false,2)=0.16357673050660826
+187:(4,1,false,false,false,3)=0.17246948158773878
+188:(4,1,true,false,false,0)=0.16564253120960903
+189:(4,1,true,false,false,1)=0.17046721075862814
+190:(4,1,true,false,false,2)=0.1656487206500078
+191:(4,1,true,false,false,3)=0.17046446275110516
+192:(4,1,true,true,false,0)=0.9713224590092318
+193:(4,1,true,true,false,1)=0.9769081116269235
+194:(4,1,true,true,false,2)=0.9692936987413858
+195:(4,1,true,true,false,3)=0.9768370304799807
+196:(4,2,false,false,false,0)=0.17257704523700057
+197:(4,2,false,false,false,1)=0.16342316353350883
+198:(4,2,false,false,false,2)=0.17264494914384032
+199:(4,2,false,false,false,3)=0.16346522216845005
+200:(4,2,true,false,false,0)=0.17061138389235797
+201:(4,2,true,false,false,1)=0.1654903501655085
+202:(4,2,true,false,false,2)=0.17061802023497818
+203:(4,2,true,false,false,3)=0.16550141612525926
+204:(4,2,true,true,false,0)=0.8696608130239709
+205:(4,2,true,true,false,1)=0.8384997581081076
+206:(4,2,true,true,false,2)=0.8699408018022048
+207:(4,2,true,true,false,3)=0.8232793262583402
+208:(4,3,false,false,false,0)=0.16142020239403776
+209:(4,3,false,false,false,1)=0.1746041755045431
+210:(4,3,false,false,false,2)=0.1616313900564612
+211:(4,3,false,false,false,3)=0.17445398984696925
+212:(4,3,true,false,false,0)=0.16482859220490376
+213:(4,3,true,false,false,1)=0.17129828781659873
+214:(4,3,true,false,false,2)=0.1647135466280505
+215:(4,3,true,false,false,3)=0.17136645894518843
+217:(4,3,true,true,false,1)=0.282820827947998
+218:(4,3,true,true,false,2)=0.11300748869851851
+219:(4,3,true,true,false,3)=0.2836398849880122
+220:(4,4,false,false,false,0)=0.17549095744268772
+221:(4,4,false,false,false,1)=0.16025101355897475
+222:(4,4,false,false,false,2)=0.1757674684429461
+223:(4,4,false,false,false,3)=0.16059981697910386
+224:(4,4,true,false,false,0)=0.17867051465013917
+225:(4,4,true,false,false,1)=0.15805307028777993
+226:(4,4,true,false,false,2)=0.1781736596106248
+227:(4,4,true,false,false,3)=0.15722447436417553
+228:(4,4,true,true,false,0)=0.20627827226263096
+229:(4,4,true,true,false,1)=0.12523191714906734
+230:(4,4,true,true,false,2)=0.20545586568469565
+231:(4,4,true,true,false,3)=0.13505797451716572
+232:(4,5,true,false,false,0)=0.1601538080279048
+233:(4,5,true,false,false,1)=0.17595727486984414
+234:(4,5,true,false,false,2)=0.15953691088280575
+235:(4,5,true,false,false,3)=0.1764608517683004
+236:(4,5,true,true,false,0)=0.1415664982151309
+237:(4,5,true,true,false,1)=0.19098730533107589
+238:(4,5,true,true,false,2)=0.14996422678364407
+239:(4,5,true,true,false,3)=0.1894730052399275
+240:(5,0,false,false,false,0)=0.16505479254279165
+241:(5,0,false,false,false,1)=0.17099141345207736
+242:(5,0,false,false,false,2)=0.16503954338859128
+243:(5,0,false,false,false,3)=0.17102548553559327
+244:(5,0,true,true,true,0)=1.0
+245:(5,0,true,true,true,1)=1.0
+246:(5,0,true,true,true,2)=1.0
+247:(5,0,true,true,true,3)=1.0
+248:(5,1,false,false,false,0)=0.17227710401476304
+249:(5,1,false,false,false,1)=0.1638099292497992
+250:(5,1,false,false,false,2)=0.17223946316586614
+251:(5,1,false,false,false,3)=0.1637844897260552
+252:(5,1,true,false,false,0)=0.16978945199671336
+253:(5,1,true,false,false,1)=0.16632730118059547
+254:(5,1,true,false,false,2)=0.1697851471427495
+255:(5,1,true,false,false,3)=0.16632176727083126
+256:(5,1,true,true,false,0)=0.9957504806192766
+257:(5,1,true,true,false,1)=0.9947617591682537
+258:(5,1,true,true,false,2)=0.9957846957136386
+259:(5,1,true,true,false,3)=0.9950609409442762
+260:(5,1,true,true,true,0)=1.0
+261:(5,1,true,true,true,1)=1.0
+262:(5,1,true,true,true,2)=1.0
+263:(5,1,true,true,true,3)=1.0
+264:(5,2,false,false,false,0)=0.16364857167923785
+265:(5,2,false,false,false,1)=0.17241376819909404
+266:(5,2,false,false,false,2)=0.16366856200994973
+267:(5,2,false,false,false,3)=0.1723798335226261
+268:(5,2,true,false,false,0)=0.1657231030990587
+269:(5,2,true,false,false,1)=0.1703860740219757
+270:(5,2,true,false,false,2)=0.16573173014745135
+271:(5,2,true,false,false,3)=0.17038154095890778
+272:(5,2,true,true,false,0)=0.9679727962956507
+273:(5,2,true,true,false,1)=0.9724306744110467
+274:(5,2,true,true,false,2)=0.9659351142744599
+275:(5,2,true,true,false,3)=0.9726703778314368
+276:(5,2,true,true,true,0)=1.0
+277:(5,2,true,true,true,1)=1.0
+278:(5,2,true,true,true,2)=1.0
+279:(5,2,true,true,true,3)=1.0
+280:(5,3,false,false,false,0)=0.17156113189399813
+281:(5,3,false,false,false,1)=0.16453908624346658
+282:(5,3,false,false,false,2)=0.17150921503694538
+283:(5,3,false,false,false,3)=0.16450136715187957
+284:(5,3,true,false,false,0)=0.16989575752620678
+285:(5,3,true,false,false,1)=0.1662049307700677
+286:(5,3,true,false,false,2)=0.16990451974845966
+287:(5,3,true,false,false,3)=0.16621560630347898
+288:(5,3,true,true,false,0)=0.7231245962799324
+290:(5,3,true,true,false,2)=0.7234152472302076
+292:(5,3,true,true,true,0)=1.0
+293:(5,3,true,true,true,1)=1.0
+294:(5,3,true,true,true,2)=1.0
+295:(5,3,true,true,true,3)=1.0
+296:(5,4,false,false,false,0)=0.16115701127188609
+297:(5,4,false,false,false,1)=0.17487382736804535
+298:(5,4,false,false,false,2)=0.16144559633740785
+299:(5,4,false,false,false,3)=0.1746332413378029
+300:(5,4,true,true,false,0)=0.1078338308992991
+301:(5,4,true,true,false,1)=0.2818330269482806
+303:(5,4,true,true,false,3)=0.28228411352617355
+304:(5,4,true,true,true,0)=1.0
+305:(5,4,true,true,true,1)=1.0
+306:(5,4,true,true,true,2)=1.0
+307:(5,4,true,true,true,3)=1.0
+308:(5,5,false,false,false,0)=0.1737016052829028
+309:(5,5,false,false,false,1)=0.16200289423912773
+310:(5,5,false,false,false,2)=0.17406810138657725
+311:(5,5,false,false,false,3)=0.16233661608711492
+312:(5,5,true,true,false,0)=0.19613755666894728
+313:(5,5,true,true,false,1)=0.13447659263301337
+314:(5,5,true,true,false,2)=0.1966775592297496
+315:(5,5,true,true,false,3)=0.14469225688582854
+316:(5,5,true,true,true,0)=1.0
+317:(5,5,true,true,true,1)=1.0
+318:(5,5,true,true,true,2)=1.0
+319:(5,5,true,true,true,3)=1.0
+
+Value in the initial state: 0.16883906428802853
+
+Time for model checking: 0.007 seconds.
+
+Result: 0.16883906428802853 (+/- 1.6797580053785354E-6 estimated; rel err 9.948870615114147E-6)
+
+
+2026-02-11 06:04:55,923 - DEBUG - PRISM stderr:
+2026-02-11 06:04:55,923 - DEBUG - 
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 1.0
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 1.0
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 1.0
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 0.6860251755866064
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 0.9989894971620477
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 0.6851701258609267
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 0.9838760257153188
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 0.8620353213073577
+2026-02-11 06:04:55,924 - DEBUG - Parsed probability: 0.16883906428802853
+2026-02-11 06:04:55,924 - INFO - PRISM Verification Results:
+2026-02-11 06:04:55,924 - INFO -   Reach G1                 = 1.0000 (weight: 0.083)
+2026-02-11 06:04:55,925 - INFO -   Reach G2                 = 1.0000 (weight: 0.083)
+2026-02-11 06:04:55,925 - INFO -   Reach G3                 = 1.0000 (weight: 0.083)
+2026-02-11 06:04:55,925 - INFO -   G1 before G2             = 0.6860 (weight: 0.250)
+2026-02-11 06:04:55,925 - INFO -   G1,G2 before G3          = 0.9990 (weight: 0.250)
+2026-02-11 06:04:55,925 - INFO -   Complete sequence        = 0.6852 (info only)
+2026-02-11 06:04:55,925 - INFO -   Avoid moving obs (seg 1) = 0.9839 (weight: 0.083)
+2026-02-11 06:04:55,925 - INFO -   Avoid moving obs (seg 2) = 0.8620 (weight: 0.083)
+2026-02-11 06:04:55,925 - INFO -   Avoid moving obs (seg 3) = 0.1688 (weight: 0.083)
+2026-02-11 06:04:55,925 - INFO - Combined Score: 0.8391
+2026-02-11 06:04:55,925 - INFO - LTL Score (LLM): 0.8391495357963888
+2026-02-11 06:04:55,925 - INFO - Evaluation 25: LTL Score = 0.8391495357963888
