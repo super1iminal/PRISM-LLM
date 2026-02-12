@@ -41,14 +41,14 @@ matplotlib.rcParams.update({
 # Configuration
 # ──────────────────────────────────────────────
 
-FEEDBACK_ORDER = ["Vanilla", "Vanilla+", "Feedback-", "FeedbackS", "Feedback"]
+FEEDBACK_ORDER = [r"\fb{None}", r"\fb{IT}", r"\fb{ITF}", r"\fb{CITF}", r"\fb{ITFN}"]
 
 _FEEDBACK_PARSE_MAP = {
-    "VANILLA_PLUS": "Vanilla+",
-    "FEEDBACK_SIMPLIFIED": "FeedbackS",
-    "FEEDBACK_MINUS": "Feedback-",
-    "VANILLA": "Vanilla",
-    "FEEDBACK": "Feedback",
+    "VANILLA_PLUS": r"\fb{IT}",
+    "FEEDBACK_SIMPLIFIED": r"\fb{CITF}",
+    "FEEDBACK_MINUS": r"\fb{ITF}",
+    "VANILLA": r"\fb{None}",
+    "FEEDBACK": r"\fb{ITFN}",
 }
 
 _LLM_DISPLAY = {
@@ -1603,7 +1603,7 @@ def rq3(summaries, out_dir):
 # ──────────────────────────────────────────────
 
 ## ── Change this to plot a specific run, or leave None for latest ──
-RUN_FOLDER = "100_20260211_08-03-04"
+RUN_FOLDER = "100_20260211_08-03-04-repaired"
 
 
 def main():

@@ -302,7 +302,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--results_dir",
         required=True,
-        help="Path to the original results directory (e.g., out/results/100_20260210_22-18-20)",
+        help="Path to the original results directory (e.g., out/results/100_20260211_08-03-04)",
     )
     parser.add_argument(
         "--dataset",
