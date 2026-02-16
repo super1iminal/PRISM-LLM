@@ -41,14 +41,26 @@ matplotlib.rcParams.update({
 # Configuration
 # ──────────────────────────────────────────────
 
-FEEDBACK_ORDER = [r"\fb{None}", r"\fb{IT}", r"\fb{ITF}", r"\fb{CITF}", r"\fb{ITFN}"]
+FEEDBACK_ORDER = [r"None", r"IT", r"ITF", r"CITF", r"ITFN"]
+
+# Feedback types to show on the GSR-by-LLM scaling plot (alongside RL)
+GSR_LLM_SCALING_FEEDBACK = [r"ITF", r"CITF", r"ITFN"]
+
+# Feedback type to use for the GSR-by-feedback scaling plot
+GSR_FEEDBACK_SCALING_METHOD = r"ITF"
+
+# Metric naming: internal keys and display labels (LaTeX / matplotlib)
+RATE_KEYS   = ["SR_all", "SR_C1", "SR_C2", "SR_C3"]
+RATE_LABELS = [r"\srAll", r"\srCon{C1}", r"\srCon{C2}", r"\srCon{C3}"]
+PROX_KEYS   = ["d_all", "d_C1", "d_C2", "d_C3"]
+PROX_LABELS = [r"\prox{all}", r"\prox{C1}", r"\prox{C2}", r"\prox{C3}"]
 
 _FEEDBACK_PARSE_MAP = {
-    "VANILLA_PLUS": r"\fb{IT}",
-    "FEEDBACK_SIMPLIFIED": r"\fb{CITF}",
-    "FEEDBACK_MINUS": r"\fb{ITF}",
-    "VANILLA": r"\fb{None}",
-    "FEEDBACK": r"\fb{ITFN}",
+    "VANILLA_PLUS": r"IT",
+    "FEEDBACK_SIMPLIFIED": r"CITF",
+    "FEEDBACK_MINUS": r"ITF",
+    "VANILLA": r"None",
+    "FEEDBACK": r"ITFN",
 }
 
 _LLM_DISPLAY = {
@@ -56,6 +68,8 @@ _LLM_DISPLAY = {
     "GPT5_MINI": "GPT-5 Mini",
     "GEMINI_PRO": "Gemini 2.5 Pro",
 }
+
+LLM_ORDER = ["GPT-5 Mini", "Gemini 2.5 Pro", "GPT-5 Nano"]
 
 FEEDBACK_COLORS = {
     "Vanilla": "#5DADE2",
@@ -193,9 +207,9 @@ def _save_latex_table(df, path):
 
 
 def _compute_group_rates(raw_df):
-    """Compute GSR and per-group success rates from raw multi-index DataFrame.
+    """Compute SR_all and per-group success rates from raw multi-index DataFrame.
 
-    Returns dict with keys: GSR, GR, SO, OA (all as percentages 0-100).
+    Returns dict with keys: SR_all, SR_C1, SR_C2, SR_C3 (all as percentages 0-100).
     """
     from config.Settings import (
         GOAL_REACHABILITY_THRESHOLD,
@@ -209,8 +223,8 @@ def _compute_group_rates(raw_df):
     else:
         finals = raw_df.groupby("sample_id").tail(1)
 
-    # GSR
-    gsr = finals["success"].astype(bool).mean() * 100
+    # SR_all
+    sr_all = finals["success"].astype(bool).mean() * 100
 
     # Identify prob columns by category
     prob_cols = [c for c in raw_df.columns if c.startswith("prob_")]
@@ -228,10 +242,10 @@ def _compute_group_rates(raw_df):
         return (successes / total) * 100 if total > 0 else float("nan")
 
     return {
-        "GSR": gsr,
-        "GR": group_rate(goal_cols, GOAL_REACHABILITY_THRESHOLD),
-        "SO": group_rate(seq_cols, SEQUENCE_ORDERING_THRESHOLD),
-        "OA": group_rate(obs_cols, OBSTACLE_AVOIDANCE_THRESHOLD),
+        "SR_all": sr_all,
+        "SR_C1": group_rate(goal_cols, GOAL_REACHABILITY_THRESHOLD),
+        "SR_C2": group_rate(seq_cols, SEQUENCE_ORDERING_THRESHOLD),
+        "SR_C3": group_rate(obs_cols, OBSTACLE_AVOIDANCE_THRESHOLD),
     }
 
 
@@ -254,8 +268,7 @@ def _compute_proximity(raw_df):
     Only requirements that failed (prob < threshold) are included.
 
     Returns dict with keys:
-        All, GR, SO, OA  – median (across failed samples) of avg proximity
-        Max               – median (across failed samples) of max proximity
+        d_all, d_C1, d_C2, d_C3  – median (across failed samples) of avg proximity
     All values are floats or NaN if no failed samples / no failed requirements.
     """
     from config.Settings import (
@@ -273,7 +286,7 @@ def _compute_proximity(raw_df):
     # Filter to failed samples
     failed = finals[~finals["success"].astype(bool)]
     if failed.empty:
-        return {k: float("nan") for k in ("All", "GR", "SO", "OA", "Max")}
+        return {k: float("nan") for k in PROX_KEYS}
 
     # Identify prob columns by category
     prob_cols = [c for c in raw_df.columns if c.startswith("prob_")]
@@ -292,9 +305,9 @@ def _compute_proximity(raw_df):
         col_thresh[c] = OBSTACLE_AVOIDANCE_THRESHOLD
 
     group_map = {
-        "GR": goal_cols,
-        "SO": seq_cols,
-        "OA": obs_cols,
+        "d_C1": goal_cols,
+        "d_C2": seq_cols,
+        "d_C3": obs_cols,
     }
 
     def _sample_proximity(row, cols):
@@ -329,8 +342,7 @@ def _compute_proximity(raw_df):
         return float(np.median(clean)) if clean else float("nan")
 
     result = {
-        "All": _median_dropna(per_sample_all_avg),
-        "Max": _median_dropna(per_sample_all_max),
+        "d_all": _median_dropna(per_sample_all_avg),
     }
     for g in group_map:
         result[g] = _median_dropna(per_sample_group[g])
@@ -354,7 +366,7 @@ def _save_multicolumn_latex_table(rows, row_labels, col_groups, sub_cols,
     col_groups : list of str
         Top-level column group names (e.g. LLM names).
     sub_cols : list of str
-        Sub-column names repeated under each group (e.g. ['GSR','GR','SO','OA']).
+        Sub-column names repeated under each group (e.g. RATE_LABELS or PROX_LABELS).
     lower_is_better : bool
         If True, the lowest value is bolded (best) instead of highest.
     """
@@ -397,8 +409,6 @@ def _save_multicolumn_latex_table(rows, row_labels, col_groups, sub_cols,
             nv = numeric[ri][ci]
             if nv is not None and nv == best_val[ci]:
                 fmt_row.append(f"\\textbf{{{v}}}")
-            elif nv is not None and nv == second_val[ci]:
-                fmt_row.append(f"\\underline{{{v}}}")
             else:
                 fmt_row.append(v)
         formatted.append(fmt_row)
@@ -474,7 +484,11 @@ def _present_feedback_types(llm_methods):
 
 
 def _present_llms(llm_methods):
-    return sorted(set(k[1] for k in llm_methods))
+    present = set(k[1] for k in llm_methods)
+    ordered = [llm for llm in LLM_ORDER if llm in present]
+    # Append any LLMs not in LLM_ORDER (sorted, as fallback)
+    ordered += sorted(present - set(LLM_ORDER))
+    return ordered
 
 
 def _method_label(fb, llm, multi_llm):
@@ -633,8 +647,7 @@ def _rq1_success_heatmap(M, fb_types, llms, multi_llm, out_dir):
 
 
 def _rq1_table(M, fb_types, llms, multi_llm, out_dir, raw=None):
-    """Summary table with multicolumn layout: GSR + per-group rates per LLM."""
-    SUB_COLS = ["GSR", "GR", "SO", "OA"]
+    """Summary table with multicolumn layout: SR metrics per LLM."""
 
     # Build raw lookup for per-group rates
     raw_lookup = _build_raw_lookup(raw) if raw is not None else {}
@@ -647,18 +660,18 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir, raw=None):
         for llm in llms:
             key = (fb, llm)
             if key not in M:
-                row_data.extend(["--"] * len(SUB_COLS))
+                row_data.extend(["--"] * len(RATE_KEYS))
                 continue
             df = M[key]
-            gsr = df["success"].mean() * 100
+            sr_all = df["success"].mean() * 100
 
             # Per-group rates from raw data
             if key in raw_lookup:
                 rates = _compute_group_rates(raw_lookup[key])
             else:
-                rates = {"GSR": gsr, "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+                rates = {"SR_all": sr_all, "SR_C1": float("nan"), "SR_C2": float("nan"), "SR_C3": float("nan")}
 
-            for sc in SUB_COLS:
+            for sc in RATE_KEYS:
                 v = rates[sc]
                 row_data.append(f"{v:.2f}" if not np.isnan(v) else "--")
         row_labels.append(fb)
@@ -676,7 +689,7 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir, raw=None):
 
     # LaTeX table
     _save_multicolumn_latex_table(
-        rows, row_labels, llms, SUB_COLS,
+        rows, row_labels, llms, RATE_LABELS,
         os.path.join(out_dir, "rq1_table.txt"),
         caption="RQ1: Effect of Feedback",
         label="tab:rq1",
@@ -685,7 +698,7 @@ def _rq1_table(M, fb_types, llms, multi_llm, out_dir, raw=None):
     # Also save the old-style simple table as a figure
     flat_cols = ["Method"]
     for llm in llms:
-        for sc in SUB_COLS:
+        for sc in RATE_LABELS:
             flat_cols.append(f"{sc}" if not multi_llm else f"{llm} {sc}")
     flat_rows = []
     for rl, rd in zip(row_labels, rows):
@@ -861,7 +874,6 @@ def _rq1_failure_reasons(raw, out_dir):
 
 def _rq1_proximity_table(fb_types, llms, out_dir, raw):
     """Multicolumn proximity-to-success table for failed samples (RQ1)."""
-    SUB_COLS = ["All", "GR", "SO", "OA", "Max"]
     raw_lookup = _build_raw_lookup(raw)
 
     row_labels = []
@@ -873,10 +885,10 @@ def _rq1_proximity_table(fb_types, llms, out_dir, raw):
             if key in raw_lookup:
                 prox = _compute_proximity(raw_lookup[key])
             else:
-                prox = {k: float("nan") for k in SUB_COLS}
-            for sc in SUB_COLS:
+                prox = {k: float("nan") for k in PROX_KEYS}
+            for sc in PROX_KEYS:
                 v = prox[sc]
-                row_data.append(f"{v:.4f}" if not np.isnan(v) else "N/A")
+                row_data.append(f"{v:.3f}" if not np.isnan(v) else "0.0")
         row_labels.append(fb)
         rows.append(row_data)
 
@@ -888,7 +900,7 @@ def _rq1_proximity_table(fb_types, llms, out_dir, raw):
         print(f"  {rl:<14}" + "  ".join(f"{v:>8}" for v in rd))
 
     _save_multicolumn_latex_table(
-        rows, row_labels, llms, SUB_COLS,
+        rows, row_labels, llms, PROX_LABELS,
         os.path.join(out_dir, "rq1_proximity_table.txt"),
         caption="RQ1: Proximity to Success (Failed Samples)",
         label="tab:rq1_proximity",
@@ -898,7 +910,7 @@ def _rq1_proximity_table(fb_types, llms, out_dir, raw):
     # Figure
     flat_cols = ["Method"]
     for llm in llms:
-        for sc in SUB_COLS:
+        for sc in PROX_LABELS:
             flat_cols.append(f"{llm} {sc}")
     flat_rows = [[rl] + rd for rl, rd in zip(row_labels, rows)]
     tdf = pd.DataFrame(flat_rows, columns=flat_cols)
@@ -1066,8 +1078,7 @@ def _rq2_success_heatmap(ordered, M, out_dir):
 
 def _rq2_table(ordered, M, out_dir, raw=None):
     """Multicolumn table: columns = LLMs + RL, rows = feedback types,
-    sub-columns = GSR / GR / SO / OA."""
-    SUB_COLS = ["GSR", "GR", "SO", "OA"]
+    sub-columns = SR_all / SR_C1 / SR_C2 / SR_C3."""
 
     raw_lookup = _build_raw_lookup(raw) if raw is not None else {}
 
@@ -1101,7 +1112,7 @@ def _rq2_table(ordered, M, out_dir, raw=None):
             else:
                 fb_set.add(name)
 
-    llms = sorted(llm_set)
+    llms = [l for l in LLM_ORDER if l in llm_set] + sorted(llm_set - set(LLM_ORDER))
     fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
 
     # Column groups: LLMs first, then RL if present
@@ -1117,8 +1128,8 @@ def _rq2_table(ordered, M, out_dir, raw=None):
         # Fallback from summary
         rl_df = M.get("RL", (None, None))[0]
         if rl_df is not None:
-            rl_rates = {"GSR": rl_df["success"].mean() * 100,
-                        "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+            rl_rates = {"SR_all": rl_df["success"].mean() * 100,
+                        "SR_C1": float("nan"), "SR_C2": float("nan"), "SR_C3": float("nan")}
 
     # Build rows
     row_labels = []
@@ -1134,25 +1145,25 @@ def _rq2_table(ordered, M, out_dir, raw=None):
                 # Try to find from summaries
                 disp = f"{fb} ({llm})"
                 if disp in M:
-                    rates = {"GSR": M[disp][0]["success"].mean() * 100,
-                             "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+                    rates = {"SR_all": M[disp][0]["success"].mean() * 100,
+                             "SR_C1": float("nan"), "SR_C2": float("nan"), "SR_C3": float("nan")}
                 elif fb in M:
-                    rates = {"GSR": M[fb][0]["success"].mean() * 100,
-                             "GR": float("nan"), "SO": float("nan"), "OA": float("nan")}
+                    rates = {"SR_all": M[fb][0]["success"].mean() * 100,
+                             "SR_C1": float("nan"), "SR_C2": float("nan"), "SR_C3": float("nan")}
                 else:
-                    rates = {"GSR": float("nan"), "GR": float("nan"),
-                             "SO": float("nan"), "OA": float("nan")}
-            for sc in SUB_COLS:
+                    rates = {"SR_all": float("nan"), "SR_C1": float("nan"),
+                             "SR_C2": float("nan"), "SR_C3": float("nan")}
+            for sc in RATE_KEYS:
                 v = rates[sc]
                 row_data.append(f"{v:.2f}" if not np.isnan(v) else "--")
 
         # RL column (same values for every row)
         if has_rl and rl_rates:
-            for sc in SUB_COLS:
+            for sc in RATE_KEYS:
                 v = rl_rates[sc]
                 row_data.append(f"{v:.2f}" if not np.isnan(v) else "--")
         elif has_rl:
-            row_data.extend(["--"] * len(SUB_COLS))
+            row_data.extend(["--"] * len(RATE_KEYS))
 
         row_labels.append(fb)
         rows.append(row_data)
@@ -1169,7 +1180,7 @@ def _rq2_table(ordered, M, out_dir, raw=None):
 
     # LaTeX table
     _save_multicolumn_latex_table(
-        rows, row_labels, col_groups, SUB_COLS,
+        rows, row_labels, col_groups, RATE_LABELS,
         os.path.join(out_dir, "rq2_table.txt"),
         caption="RQ2: Comparative Analysis",
         label="tab:rq2",
@@ -1178,7 +1189,7 @@ def _rq2_table(ordered, M, out_dir, raw=None):
     # Figure
     flat_cols = ["Method"]
     for cg in col_groups:
-        for sc in SUB_COLS:
+        for sc in RATE_LABELS:
             flat_cols.append(f"{cg} {sc}")
     flat_rows = [[rl] + rd for rl, rd in zip(row_labels, rows)]
     tdf = pd.DataFrame(flat_rows, columns=flat_cols)
@@ -1219,7 +1230,6 @@ def _rq2_table_fallback(ordered, M, out_dir):
 
 def _rq2_proximity_table(ordered, M, out_dir, raw):
     """Multicolumn proximity-to-success table for RQ2 (LLMs + RL)."""
-    SUB_COLS = ["All", "GR", "SO", "OA", "Max"]
     raw_lookup = _build_raw_lookup(raw)
 
     # Determine LLMs, feedback types, RL presence (same logic as _rq2_table)
@@ -1234,7 +1244,7 @@ def _rq2_proximity_table(ordered, M, out_dir, raw):
             llm_set.add(llm)
             fb_set.add(fb)
 
-    llms = sorted(llm_set)
+    llms = [l for l in LLM_ORDER if l in llm_set] + sorted(llm_set - set(LLM_ORDER))
     fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
 
     col_groups = list(llms)
@@ -1256,17 +1266,17 @@ def _rq2_proximity_table(ordered, M, out_dir, raw):
             if key in raw_lookup:
                 prox = _compute_proximity(raw_lookup[key])
             else:
-                prox = {k: float("nan") for k in SUB_COLS}
-            for sc in SUB_COLS:
+                prox = {k: float("nan") for k in PROX_KEYS}
+            for sc in PROX_KEYS:
                 v = prox[sc]
-                row_data.append(f"{v:.4f}" if not np.isnan(v) else "N/A")
+                row_data.append(f"{v:.2f}" if not np.isnan(v) else "N/A")
 
         if has_rl and rl_prox:
-            for sc in SUB_COLS:
+            for sc in PROX_KEYS:
                 v = rl_prox[sc]
-                row_data.append(f"{v:.4f}" if not np.isnan(v) else "N/A")
+                row_data.append(f"{v:.2f}" if not np.isnan(v) else "N/A")
         elif has_rl:
-            row_data.extend(["N/A"] * len(SUB_COLS))
+            row_data.extend(["N/A"] * len(PROX_KEYS))
 
         row_labels.append(fb)
         rows.append(row_data)
@@ -1279,7 +1289,7 @@ def _rq2_proximity_table(ordered, M, out_dir, raw):
         print(f"  {rl:<14}" + "  ".join(f"{v:>8}" for v in rd))
 
     _save_multicolumn_latex_table(
-        rows, row_labels, col_groups, SUB_COLS,
+        rows, row_labels, col_groups, PROX_LABELS,
         os.path.join(out_dir, "rq2_proximity_table.txt"),
         caption="RQ2: Proximity to Success (Failed Samples)",
         label="tab:rq2_proximity",
@@ -1289,7 +1299,7 @@ def _rq2_proximity_table(ordered, M, out_dir, raw):
     # Figure
     flat_cols = ["Method"]
     for cg in col_groups:
-        for sc in SUB_COLS:
+        for sc in PROX_LABELS:
             flat_cols.append(f"{cg} {sc}")
     flat_rows = [[rl] + rd for rl, rd in zip(row_labels, rows)]
     tdf = pd.DataFrame(flat_rows, columns=flat_cols)
@@ -1331,9 +1341,10 @@ def _rq2_scaling(ordered, M, out_dir):
 
 
 def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
-    """Line plot: GSR vs grid size for best-performing LLM (all its feedback types) + RL.
+    """Line plot: GSR vs grid size for best-performing LLM with selected feedback types + RL.
 
-    Best-performing LLM = the LLM with highest overall GSR across the most feedback mechanisms.
+    Feedback types shown are controlled by GSR_LLM_SCALING_FEEDBACK.
+    Best-performing LLM = the LLM with highest overall GSR across those feedback types.
     """
     raw_lookup = _build_raw_lookup(raw)
 
@@ -1346,14 +1357,15 @@ def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
             llm_set.add(llm)
             fb_set.add(fb)
 
-    llms = sorted(llm_set)
-    fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
+    llms = [l for l in LLM_ORDER if l in llm_set] + sorted(llm_set - set(LLM_ORDER))
+    # Only include feedback types that are both configured and present in data
+    fb_types = [fb for fb in GSR_LLM_SCALING_FEEDBACK if fb in fb_set]
 
     if not llms or not fb_types:
         print("  Skipping RQ2 GSR-by-LLM scaling: not enough data.")
         return
 
-    # Compute overall GSR for each LLM (averaging across all its feedback types)
+    # Compute overall GSR for each LLM (averaging across selected feedback types)
     llm_gsr = {}
     for llm in llms:
         gsr_vals = []
@@ -1361,8 +1373,8 @@ def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
             key = (fb, llm)
             if key in raw_lookup:
                 rates = _compute_group_rates(raw_lookup[key])
-                if not np.isnan(rates["GSR"]):
-                    gsr_vals.append(rates["GSR"])
+                if not np.isnan(rates["SR_all"]):
+                    gsr_vals.append(rates["SR_all"])
         llm_gsr[llm] = np.mean(gsr_vals) if gsr_vals else 0
 
     best_llm = max(llm_gsr, key=llm_gsr.get)
@@ -1381,12 +1393,32 @@ def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
         print("  Skipping RQ2 GSR-by-LLM scaling: no grid sizes found.")
         return
 
-    # Build data series: 3 feedback types for the best LLM + RL
+    # Build data series: selected feedback types for the best LLM + RL
     fig, ax = plt.subplots(figsize=(8, 5))
     markers = ["o", "s", "^", "D"]
     line_styles = ["-", "--", "-.", ":"]
 
     series_idx = 0
+
+    # Add RL first
+    if ("RL", None) in raw_lookup:
+        df = raw_lookup[("RL", None)]
+        if "is_final" in df.columns:
+            finals = df[df["is_final"]]
+        else:
+            finals = df.groupby("sample_id").tail(1)
+
+        gsr_by_size = finals.groupby("size")["success"].mean() * 100
+        sizes = [s for s in all_sizes if s in gsr_by_size.index]
+        vals = [gsr_by_size.get(s, np.nan) for s in sizes]
+
+        ax.plot(sizes, vals,
+                marker=markers[series_idx % len(markers)],
+                linestyle=line_styles[series_idx % len(line_styles)],
+                color=RL_COLOR,
+                label="RL", linewidth=2, markersize=6)
+        series_idx += 1
+
     for fb in fb_types:
         key = (fb, best_llm)
         if key not in raw_lookup:
@@ -1411,27 +1443,10 @@ def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
                 label=label, linewidth=2, markersize=6)
         series_idx += 1
 
-    # Add RL
-    if ("RL", None) in raw_lookup:
-        df = raw_lookup[("RL", None)]
-        if "is_final" in df.columns:
-            finals = df[df["is_final"]]
-        else:
-            finals = df.groupby("sample_id").tail(1)
-
-        gsr_by_size = finals.groupby("size")["success"].mean() * 100
-        sizes = [s for s in all_sizes if s in gsr_by_size.index]
-        vals = [gsr_by_size.get(s, np.nan) for s in sizes]
-
-        ax.plot(sizes, vals,
-                marker=markers[series_idx % len(markers)],
-                linestyle=line_styles[series_idx % len(line_styles)],
-                color=RL_COLOR,
-                label="RL", linewidth=2, markersize=6)
-
+    fb_label = ", ".join(fb_types)
     ax.set_xlabel("Grid Size")
-    ax.set_ylabel("Success Rate (%)")
-    ax.set_title(f"RQ2: GSR vs Grid Size – Best LLM ({best_llm}) + RL")
+    ax.set_ylabel("$SR_{all}$ (%)")
+    ax.set_title(f"RQ2: $SR_{{all}}$ vs Grid Size – RL + {fb_label} ({best_llm})")
     ax.legend()
     ax.grid(alpha=0.3)
     ax.set_ylim(0, 105)
@@ -1439,9 +1454,9 @@ def _rq2_gsr_by_llm_scaling(summaries, out_dir, raw):
 
 
 def _rq2_gsr_by_feedback_scaling(summaries, out_dir, raw):
-    """Line plot: GSR vs grid size for best-performing feedback (all its LLMs) + RL.
+    """Line plot: GSR vs grid size for a specified feedback type (all its LLMs) + RL.
 
-    Best-performing feedback = the feedback mechanism with highest overall GSR across all LLMs.
+    Feedback type is controlled by GSR_FEEDBACK_SCALING_METHOD.
     """
     raw_lookup = _build_raw_lookup(raw)
 
@@ -1454,27 +1469,17 @@ def _rq2_gsr_by_feedback_scaling(summaries, out_dir, raw):
             llm_set.add(llm)
             fb_set.add(fb)
 
-    llms = sorted(llm_set)
-    fb_types = [fb for fb in FEEDBACK_ORDER if fb in fb_set]
+    llms = [l for l in LLM_ORDER if l in llm_set] + sorted(llm_set - set(LLM_ORDER))
 
-    if not llms or not fb_types:
+    if not llms:
         print("  Skipping RQ2 GSR-by-Feedback scaling: not enough data.")
         return
 
-    # Compute overall GSR for each feedback type (averaging across all LLMs)
-    fb_gsr = {}
-    for fb in fb_types:
-        gsr_vals = []
-        for llm in llms:
-            key = (fb, llm)
-            if key in raw_lookup:
-                rates = _compute_group_rates(raw_lookup[key])
-                if not np.isnan(rates["GSR"]):
-                    gsr_vals.append(rates["GSR"])
-        fb_gsr[fb] = np.mean(gsr_vals) if gsr_vals else 0
-
-    best_fb = max(fb_gsr, key=fb_gsr.get)
-    print(f"  Best-performing feedback for GSR scaling: {best_fb} (avg GSR={fb_gsr[best_fb]:.2f}%)")
+    best_fb = GSR_FEEDBACK_SCALING_METHOD
+    if best_fb not in fb_set:
+        print(f"  Skipping RQ2 GSR-by-Feedback scaling: {best_fb} not found in data.")
+        return
+    print(f"  Using feedback method for GSR scaling: {best_fb}")
 
     # Collect all grid sizes
     all_sizes = set()
@@ -1545,8 +1550,8 @@ def _rq2_gsr_by_feedback_scaling(summaries, out_dir, raw):
                 label="RL", linewidth=2, markersize=6)
 
     ax.set_xlabel("Grid Size")
-    ax.set_ylabel("Success Rate (%)")
-    ax.set_title(f"RQ2: GSR vs Grid Size – Best Feedback ({best_fb}) + RL")
+    ax.set_ylabel("$SR_{all}$ (%)")
+    ax.set_title(f"RQ2: $SR_{{all}}$ vs Grid Size – {best_fb} + RL")
     ax.legend()
     ax.grid(alpha=0.3)
     ax.set_ylim(0, 105)
@@ -1603,7 +1608,7 @@ def rq3(summaries, out_dir):
 # ──────────────────────────────────────────────
 
 ## ── Change this to plot a specific run, or leave None for latest ──
-RUN_FOLDER = "100_20260211_08-03-04-repaired"
+RUN_FOLDER = "100_20260211_08-03-04-repaired-repaired"
 
 
 def main():

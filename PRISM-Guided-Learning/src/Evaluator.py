@@ -54,7 +54,7 @@ def main():
     dataloader.load_data()
 
     models = [
-        EvalModel.RL, 
+        # EvalModel.RL, 
         # EvalModel.LLM_VANILLA_GPT5_NANO, 
         # EvalModel.LLM_VANILLA_PLUS_GPT5_NANO,
         # EvalModel.LLM_FEEDBACK_MINUS_GPT5_NANO,
@@ -69,7 +69,7 @@ def main():
         # EvalModel.LLM_VANILLA_PLUS_GEMINI_PRO,
         # EvalModel.LLM_FEEDBACK_MINUS_GEMINI_PRO,
         # EvalModel.LLM_FEEDBACK_GEMINI_PRO,
-        # EvalModel.LLM_FEEDBACK_SIMPLIFIED_GEMINI_PRO,
+        EvalModel.LLM_FEEDBACK_SIMPLIFIED_GEMINI_PRO,
     ]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
@@ -109,7 +109,7 @@ def evaluate_models(
             model = get_model(model_type)
 
             start_time = time()
-            results = model.evaluate(dataloader, max_workers=10, run_dir=run_dir)
+            results = model.evaluate(dataloader, max_workers=40, run_dir=run_dir)
             end_time = time()
             delta_time = end_time - start_time
 
