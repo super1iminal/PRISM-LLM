@@ -21,3 +21,11 @@ This repository contains implementation of LLM Path Planning with Quantitative G
 
 5.Set your OPENAI_API_KEY environment variable to your openai key (I do it in .bashrc, not sure how to do it on windows)
 
+## Structure
+
+- Final results are in `PRISM-Guided-Learning/out/results/100-balanced-paper-results`
+
+- Source files are in `PRISM-Guided-Learning/src`
+
+- Instructions for running the code are above
+
