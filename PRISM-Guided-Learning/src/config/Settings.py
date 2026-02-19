@@ -1,4 +1,4 @@
-PRISM_PATH = "/u/asherarya/prism-4.10-src/prism/bin/prism"  # Update this path for your system
+PRISM_PATH = "SET/THIS/HERE/bin/prism"  # Update this path for your system
 LOGGING_PATH = "PRISM-Guided-Learning/out/logs/"
 EVAL_PATH = "PRISM-Guided-Learning/out/eval_results/"
 RESULTS_PATH = "PRISM-Guided-Learning/out/results/"
