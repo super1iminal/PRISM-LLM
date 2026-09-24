@@ -1,7 +1,6 @@
 from typing import List, Tuple, Dict
-from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
-from config.Settings import get_threshold_for_key
+from legacy.requirements import get_threshold_for_key
 
 UNIFIED_PROMPT_TEXT = """You are an expert path planner working on formulating paths that meet formal requirements.
 
@@ -65,44 +64,6 @@ Before producing your policy, reason through the following:
 Now provide the best action for all states.
 """
 
-UNIFIED_TEMPLATE = PromptTemplate(
-    template=UNIFIED_PROMPT_TEXT,
-    input_variables=["size", "grid_visual", "examples_block",
-                     "s_obstacles", "f_goals", "k_obstacles",
-                     "moving_note", "goal", "total_states",
-                     "prob_forward_pct", "prob_slip_left_pct", "prob_slip_right_pct",
-                     "stochastic_example", "feedback_block"]
-)
-
-
-def identify_problems(prism_probs: Dict[str, float]) -> str:
-    """Identify problems based on probabilities that are below their per-key threshold"""
-    problems = []
-
-    for key, prob in prism_probs.items():
-        threshold = get_threshold_for_key(key)
-        if prob < threshold:
-            if key.startswith('goal'):
-                problems.append(f"- Goal reachability ({key}): {prob:.4f} < {threshold} - Path to goal may be blocked or suboptimal")
-            elif key.startswith('seq_'):
-                problems.append(f"- Sequence ordering ({key}): {prob:.4f} < {threshold} - Goals may be visited in wrong order")
-            elif key == 'complete_sequence':
-                problems.append(f"- Complete sequence: {prob:.4f} < {threshold} - Not all goals reached in correct order")
-            elif key.startswith('avoid_moving_seg'):
-                problems.append(
-                    f"- Moving obstacle collision risk: {prob:.4f} < {threshold} — "
-                    f"Your path crosses the moving obstacle trajectory. "
-                    f"The moving obstacle shifts position each timestep and could be anywhere along its path, "
-                    f"so perfect avoidance may not be possible. Route around the trajectory where you can, "
-                    f"but do NOT sacrifice goal reachability or sequence ordering to fix this."
-                )
-            else:
-                problems.append(f"- {key}: {prob:.4f} < {threshold}")
-
-    if not problems:
-        return "No specific problems identified, but overall LTL score is below 1.0"
-
-    return "\n".join(problems)
 
 
 def extract_segment_probs(prism_probs: Dict[str, float], goal_num: int, goal_nums: List[int]) -> Dict[str, float]:
@@ -157,12 +118,7 @@ def format_probability_summary(prism_probs: Dict[str, float], relevant_keys: set
 def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]],
                  k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int],
                  prob_forward: float = 0.7, prob_slip_left: float = 0.15,
-                 prob_slip_right: float = 0.15,
-                 is_feedback: bool = False,
-                 probability_summary: str = "",
-                 policy_visual: str = "",
-                 policy_raw: str = "",
-                 problems: str = "") -> str:
+                 prob_slip_right: float = 0.15) -> str:
     """Generate the complete prompt with visual grid using the unified template.
 
     Args:
@@ -174,11 +130,6 @@ def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tu
         prob_forward: Forward movement probability
         prob_slip_left: Left slip probability
         prob_slip_right: Right slip probability
-        is_feedback: If True, generates feedback prompt (with results, policy visual)
-        probability_summary: Formatted probability summary (feedback only)
-        policy_visual: ASCII policy visualization (feedback only)
-        policy_raw: Raw policy listing e.g. "(0, 0)=1, ..." (feedback only)
-        problems: Problem identification text (feedback only; empty = FeedbackMinus style)
 
     Returns:
         Formatted prompt string
@@ -306,27 +257,9 @@ Policy:
     stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
     moving_note = ", which could be anywhere along their patrol path" if k_obstacles else ""
 
-    if is_feedback:
-        parts = [
-            f"A previous policy generated for this problem has the following probabilities for the requirements:\n",
-            f"{probability_summary}\n",
-            f"Previous policy:\n{policy_raw}\n",
-            f"The following is a visualization of the previous policy:\n{policy_visual}\n",
-            "Policy Legend:\n"
-            "- ↑ = UP (action 0), → = RIGHT (action 1), ↓ = DOWN (action 2), ← = LEFT (action 3)\n"
-            "- X↓ = Static obstacle with escape action (e.g., X↓ means obstacle, escape by going DOWN)\n"
-            "- M→ = Moving obstacle with action (e.g., M→ means moving obstacle, action is RIGHT)\n"
-            "- F→ = Future goal with escape action (e.g., F→ means future goal, escape by going RIGHT)\n"
-            "- G = Current goal (destination)\n",
-            "\nCompare this policy to the grid layout above to identify where actions lead toward obstacles or away from the goal.\n",
-        ]
-        if problems:
-            parts.append(f"\nHints (possible issues with the previous policy):\n{problems}\n")
-        feedback_block = "\n" + "\n".join(parts)
-    else:
-        feedback_block = ""
+    feedback_block = ""
 
-    return UNIFIED_TEMPLATE.format(
+    return UNIFIED_PROMPT_TEXT.format(
         size=size,
         grid_visual=grid_visual,
         examples_block=examples_block,
@@ -528,7 +461,7 @@ def build_repair_prompt(size: int, s_obstacles: List[Tuple[int, int]],
                         policy_raw: str = "") -> str:
     """Generate a focused repair prompt for feedback iterations.
 
-    Unlike build_prompt(is_feedback=True), this prompt:
+    Unlike the initial prompt (build_prompt), this prompt:
     - Places probability results at the top (prominent)
     - Shows the previous policy prominently
     - Uses only short action examples (no full worked examples)
@@ -579,7 +512,6 @@ def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tupl
         prob_forward=prob_forward,
         prob_slip_left=prob_slip_left,
         prob_slip_right=prob_slip_right,
-        is_feedback=False
     )
 
 
@@ -592,6 +524,3 @@ class ActionPolicy(BaseModel):
     """Best action for each state in the grid"""
     states: List[StateAction]
 
-# Keep old names as aliases for backwards compatibility during transition
-StateQ = StateAction
-QTables = ActionPolicy

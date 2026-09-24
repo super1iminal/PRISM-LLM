@@ -1,7 +1,7 @@
-from verification.PrismVerifier import PrismVerifier
-from verification.SimplifiedVerifier import SimplifiedVerifier
-from verification.PrismModelGenerator import PrismModelGenerator
-from utils.LLMPrompting import get_prompt, build_prompt, ActionPolicy, generate_policy_visual, generate_policy_raw, format_probability_summary, extract_segment_probs
+from legacy.prism_verifier import PrismVerifier
+from legacy.requirements import SimplifiedVerifier, get_threshold_for_key
+from legacy.prism_model import PrismModelGenerator
+from legacy.prompting import get_prompt, build_repair_prompt, ActionPolicy, generate_policy_visual, generate_policy_raw, format_probability_summary, extract_segment_probs
 
 import os
 from typing import List, Optional, Dict, Tuple
@@ -12,13 +12,13 @@ import traceback
 
 from time import time
 
-from config.Settings import PRISM_PATH, get_threshold_for_key
-from utils.Logging import setup_logger, create_run_directory
+from settings import get_prism_path
+from logging_utils import setup_logger, create_run_directory
 
 
-def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
+def _evaluate_single_gridworld_feedback_simplified(args: Tuple) -> Dict:
     """
-    Standalone function to evaluate a single gridworld with Feedback Minus LLM planner.
+    Standalone function to evaluate a single gridworld with Feedback Simplified LLM planner.
     This function is designed to be called in a separate process/thread.
 
     Args:
@@ -35,7 +35,7 @@ def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
     model_name = config.get('model_name')
 
     # Create a new planner instance for this worker
-    planner = FeedbackMinusLLMPlanner(
+    planner = FeedbackSimplifiedLLMPlanner(
         model=model,
         model_name=model_name,
         max_attempts=config.get('max_attempts', 3)
@@ -43,7 +43,8 @@ def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
 
     # Setup logger for this worker in the shared directory
     planner.logger = setup_logger(f"worker_{idx}", run_dir=run_dir, include_timestamp=False)
-    planner.prism_verifier = PrismVerifier(planner.get_prism_path(), planner.logger)
+    planner.prism_verifier = PrismVerifier(get_prism_path(), planner.logger)
+    model.reset_usage()
 
     start_time = time()
     planner.size = gridworld.size
@@ -58,6 +59,7 @@ def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
     planner.logger.info(f"Evaluation {idx+1}: LTL Score = {step_result['ltl_score']} (iterations: {step_result['iterations']})")
     end_time = time()
     delta_time = end_time - start_time
+    usage = model.usage()
 
     return {
         "index": idx,
@@ -71,19 +73,27 @@ def _evaluate_single_gridworld_feedback_minus(args: Tuple) -> Dict:
         "Iteration_Prism_Probs": step_result["iteration_prism_probs"],
         "Iteration_Mistakes": step_result["iteration_mistakes"],
         "Iteration_Costs": step_result["iteration_costs"],
+        "Iteration_Policies": step_result["iteration_policies"],
+        "LLM_Calls": len(usage.calls),
+        "LLM_Output_Tokens": usage.output_tokens,
+        "LLM_Prompt_Tokens": usage.prompt_tokens,
+        "LLM_Raw_Outputs": [c.raw_output for c in usage.calls],
         "Success": step_result["success"]
     }
 
 
-class FeedbackMinusLLMPlanner:
+class FeedbackSimplifiedLLMPlanner:
     """
-    Feedback Minus LLM Planner - Multiple iterations with PARTIAL feedback.
+    Feedback Simplified LLM Planner - Multiple iterations with a focused repair prompt.
 
-    Provides PRISM probabilities and visualizations to the LLM, but does NOT
-    include natural language problem identification.
+    Uses a simplified repair prompt for feedback iterations that:
+    - Places probability results at the top (prominent position)
+    - Shows previous policy prominently
+    - Uses only short action examples (no full worked examples)
+    - Frames the task as policy repair rather than planning from scratch
 
-    Key difference from FeedbackLLMPlanner: No "PROBLEMS TO FIX" section with
-    identify_problems() output - the LLM must infer issues from raw probabilities.
+    Key difference from FeedbackMinusLLMPlanner: Uses build_repair_prompt() instead of
+    build_prompt(is_feedback=True), producing a ~50% shorter, repair-focused prompt.
     """
 
     def __init__(self, model, model_name: str, max_attempts: int = 3):
@@ -95,7 +105,7 @@ class FeedbackMinusLLMPlanner:
 
     def evaluate(self, dataloader, max_workers: Optional[int] = None, use_threads: bool = True, run_dir: Optional[str] = None):
         """
-        Evaluate the Feedback Minus LLM planner on all gridworlds in the dataloader.
+        Evaluate the Feedback Simplified LLM planner on all gridworlds in the dataloader.
 
         Args:
             dataloader: DataLoader instance containing GridWorld configurations
@@ -126,10 +136,10 @@ class FeedbackMinusLLMPlanner:
         """
         # Create log directory under shared run_dir, or standalone
         if run_dir:
-            log_dir = os.path.join(run_dir, f"feedback_minus_LLM_{self.model_name}")
+            log_dir = os.path.join(run_dir, f"feedback_simplified_LLM_{self.model_name}")
             os.makedirs(log_dir, exist_ok=True)
         else:
-            log_dir = create_run_directory(f"feedback_minus_LLM_{self.model_name}_parallel")
+            log_dir = create_run_directory(f"feedback_simplified_LLM_{self.model_name}_parallel")
 
         # Setup main logger in the shared directory
         main_logger = setup_logger("main", run_dir=log_dir, include_timestamp=False)
@@ -165,7 +175,7 @@ class FeedbackMinusLLMPlanner:
 
         with ExecutorClass(max_workers=max_workers) as executor:
             future_to_idx = {
-                executor.submit(_evaluate_single_gridworld_feedback_minus, args): args[0]
+                executor.submit(_evaluate_single_gridworld_feedback_simplified, args): args[0]
                 for args in args_list
             }
 
@@ -219,14 +229,6 @@ class FeedbackMinusLLMPlanner:
             results_list.append(result)
 
         return results_list
-
-    def get_prism_path(self):
-        """Get PRISM executable path"""
-        prism_path = PRISM_PATH
-        if os.path.exists(prism_path) and os.access(prism_path, os.X_OK):
-            return prism_path
-        else:
-            raise FileNotFoundError(f"PRISM executable not found or not executable at {prism_path}")
 
     def initialize_q_table(self):
         """Initialize policy table with default action (DOWN toward typical goal)"""
@@ -301,7 +303,7 @@ class FeedbackMinusLLMPlanner:
 
     def _get_feedback_prompt(self, goal_idx: int, goal: Tuple[int, int],
                               future_goals: List[Tuple[int, int]]) -> str:
-        """Generate feedback prompt for correction iteration (without problem identification)"""
+        """Generate focused repair prompt for correction iteration"""
 
         goal_nums = sorted(self.env.goals.keys())
         goal_num = goal_nums[goal_idx]
@@ -323,8 +325,7 @@ class FeedbackMinusLLMPlanner:
         # Show ALL probs but annotate which are relevant to this goal
         prob_summary = format_probability_summary(self.prism_probs, relevant_keys=set(segment_probs.keys()))
 
-        # Note: No problems argument - that's the key difference from FeedbackLLMPlanner
-        return build_prompt(
+        return build_repair_prompt(
             size=self.size,
             s_obstacles=self.env.static_obstacles,
             f_goals=future_goals,
@@ -333,11 +334,9 @@ class FeedbackMinusLLMPlanner:
             prob_forward=self.env.prob_forward,
             prob_slip_left=self.env.prob_slip_left,
             prob_slip_right=self.env.prob_slip_right,
-            is_feedback=True,
             probability_summary=prob_summary,
             policy_visual=policy_vis,
             policy_raw=policy_raw,
-            problems=""
         )
 
     def _apply_response_to_q_table(self, response: ActionPolicy, goal_idx: int):
@@ -372,7 +371,7 @@ class FeedbackMinusLLMPlanner:
         return ltl_score
 
     def step(self) -> Dict:
-        """Main planning step with feedback loop (without problem identification)
+        """Main planning step with simplified repair feedback loop
 
         Returns:
             Dictionary containing:
@@ -395,6 +394,7 @@ class FeedbackMinusLLMPlanner:
         iteration_prism_probs = []  # Full probability dict per iteration
         iteration_mistakes = []     # Mistakes per iteration
         iteration_costs = []        # Cost per iteration
+        iteration_policies = []     # Full policy verified at each iteration
 
         # Store responses for potential feedback iterations
         goal_responses: Dict[int, ActionPolicy] = {}
@@ -449,6 +449,7 @@ class FeedbackMinusLLMPlanner:
         iteration_prism_probs.append(self.prism_probs.copy())
         iteration_mistakes.append(mistakes)
         iteration_costs.append(cost)
+        iteration_policies.append(self.q_table.copy())
         failed = {k: f"{p:.4f} < {get_threshold_for_key(k)}" for k, p in self.prism_probs.items() if p < get_threshold_for_key(k)}
         if failed:
             self.logger.info(f"Failed requirements ({mistakes}): {failed}")
@@ -465,14 +466,14 @@ class FeedbackMinusLLMPlanner:
             attempt += 1
             iteration_start = time()
             iter_llm_time = 0.0
-            self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback minus - no problem identification) ===")
+            self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback simplified - repair prompt) ===")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
 
             for idx, goal_num in enumerate(goal_nums):
                 goal = self.env.goals[goal_num]
                 future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
-                self.logger.info(f"Re-planning goal {goal_num} with feedback (minus problem identification)")
+                self.logger.info(f"Re-planning goal {goal_num} with simplified repair prompt")
 
                 feedback_prompt = self._get_feedback_prompt(
                     idx, goal, future_goals
@@ -483,10 +484,10 @@ class FeedbackMinusLLMPlanner:
                 try:
                     response = self.model.invoke(feedback_prompt)
                 except Exception as e:
-                    self.logger.error(f"Feedback Minus LLM invoke failed for goal {goal_num} (attempt {attempt}): {type(e).__name__}: {e}")
+                    self.logger.error(f"Feedback Simplified LLM invoke failed for goal {goal_num} (attempt {attempt}): {type(e).__name__}: {e}")
                     raise
                 iter_llm_time += time() - llm_start
-                self.logger.info("Feedback Minus LLM Response received.")
+                self.logger.info("Feedback Simplified LLM Response received.")
 
                 goal_responses[goal_num] = response
                 self._apply_response_to_q_table(response, idx)
@@ -506,6 +507,7 @@ class FeedbackMinusLLMPlanner:
             iteration_prism_probs.append(self.prism_probs.copy())
             iteration_mistakes.append(mistakes)
             iteration_costs.append(cost)
+            iteration_policies.append(self.q_table.copy())
             failed = {k: f"{p:.4f} < {get_threshold_for_key(k)}" for k, p in self.prism_probs.items() if p < get_threshold_for_key(k)}
             if failed:
                 self.logger.info(f"Failed requirements ({mistakes}): {failed}")
@@ -532,7 +534,7 @@ class FeedbackMinusLLMPlanner:
         else:
             self.logger.warning(f"Max attempts ({self.max_attempts}) reached. Final probabilities: {self.prism_probs}")
 
-        self.logger.info(f"Final LTL Score (Feedback Minus LLM): {best_ltl_score}")
+        self.logger.info(f"Final LTL Score (Feedback Simplified LLM): {best_ltl_score}")
         self.logger.info(f"Total PRISM time: {sum(iteration_prism_times):.2f}s, Total LLM time: {sum(iteration_llm_times):.2f}s")
 
         return {
@@ -544,5 +546,6 @@ class FeedbackMinusLLMPlanner:
             "iteration_prism_probs": iteration_prism_probs,
             "iteration_mistakes": iteration_mistakes,
             "iteration_costs": iteration_costs,
+            "iteration_policies": iteration_policies,
             "success": success
         }

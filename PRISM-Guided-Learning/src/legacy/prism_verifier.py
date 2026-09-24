@@ -1,4 +1,3 @@
-import logging 
 import tempfile
 from typing import List 
 import subprocess
@@ -43,7 +42,6 @@ class PrismVerifier:
                 "-maxiters", "1000000",  
                 "-power", 
                 "-verbose",
-                "-exportstates", "PRISM-Guided-Learning/out/logs/states.txt"  
             ]
 
             # Run PRISM

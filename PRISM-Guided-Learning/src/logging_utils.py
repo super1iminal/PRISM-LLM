@@ -1,4 +1,4 @@
-from config.Settings import LOGGING_PATH, EVAL_PATH
+from settings import LOGGING_PATH
 import os
 import logging
 from datetime import datetime

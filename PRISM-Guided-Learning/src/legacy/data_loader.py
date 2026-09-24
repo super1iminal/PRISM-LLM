@@ -2,7 +2,7 @@ import ast
 import pandas as pd
 
 from typing import List, Tuple
-from environment.GridWorld import GridWorld
+from legacy.gridworld import GridWorld
 
 class DataLoader:
     def __init__(self, data_path):

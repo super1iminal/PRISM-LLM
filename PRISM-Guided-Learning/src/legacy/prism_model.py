@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Tuple
 from itertools import product
-from environment.GridWorld import GridWorld
+from legacy.gridworld import GridWorld
 
 
 class PrismModelGenerator:

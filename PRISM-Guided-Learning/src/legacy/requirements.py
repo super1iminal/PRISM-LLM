@@ -1,9 +1,22 @@
-from . import PrismVerifier
-import logging
 from dataclasses import dataclass
-from typing import Dict, Tuple, List, Any, Optional
-import os
-from environment.GridWorld import GridWorld
+from typing import List
+from legacy.prism_verifier import PrismVerifier
+from legacy.gridworld import GridWorld
+
+GOAL_REACHABILITY_THRESHOLD = 0.8
+SEQUENCE_ORDERING_THRESHOLD = 0.8
+OBSTACLE_AVOIDANCE_THRESHOLD = 0.7
+
+
+def get_threshold_for_key(key: str) -> float:
+    """Map a probability key to its per-requirement threshold."""
+    if key.startswith('goal'):
+        return GOAL_REACHABILITY_THRESHOLD
+    elif key.startswith('seq_') or key == 'complete_sequence':
+        return SEQUENCE_ORDERING_THRESHOLD
+    elif key.startswith('avoid_moving'):
+        return OBSTACLE_AVOIDANCE_THRESHOLD
+    return GOAL_REACHABILITY_THRESHOLD  # default fallback
 
 
 @dataclass
@@ -183,29 +196,3 @@ class SimplifiedVerifier:
             if i < len(results)
         )
         return score
-
-    def _generate_header(self) -> str:
-        """Generate CSV header from requirements."""
-        header_parts = ["Episode"]
-        header_parts.extend(req.csv_header for req in self.requirements)
-        header_parts.extend(["Episode_Reward", "Score"])
-        return ','.join(header_parts)
-
-    def save_probabilities_to_file(self, agent=None, save_dir: str = "logs", filename: str = "ltl_probabilities_and_rewards.txt"):
-        os.makedirs(save_dir, exist_ok=True)
-        output_path = os.path.join(save_dir, filename)
-
-        try:
-            with open(output_path, 'w') as f:
-                f.write(self._generate_header() + '\n')
-
-                for episode, probs in enumerate(self.ltl_probabilities):
-                    prob_str = ','.join(f"{p:.4f}" for p in probs)
-                    reward = agent.episode_rewards[episode] if (agent and hasattr(agent, 'episode_rewards') and episode < len(agent.episode_rewards)) else 0.0
-                    score = self._calculate_score(probs)
-                    f.write(f"{episode},{prob_str},{reward:.4f},{score:.4f}\n")
-
-                self.logger.info(f"Saved LTL probabilities and rewards to {output_path}")
-
-        except Exception as e:
-            self.logger.error(f"Error saving probabilities to file: {str(e)}")
