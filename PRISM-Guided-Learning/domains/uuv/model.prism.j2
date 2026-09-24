@@ -1,0 +1,109 @@
+// UUV pipeline inspection, scenario "{{ name }}" (Paessler et al., iFM 2023, arXiv:2308.14663).
+// Plain-PRISM version of the paper's ProFeat model (github.com/remaro-network/auv_profeat,
+// branch scp-ifm_artifact, Apache-2.0). The ProFeat features become state variables:
+// follow (task: search/follow) and alt (navigation: 0 low, 1 med, 2 high). The paper's feature
+// controller is the policy: while searching, the action picks the next altitude. Requests above
+// what the visibility allows get the highest allowed altitude, so the choices per state are
+// exactly the paper's. Every other transition is forced ([step]).
+mdp
+
+const int min_visib = {{ min_visib }};
+const int max_visib = {{ max_visib }};
+const double current_prob = {{ current_prob }};
+const int inspect = {{ inspect }};
+const int infl_tf = {{ infl_tf }};
+
+{% for st, code in states.items() %}
+const int {{ st }} = {{ code }};
+{% endfor %}
+
+formula med_visib = (max_visib-min_visib)/3;
+formula high_visib = 2*(max_visib-min_visib)/3;
+// Highest altitude the current water visibility allows
+formula max_alt = water_visib < med_visib ? 0 : (water_visib < high_visib ? 1 : 2);
+// The managing subsystem chooses the altitude while searching, except in state found
+formula deciding = !follow & s != found;
+// Search state of the currently active altitude
+formula search_alt = alt = 2 ? search_high : (alt = 1 ? search_med : search_low);
+{% for a in altitudes %}
+formula set_{{ a.name }} = min({{ a.code }}, max_alt);
+{% endfor %}
+
+// Water visibility: drops by 1 with the current probability, else rises by 1 or stays (bounded)
+module environment
+  water_visib : [min_visib..max_visib] init round((max_visib-min_visib)/2);
+{% for label in ["step"] + (altitudes | map(attribute='name') | list) %}
+  [{{ label }}] true -> current_prob : (water_visib'=max(water_visib-1, min_visib))
+      + (1-current_prob)/2 : (water_visib'=min(water_visib+1, max_visib)) + (1-current_prob)/2 : true;
+{% endfor %}
+endmodule
+
+module auv
+  s : [0..12] init start_task;
+  d_insp : [0..inspect] init 0;       // meters of pipeline inspected
+  t_failed : [0..infl_tf] init 0;     // recent thruster failures while following
+  follow : bool init false;           // task feature: false = search, true = follow
+  alt : [0..2] init 0;                // navigation feature: 0 low, 1 med, 2 high
+
+  // Searching: the managed subsystem moves according to the currently active altitude, while
+  // the policy action sets the altitude for the next step.
+{% for c in altitudes %}
+{% set up = "(alt'=set_" ~ c.name ~ ")" %}
+  [{{ c.name }}] deciding & s=start_task -> (s'=start_search) & {{ up }};
+  [{{ c.name }}] deciding & s=start_search -> (s'=search_alt) & {{ up }};
+{% for a in altitudes %}
+  [{{ c.name }}] deciding & s={{ a.search }} & alt={{ a.code }} -> {{ a.p_found }}:(s'=found) & {{ up }}
+      + {{ a.p_stay }}:(s'={{ a.search }}) & {{ up }} + {{ a.p_fail }}:(s'={{ a.recover }}) & {{ up }};
+  [{{ c.name }}] deciding & s={{ a.search }} & alt!={{ a.code }} -> (s'=search_alt) & {{ up }};
+  [{{ c.name }}] deciding & s={{ a.recover }} -> 0.5:(s'={{ a.recover }}) & {{ up }} + 0.5:(s'={{ a.search }}) & {{ up }};
+{% endfor %}
+{% endfor %}
+
+  // Pipeline found: switch task to follow at low altitude
+  [step] !follow & s=found -> (s'=start_task) & (follow'=true) & (alt'=0);
+  [step] follow & s=start_task -> (s'=following);
+  // Following: inspect one more meter, lose the pipeline, or a thruster fails
+  [step] follow & s=following & d_insp<inspect & t_failed=0 ->
+        {{ follow.p_follow }}:(s'=following) & (d_insp'=d_insp+1)
+      + {{ follow.p_lost }}:(s'=lost_pipe)
+      + {{ follow.p_fail }}:(s'=recover_following) & (t_failed'=min(t_failed+1, infl_tf));
+  // After recent thruster failures the AUV has drifted, so losing the pipeline is more likely
+  [step] follow & s=following & d_insp<inspect & t_failed>0 ->
+        {{ follow.p_follow }}*(1-t_failed/infl_tf):(s'=following) & (d_insp'=d_insp+1) & (t_failed'=t_failed-1)
+      + {{ follow.p_lost }}*(1+(({{ follow.p_follow }}*t_failed)/({{ follow.p_lost }}*infl_tf))):(s'=lost_pipe)
+      + {{ follow.p_fail }}:(s'=recover_following) & (t_failed'=min(t_failed+1, infl_tf));
+  [step] follow & s=following & d_insp=inspect -> (s'=done);
+  [step] follow & s=recover_following -> 0.5:(s'=recover_following) & (t_failed'=min(t_failed+1, infl_tf))
+      + 0.5:(s'=following);
+  // Pipeline lost: search again (from low altitude, where the AUV was following)
+  [step] follow & s=lost_pipe -> (s'=start_task) & (t_failed'=0) & (follow'=false);
+  [step] s=done -> true;
+endmodule
+
+label "done" = s=done;
+label "thruster_failure" = s=recover_high | s=recover_med | s=recover_low | s=recover_following;
+
+// Paper's reward structures (costs), for reference analyses; the planner does not use them
+rewards "time"
+{% for label in ["step"] + (altitudes | map(attribute='name') | list) %}
+  [{{ label }}] true : 1;
+{% endfor %}
+endrewards
+
+rewards "energy"
+  s=recover_high | s=recover_med | s=recover_low | s=recover_following : 2;
+  // Switching altitude: 2 per level (low <-> high costs 4)
+{% for a in altitudes %}
+{% for b in altitudes %}
+{% if a.code != b.code %}
+  s={{ a.search }} & alt={{ b.code }} : {{ 2 * ((a.code - b.code) | abs) }};
+{% endif %}
+{% endfor %}
+{% endfor %}
+  // Found: descend to low altitude
+  s=found & alt>0 : 2*alt;
+  s=start_task | s=start_search | s=following | s=lost_pipe | (s=found & alt=0) : 1;
+{% for a in altitudes %}
+  s={{ a.search }} & alt={{ a.code }} : 1;
+{% endfor %}
+endrewards

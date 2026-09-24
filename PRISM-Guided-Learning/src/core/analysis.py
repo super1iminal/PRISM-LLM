@@ -12,7 +12,8 @@ through states) that purely local, one-step measures miss.
   where the optimum is the best value on the bare MDP. Each state's mass is charged to the
   rule that decides it.
 
-This is a ranking heuristic, and masses are reported as shares of the total.
+Forced states (every choice has the same successor distribution) are never ranked: no rule can
+change what happens there. This is a ranking heuristic, and masses are reported as shares of the total.
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -105,7 +106,7 @@ class MassAnalyzer:
             worst, best = _signed(req, v.worst_vectors[req.name]), _signed(req, v.best_vectors[req.name])
             masses = self._state_masses(v, worst, best - worst, maximize_strategy=False)
             for s in np.nonzero(masses > 0)[0]:
-                if v.state_rules[s] is not None:
+                if v.state_rules[s] is not None or not v.decisions[s]:
                     continue
                 valuation = self.verifier.policy_valuation(v.result, s)
                 key = tuple(valuation.values())
@@ -131,6 +132,8 @@ class MassAnalyzer:
             best = _signed(req, v.best_vectors[req.name])
             masses = self._state_masses(v, best, optimum - best, maximize_strategy=True)
             for s in np.nonzero(masses > 0)[0]:
+                if not v.decisions[s]:
+                    continue
                 rule = v.state_rules[s]
                 blame = blames.setdefault(rule, RuleBlame(rule, 0.0))
                 blame.mass += masses[s]

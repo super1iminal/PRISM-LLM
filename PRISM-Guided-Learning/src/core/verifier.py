@@ -1,10 +1,10 @@
 """Verify a (partial) symbolic policy on a domain instance: best and worst case per requirement."""
 from dataclasses import dataclass, field
 from time import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from core.domain import Domain, Instance, Spec
-from core.prism import PrismResult, PrismRunner
+from core.prism import PrismResult, PrismRunner, StateKey
 from core.rules import SymbolicPolicy, Value
 
 
@@ -16,7 +16,8 @@ class Verification:
     best_vectors: Dict[str, List[float]] = field(default_factory=dict)
     worst_vectors: Dict[str, List[float]] = field(default_factory=dict)
     state_rules: List[Optional[int]] = field(default_factory=list)   # per reachable state: deciding rule or None
-    reachable_situations: int = 0          # distinct policy-variable valuations among reachable states
+    decisions: List[bool] = field(default_factory=list)   # per reachable state: can the action change anything?
+    reachable_situations: int = 0          # distinct policy-variable valuations among reachable decision states
     uncovered_situations: int = 0
     seconds: float = 0.0
 
@@ -36,6 +37,7 @@ class PolicyVerifier:
         self.model = domain.model(instance)
         self.runner = runner or PrismRunner()
         self._optimum: Optional[Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]] = None
+        self._forced: Optional[Set[StateKey]] = None
 
     def empty_policy(self) -> SymbolicPolicy:
         return SymbolicPolicy(self.spec.variables, list(self.spec.actions))
@@ -79,18 +81,37 @@ class PolicyVerifier:
             self._optimum = (values, vectors, result)
         return self._optimum
 
+    def forced_states(self) -> Set[StateKey]:
+        """States of the bare MDP where every choice has the same successor distribution, cached.
+
+        No policy can change anything there, so they are not decision points: they do not count as
+        situations and are left out of the feedback.
+        """
+        if self._forced is None:
+            result = self._optimum[2] if self._optimum else self.runner.run(self.model, [], export_transitions=True)
+            self._forced = set()
+            for state, choices in zip(result.states, result.choices):
+                if len({tuple(sorted((t, round(p, 12)) for t, p in c.successors)) for c in choices}) <= 1:
+                    self._forced.add(state)
+        return self._forced
+
     def policy_valuation(self, result: PrismResult, state_index: int) -> Dict[str, Value]:
         state = result.states[state_index]
         pos = {name: i for i, name in enumerate(result.variables)}
         return {var.name: state[pos[var.name]] for var in self.spec.variables}
 
     def _assign_rules(self, v: Verification, policy: SymbolicPolicy) -> None:
+        forced = self.forced_states()
         cache: Dict[Tuple, Optional[int]] = {}
-        for s in range(len(v.result.states)):
+        situations = set()
+        for s, state in enumerate(v.result.states):
             valuation = self.policy_valuation(v.result, s)
             key = tuple(valuation.values())
             if key not in cache:
                 cache[key] = policy.first_match(valuation)
             v.state_rules.append(cache[key])
-        v.reachable_situations = len(cache)
-        v.uncovered_situations = sum(1 for r in cache.values() if r is None)
+            v.decisions.append(state not in forced)
+            if v.decisions[-1]:
+                situations.add(key)
+        v.reachable_situations = len(situations)
+        v.uncovered_situations = sum(1 for key in situations if cache[key] is None)

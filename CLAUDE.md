@@ -4,7 +4,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 
 ## Where things live
 - `PRISM-Guided-Learning/src/core/`: the domain-agnostic approach (rules, PRISM runner, verifier, mass analysis, planner, prompt templates in `core/templates/`). **No domain-specific code here.** If a domain truly needs a core change, make it generic and log it in `DECISIONS.md`.
-- `PRISM-Guided-Learning/domains/<name>/`: one directory per case study. `domains/README.md` describes the contract; `domains/gridworld/` is the reference implementation.
+- `PRISM-Guided-Learning/domains/<name>/`: one directory per case study. `domains/README.md` describes the contract; `domains/gridworld/` is the reference implementation. `domains/uuv/` is the second case study (the pipeline-inspection AUV from arXiv:2308.14663); its bare MDP must keep reproducing the paper's numbers (`tests/test_uuv.py`), and `domains/uuv/data/calibrate.py` shows what its thresholds are calibrated against.
 - `PRISM-Guided-Learning/src/legacy/`: the old per-state gridworld planner, kept only as a baseline. Don't extend it.
 - `PRISM-Guided-Learning/viz/`: plotting (`plot_comparison.py`: legacy vs one symbolic run; `plot_runs.py`: legacy vs up to two symbolic runs, e.g. ablations).
 - `PRISM-Guided-Learning/out/results/<run>/`: run outputs (parquet + per-sample JSON in `outputs/`).
@@ -16,7 +16,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - Run scripts from `PRISM-Guided-Learning/`, e.g. `../.venv/Scripts/python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/<name>`.
 
 ## Commands
-- Tests (fast, ~12 s, need PRISM): `../.venv/Scripts/python -m pytest -q tests`
+- Tests (fast, ~40 s, need PRISM): `../.venv/Scripts/python -m pytest -q tests`
 - New approach: `src/run_symbolic.py --domain <name> --data <dataset> [--limit N] --workers 2 --out out/results/<name>`
 - Legacy baseline (gridworld only): `src/run_legacy.py`
 - Regression (legacy policies reproduced in the new pipeline): `src/regression.py --legacy-run out/results/legacy_grid20`

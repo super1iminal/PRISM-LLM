@@ -65,6 +65,27 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - The prompts differ in content by design. Legacy has two long worked examples with reasoning. Symbolic has a short rule-syntax example block. I did not port the worked examples. **[REVIEW]**
 - The legacy "final" probabilities are those of its kept-best policy (reconstructed with its own keep-best rule for runs that predate the `final_prism_probs` field).
 
+## UUV case study (`domains/uuv/`)
+- Source: Päßler et al., iFM 2023 (arXiv:2308.14663). The paper omits most probabilities, so the MDP follows its ProFeat artifact (branch `scp-ifm_artifact` of `remaro-network/auv_profeat`, Apache-2.0), not the later extended model on that repo's main branch (with sonar/camera).
+- **No core changes.** ProFeat features become state variables (`follow`, `alt`). The policy is the paper's feature controller: the actions `low`/`med`/`high` pick the next altitude in search-phase states. Forced transitions use a `[step]` label, which the policy module doesn't synchronize on.
+- Visibility limits are modelled by **clamping**: requesting a higher altitude than allowed gives the highest allowed one. So every action is enabled everywhere (no deadlocks), and each state's set of distinct choices is exactly the paper's. Check: the bare MDP reproduces all reported numbers for both scenarios (Pmin F done = 1; Table 2 energy/time min/max; Pmin G safe = 0.65 / 0.32). The paper's `time`/`energy` reward structures are kept in the model for this check. The planner doesn't use them.
+- Policy-visible: `s`, `alt`, `water_visib` (what the paper's controller monitors). Hidden: `follow`, `d_insp`, `t_failed`. `t_failed` is always 0 while searching.
+- Requirements (probabilistic only, since core has no reward requirements): `no_thruster_failure` = `G !"thruster_failure"` (the paper's `G "safe"`), and `done_in_time` = `F<=T "done"` (the paper's time reward turned into a deadline). **[REVIEW]** Energy isn't a requirement. Adding it would need reward-bounded requirements in core (`R{..}<=c`), which I didn't add without asking.
+- **[REVIEW] Thresholds are tight by design.** In this model the controller has little leverage. Over all controllers, safety ranges over [0.654, 0.674] (North Sea) and [0.321, 0.355] (Caribbean). Done-in-time ranges over [0.52, 0.82] (T=30) and [0.06, 0.87] (T=70), and the low end is the adversary switching altitude back and forth. Thresholds (North Sea 0.670 / 0.80, Caribbean 0.345 / 0.862) are set so that "hold your altitude, go highest when a search starts" passes. Always-low, always-high (and, in the Caribbean, always-med) each fail at least one requirement. The best rule policy found by local search clears both by only ~0.003 / 0.002. Reproduce with `domains/uuv/data/calibrate.py`. Looser thresholds would make any sensible complete policy pass, so the case study would then mostly test coverage.
+- PRISM's multi-objective query (`multi(Pmax [F<=T], P>=p [G ..])`) gave a value below a concrete policy's (0.795 vs 0.807), so it wasn't used for calibration.
+- `done_in_time` is step-bounded, so the per-state vectors used by the mass analysis assume the full T steps remain from every state. The ranking is a heuristic there, as for LTL.
+- States where the action has no effect (following, found, done: about 70% of UUV states) were first counted as situations, so they showed up as uncovered and in feedback. This is fixed in core (see "Forced states" below).
+
+## Forced states (core change, made for UUV)
+- `PolicyVerifier.forced_states()` finds the states of the bare MDP where every choice has the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
+- Forced states no longer count as situations: `reachable_situations`/`uncovered_situations` count only valuations with at least one reachable decision state. They're also skipped in extend hotspots **and** refine blame, because no rule can change what happens there. `Verification.decisions` marks decision states.
+- Gridworld has no forced states (checked on all 20 grids), so its coverage numbers and feedback are unchanged. UUV North Sea: a search-only policy is now complete (0 of 85 situations uncovered).
+- Cost: one extra PRISM run per verifier when the optimum isn't computed first (tests only; the planner computes the optimum first). The test suite went from ~28 s to ~38 s.
+
+## Prompt template changes (after the gridworld runs)
+- `_problem.md.j2`: the boolean example uses the domain's first boolean policy variable, and is left out when there is none. The rendered gridworld text is identical (`g1`).
+- `_results.md.j2`: "reachable situations (combinations of the state variables)" became "... where the action matters". This is the only wording change in gridworld prompts compared with the runs above.
+
 ## TODO
 - Per-domain switch to expose extra variables to rules (e.g. `obs_idx` in gridworld), which makes the worst case exact. Keep it off for legacy comparisons.
 

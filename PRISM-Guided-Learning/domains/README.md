@@ -52,3 +52,15 @@ The existing case study: sequential goals, static obstacles, one moving obstacle
 slip dynamics. It mirrors the legacy DTMC exactly (verified by `src/regression.py` and
 `tests/test_gridworld_equivalence.py`). `legacy_translate.py` converts legacy per-cell policies
 into atomic rules.
+
+## uuv
+
+Pipeline inspection by an underwater vehicle, from Päßler et al., "Formal Modelling and Analysis of
+a Self-Adaptive Robotic System" (iFM 2023, [arXiv:2308.14663](https://arxiv.org/abs/2308.14663)).
+The MDP is the paper's ProFeat model (artifact branch `scp-ifm_artifact` of
+[remaro-network/auv_profeat](https://github.com/remaro-network/auv_profeat)) rewritten in plain PRISM.
+The policy plays the paper's managing subsystem: while searching, it picks the altitude
+(`low`/`med`/`high`) within what the water visibility allows. All other transitions are forced
+(`[step]`, which the policy module does not synchronize on). The bare MDP reproduces every number the
+paper reports (`tests/test_uuv.py`). `data/uuv_paper.csv` holds the paper's two scenarios, and
+`data/calibrate.py` prints the achievable range of each requirement and some reference policies.

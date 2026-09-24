@@ -25,7 +25,8 @@ PRISM-Guided-Learning/
     run_legacy.py    legacy approach on gridworld
     regression.py    legacy policies -> symbolic rules -> identical PRISM results
     compare.py       end-to-end comparison report
-  domains/           case studies (see domains/README.md); gridworld/ holds its datasets
+  domains/           case studies (see domains/README.md), each with its datasets:
+                       gridworld/ (reference), uuv/ (pipeline-inspection AUV, Paessler et al. 2023)
   tests/
   out/results/       run outputs
 DECISIONS.md         design decisions to review
@@ -39,6 +40,10 @@ python src/run_legacy.py --data grid_20_balanced.csv --out out/results/legacy_gr
 
 ```bash
 python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/symbolic_grid20
+```
+
+```bash
+python src/run_symbolic.py --domain uuv --data uuv_paper.csv --out out/results/symbolic_uuv
 ```
 
 ```bash
