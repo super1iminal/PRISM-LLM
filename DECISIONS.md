@@ -77,3 +77,10 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - These results were produced with the catch-all nudge in the prompt. It has since been commented out in `_problem.md.j2`, so a re-run would differ.
 - Caveats: a single seed; the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case.
 - Suggested ablations: the same examples in both prompts; symbolic loop restricted to atomic rules; multiple seeds.
+
+## Catch-all ablation (qwen3:14b, grid_20_balanced, same settings)
+- Three symbolic runs: catch-all instruction and example (`symbolic_grid20_capped`); instruction removed, example kept (`symbolic_grid20_nocatchall`); both removed (`symbolic_grid20_noexample`, the current prompt).
+- The instruction alone barely mattered: rounds ending in a catch-all went from 77% to 72%, because qwen copied the example rule. Removing the example too halved it (37%; 10 of 20 final policies vs 18).
+- With no catch-all at all: uncovered situations 26% of reachable (vs 9%), requirements met in worst case 4.50 (vs 5.25), shortfall 2.62 (vs 2.11). Best case 5.25, so the best-to-worst gap grew to 0.75 requirements. Still ahead of legacy (4.30, 3.16). Extend ran 11 times but improved only 2; refine success fell to 23%.
+- Reading: with this model, partial policies are a liability under the conservative worst case, and extend feedback doesn't yet fill coverage well. The TODO to expose `obs_idx` to rules would shrink the worst-case penalty for partial policies. Worth revisiting with a stronger model.
+- Figures: `viz/figures/catchall_ablation.png` (instruction only) and `viz/figures/catchall_ablation_full.png` (instruction and example).
