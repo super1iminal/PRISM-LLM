@@ -77,7 +77,7 @@ class SymbolicPlanner:
             status = "ok" if worst_ok else ("fails in worst case" if best_ok else "FAILS even in best case")
             rows.append({"name": r.name, "best": v.best[r.name], "worst": v.worst[r.name],
                          "bound": ">=" if r.maximize else "<=", "threshold": r.threshold, "status": status})
-        return {"rules_listing": policy.listing(), "results": rows,
+        return {"rules_listing": policy.listing(), "num_rules": len(policy.rules), "results": rows,
                 "reachable": v.reachable_situations, "uncovered": v.uncovered_situations}
 
     def _ask(self, prompt: str, schema, spec, log) -> Tuple[Optional[SymbolicPolicy], List[str]]:
