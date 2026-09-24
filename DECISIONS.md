@@ -81,6 +81,16 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - North Sea: success in 2 attempts (0.6723 / 0.8064). Caribbean: fails. The final policy behaves like always-high (0.348 / 0.860 vs 0.862 needed).
 - There is no legacy baseline for UUV (legacy is gridworld-only). The non-LLM reference to beat is `stay`, the only reference policy that passes both scenarios.
 
+## UUV optimization (branch `optimization`, left open, not merged)
+- Target: match the best non-LLM reference (`stay`, which passes both scenarios). **Not reached.** North Sea passes reliably; Caribbean failed in all 12 runs. Figure: `viz/figures/uuv_optimization.png`; runs under `out/results/opt/e*/r*` (1–2 repeats each, so differences between neighbouring experiments are mostly noise).
+- E1 `keep` action (request the current altitude; no new choice, paper numbers unchanged). qwen didn't use it.
+- E2 dropped the visibility-band table from the visual; the example no longer bands on visibility. Revealed a domain bug: the description gave the thresholds as decimals (5.67), which qwen copied into conditions, and the integer rule language rejected them.
+- E3 integer thresholds (bug fix) plus an "average steps to find" line. E4 added the switching arithmetic and requirement drivers; it made things worse (0/4) and was reverted. More explanation overloads qwen.
+- E5 (**src**, generic): refine/extend feedback lists the worst case of every previous attempt and says when the last answer verified identically to an earlier one. It didn't help here. **[REVIEW]** It is **not validated on gridworld** (the user stopped the optimization first), so run gridworld smoke tests before keeping it.
+- E6 hides `water_visib` from the policy (limits are enforced by clamping, like the hidden `obs_idx` in gridworld). This was the most useful change. qwen stopped writing per-band rules (the root failure: they act like always-high), and now writes "hold the altitude of the current search state" over only 4–11 situations. It still picks low or med at the free start (`s = 11`), and Caribbean needs high there.
+- E7 added altitude facts to the action descriptions. North Sea passed; Caribbean didn't.
+- Reading: the Caribbean margin is 0.002, and qwen's default instinct (altitude from visibility) sits exactly at always-high, 0.002 short. Blame points at the right rules (start and search_med), but without a direction qwen doesn't try higher start altitudes.
+
 ## Forced states (core change, made for UUV)
 - `PolicyVerifier.forced_states()` finds the states of the bare MDP where every choice has the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
 - Forced states no longer count as situations: `reachable_situations`/`uncovered_situations` count only valuations with at least one reachable decision state. They're also skipped in extend hotspots **and** refine blame, because no rule can change what happens there. `Verification.decisions` marks decision states.

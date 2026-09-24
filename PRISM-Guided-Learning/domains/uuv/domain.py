@@ -28,6 +28,10 @@ ALTITUDES = [
      "p_found": 0.59, "p_stay": 0.4, "p_fail": 0.01},
 ]
 
+# Policy action -> requested altitude (clamped to what the visibility allows). `keep` requests the
+# current altitude; it adds no new choice, only a name for "don't switch".
+ACTIONS = [{"name": "keep", "target": "alt"}] + [{"name": a["name"], "target": str(a["code"])} for a in ALTITUDES]
+
 # State numbering as in the paper's artifact
 STATES = {
     "start_search": 0, "search_high": 1, "search_med": 2, "search_low": 3, "found": 4,
@@ -66,6 +70,7 @@ class UUV(Domain):
         d.update({
             "infl_tf": INFL_TF,
             "altitudes": ALTITUDES,
+            "actions": ACTIONS,
             "states": STATES,
             "follow": FOLLOW,
             "med_visib": med_visib,

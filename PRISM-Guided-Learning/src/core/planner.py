@@ -53,6 +53,22 @@ def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
             sum(r.shortfall(v.best[r.name]) for r in reqs))
 
 
+def _history_context(iterations: List[Dict[str, Any]], reqs: List[Requirement]) -> Dict[str, Any]:
+    """Worst case of every attempt so far, and the earlier attempt the latest one repeats (if any).
+
+    Two attempts repeat each other when the checker gives identical best and worst values.
+    """
+    def key(it):
+        return tuple(round(it[case][r.name], 9) for case in ("best", "worst") for r in reqs)
+
+    history = [{"attempt": it["iteration"], "mode": it["mode"],
+                "worst": [f"{it['worst'][r.name]:.4f}" for r in reqs]} for it in iterations]
+    last = iterations[-1]
+    repeated = next((it["iteration"] for it in iterations[:-1] if key(it) == key(last)), None)
+    return {"history": history, "requirement_names": [r.name for r in reqs],
+            "last_attempt": last["iteration"], "repeated": repeated}
+
+
 class SymbolicPlanner:
     def __init__(self, domain: Domain, llm: OllamaLLM, config: Optional[PlannerConfig] = None,
                  runner: Optional[PrismRunner] = None):
@@ -174,6 +190,7 @@ class SymbolicPlanner:
             if attempt < self.config.max_attempts:
                 stall = 0 if improved else stall + 1
                 results_ctx = self._results_context(best_policy, best_v, reqs)
+                results_ctx.update(_history_context(iterations, reqs))
                 if stall >= self.config.stall_limit:
                     mode, stall = "initial", 0
                     prompt = self.domain.render("initial.md.j2", instance, **base_ctx)
