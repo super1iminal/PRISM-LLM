@@ -76,6 +76,11 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - `done_in_time` is step-bounded, so the per-state vectors used by the mass analysis assume the full T steps remain from every state. The ranking is a heuristic there, as for LTL.
 - States where the action has no effect (following, found, done: about 70% of UUV states) were first counted as situations, so they showed up as uncovered and in feedback. This is fixed in core (see "Forced states" below).
 
+## UUV results (qwen3:14b, uuv_paper, 5 attempts, thinking off)
+- `out/results/symbolic_uuv`, figure `viz/figures/uuv.png` (`viz/plot_domain.py`, which works for any domain and plots final policies against the domain's `reference_policies.json` and the range any controller achieves).
+- North Sea: success in 2 attempts (0.6723 / 0.8064). Caribbean: fails. The final policy behaves like always-high (0.348 / 0.860 vs 0.862 needed).
+- There is no legacy baseline for UUV (legacy is gridworld-only). The non-LLM reference to beat is `stay`, the only reference policy that passes both scenarios.
+
 ## Forced states (core change, made for UUV)
 - `PolicyVerifier.forced_states()` finds the states of the bare MDP where every choice has the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
 - Forced states no longer count as situations: `reachable_situations`/`uncovered_situations` count only valuations with at least one reachable decision state. They're also skipped in extend hotspots **and** refine blame, because no rule can change what happens there. `Verification.decisions` marks decision states.

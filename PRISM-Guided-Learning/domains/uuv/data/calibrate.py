@@ -1,9 +1,11 @@
 """Print what the requirement thresholds in a UUV dataset are calibrated against.
 
 For each scenario: the best and worst value of each requirement over all controllers (bare MDP),
-and the worst-case values of simple reference policies. Run from PRISM-Guided-Learning/:
+and the worst-case values of the reference policies in reference_policies.json. Run from
+PRISM-Guided-Learning/:
     python domains/uuv/data/calibrate.py [uuv_paper.csv]
 """
+import json
 import sys
 from pathlib import Path
 
@@ -14,12 +16,7 @@ from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
 
-REFERENCE = {
-    "always_low": [("true", "low")],
-    "always_med": [("true", "med")],
-    "always_high": [("true", "high")],
-    "stay": [("s = 11 | s = 0", "high"), ("alt = 2", "high"), ("alt = 1", "med"), ("true", "low")],
-}
+REFERENCE = json.loads((Path(__file__).parent / "reference_policies.json").read_text(encoding="utf-8"))
 
 
 def main(dataset: str = "uuv_paper.csv") -> None:

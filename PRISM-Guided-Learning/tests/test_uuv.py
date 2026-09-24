@@ -1,5 +1,7 @@
 """The UUV domain reproduces the paper's results and its thresholds separate the reference policies."""
+import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +9,8 @@ from core.domain import load_domain
 from core.prism import PrismRunner
 from core.rules import SymbolicPolicy
 from core.verifier import PolicyVerifier
+
+ROOT = Path(__file__).resolve().parent.parent
 
 pytestmark = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
 
@@ -19,7 +23,7 @@ PAPER_PROPS = ['Pmin=? [ F "done" ]', 'R{"energy"}min=? [ F "done" ]', 'R{"energ
                'R{"time"}min=? [ F "done" ]', 'R{"time"}max=? [ F "done" ]', 'Pmin=? [ G !"thruster_failure" ]']
 
 # Keep the current altitude while searching; pick the highest allowed one when a search starts
-STAY = [("s = 11 | s = 0", "high"), ("alt = 2", "high"), ("alt = 1", "med"), ("true", "low")]
+STAY = json.loads((ROOT / "domains/uuv/data/reference_policies.json").read_text(encoding="utf-8"))["stay"]
 
 
 @pytest.fixture(scope="module")
