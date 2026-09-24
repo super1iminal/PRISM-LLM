@@ -81,3 +81,8 @@ class UUV(Domain):
             "p_visib_up": (1 - d["current_prob"]) / 2,
         })
         return d
+
+    def format_state(self, valuation: Dict[str, Any]) -> str:
+        """Rule syntax, with the names of mission states and altitudes added."""
+        names = {"s": {code: st for st, code in STATES.items()}, "alt": {a["code"]: a["name"] for a in ALTITUDES}}
+        return " & ".join(f"{k}={v}" + (f" ({names[k][v]})" if k in names else "") for k, v in valuation.items())
