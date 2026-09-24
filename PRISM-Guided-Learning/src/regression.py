@@ -65,7 +65,6 @@ def main():
     domain = load_domain("gridworld")
     instances = domain.load_instances(args.data)
     default_runner = PrismRunner()
-    tight_runner = PrismRunner(extra_args=["-intervaliter", "-epsilon", args.epsilon])
 
     jobs = []
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
@@ -88,9 +87,20 @@ def main():
         verifier = PolicyVerifier(domain, instance, default_runner)
         policy = SymbolicPolicy.from_raw(verifier.spec.variables, list(verifier.spec.actions), rules)
         v = verifier.verify(policy, analysis=False)
-        v_tight = PolicyVerifier(domain, instance, tight_runner).verify(policy, analysis=False)
         names = [r.name for r in verifier.spec.requirements]
-        exact_legacy = dict(zip(names, legacy_dtmc_values(instance, legacy_policy, tight_runner)))
+        # Interval iteration can fail to converge (policies with non-progressing loops); then fall
+        # back to Gauss-Seidel at a very tight epsilon
+        solvers = [("interval iteration", ["-intervaliter", "-epsilon", args.epsilon]),
+                   ("Gauss-Seidel 1e-12", ["-gaussseidel", "-epsilon", "1e-12"])]
+        for solver, solver_args in solvers:
+            runner = PrismRunner(extra_args=solver_args)
+            try:
+                v_tight = PolicyVerifier(domain, instance, runner).verify(policy, analysis=False)
+                exact_legacy = dict(zip(names, legacy_dtmc_values(instance, legacy_policy, runner)))
+                break
+            except PrismError:
+                if solver_args is solvers[-1][1]:
+                    raise
         rows = []
         for name in names:
             rows.append({
@@ -102,6 +112,7 @@ def main():
                 "diff_exact": max(abs(v_tight.best[name] - exact_legacy[name]),
                                   abs(v_tight.worst[name] - exact_legacy[name])),
                 "best_minus_worst_exact": abs(v_tight.best[name] - v_tight.worst[name]),
+                "exact_solver": solver,
             })
         return rows
 
@@ -128,10 +139,14 @@ def main():
         f"- Uncovered situations in translated policies (max): {uncovered}",
         f"- **Stored check** (best case at default PRISM settings vs the legacy run's reported values): "
         f"max diff {df.diff_stored.max():.2e}, {len(stored_fail)} above {args.tol_stored}",
-        f"- **Exact check** (legacy DTMC vs new MDP best and worst, interval iteration, epsilon {args.epsilon}): "
+        f"- **Exact check** (legacy DTMC vs new MDP best and worst; interval iteration, epsilon {args.epsilon}): "
         f"max diff {df.diff_exact.max():.2e}, {len(exact_fail)} above {args.tol_exact}",
-        f"- Max |best - worst| at epsilon {args.epsilon}: {df.best_minus_worst_exact.max():.2e}",
-        f"- Policies PRISM could not solve at this epsilon (skipped): {len(errors)}"
+        f"- Max |best - worst| (interval iteration): {df.best_minus_worst_exact.max():.2e}",
+        "- Policies solved with the Gauss-Seidel fallback (interval iteration did not converge): "
+        + (", ".join(f"sample {r.sample_id} iteration {r.iteration}"
+                     for r in df[df.exact_solver != "interval iteration"].drop_duplicates(["sample_id", "iteration"]).itertuples())
+           or "none"),
+        f"- Policies PRISM could not solve (skipped): {len(errors)}"
         + "".join(f"\n  - sample {r.sample_id} iteration {r.iteration}: {r.error}" for r in errors.itertuples()),
         "",
         f"**{'PASS' if passed else 'FAIL'}**",

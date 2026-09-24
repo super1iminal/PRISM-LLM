@@ -54,12 +54,14 @@ def paired_bars(ax, labels, legacy, symbolic, fmt, symbolic_best=None):
         ax.scatter(x + BAR_W / 2 + 0.01, symbolic_best, marker="_", s=300, color=INK, linewidths=2, zorder=3,
                    label="Symbolic, best case")
     ax.set_xticks(x, labels)
-    for group in bars:
-        for bar in group:
+    tops = [None, None if symbolic_best is None else np.asarray(symbolic_best, dtype=float)]
+    for group, top in zip(bars, tops):
+        for i, bar in enumerate(group):
             h = bar.get_height()
             if np.isfinite(h):
-                ax.annotate(fmt.format(h), (bar.get_x() + bar.get_width() / 2, h), ha="center", va="bottom",
-                            xytext=(0, 2), textcoords="offset points", fontsize=7.5, color=INK_2)
+                y = max(h, top[i]) if top is not None and np.isfinite(top[i]) else h  # clear the best-case tick
+                ax.annotate(fmt.format(h), (bar.get_x() + bar.get_width() / 2, y), ha="center", va="bottom",
+                            xytext=(0, 3), textcoords="offset points", fontsize=7.5, color=INK_2)
 
 
 def main():
@@ -84,44 +86,63 @@ def main():
     legacy, symbolic = add_summary_metrics(legacy.loc[common]), add_summary_metrics(symbolic.loc[common])
     reqs = requirement_names(legacy)
 
-    labels = [f"#{s}\n{int(legacy.loc[s, 'size'])}x{int(legacy.loc[s, 'size'])}"
-              + ("" if symbolic.loc[s, "complete"] else f"\n(partial: {int(symbolic.loc[s, 'attempts'])}/5)")
-              for s in common]
     has_tokens = symbolic.output_tokens.notna().all() and legacy.output_tokens.notna().all()
+    if len(common) > 8:
+        # Many grids: one group per grid size, showing the mean over that size's grids
+        counts = legacy.groupby("size").size()
+        labels = [f"{s}x{s}\n(n={counts[s]})" for s in counts.index]
+        leg_g, sym_g = legacy.groupby("size"), symbolic.groupby("size")
+        unit, fmt_met = "mean per grid", "{:.1f}"
 
-    panels = 5 if has_tokens else 4
-    fig, axes = plt.subplots(3 if has_tokens else 2, 2, figsize=(13, 12.5 if has_tokens else 8.8), facecolor=SURFACE)
-    axes = axes.ravel()
+        def agg(g, col):
+            return g[col].mean()
+    else:
+        labels = [f"#{s}\n{int(legacy.loc[s, 'size'])}x{int(legacy.loc[s, 'size'])}"
+                  + ("" if symbolic.loc[s, "complete"] else f"\n(partial: {int(symbolic.loc[s, 'attempts'])}/5)")
+                  for s in common]
+        leg_g, sym_g = legacy, symbolic
+        unit, fmt_met = "per grid", "{:.0f}"
 
-    paired_bars(axes[0], labels, legacy.met, symbolic.met, "{:.0f}", symbolic.met_best)
-    style(axes[0], f"Requirements met (of {len(reqs)})", "requirements")
+        def agg(g, col):
+            return g[col]
+
+    fig = plt.figure(figsize=(13, 13 if has_tokens else 9), facecolor=SURFACE)
+    grid = fig.add_gridspec(3 if has_tokens else 2, 2)
+    axes = [fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1]), fig.add_subplot(grid[1, 0])]
+    if has_tokens:
+        axes.append(fig.add_subplot(grid[1, 1]))
+        req_axis = fig.add_subplot(grid[2, :])
+    else:
+        req_axis = fig.add_subplot(grid[1, 1])
+
+    paired_bars(axes[0], labels, agg(leg_g, "met"), agg(sym_g, "met"), fmt_met, agg(sym_g, "met_best"))
+    style(axes[0], f"Requirements met (of {len(reqs)}), {unit}", "requirements")
     axes[0].set_ylim(0, len(reqs) + 0.6)
 
-    paired_bars(axes[1], labels, legacy.shortfall, symbolic.shortfall, "{:.2f}")
-    style(axes[1], "Total shortfall below thresholds (lower is better)", "probability")
+    paired_bars(axes[1], labels, agg(leg_g, "shortfall"), agg(sym_g, "shortfall"), "{:.2f}")
+    style(axes[1], f"Shortfall below thresholds, {unit} (lower is better)", "probability")
 
-    paired_bars(axes[2], labels, legacy.time_s / 60, symbolic.time_s / 60, "{:.1f}")
-    style(axes[2], "Wall time per grid (5 attempts)", "minutes")
+    paired_bars(axes[2], labels, agg(leg_g, "time_s") / 60, agg(sym_g, "time_s") / 60, "{:.1f}")
+    style(axes[2], f"Wall time (5 attempts), {unit}", "minutes")
 
-    req_axis = axes[4] if has_tokens else axes[3]
     if has_tokens:
-        paired_bars(axes[3], labels, legacy.output_tokens / 1000, symbolic.output_tokens / 1000, "{:.1f}k")
-        style(axes[3], "LLM output tokens per grid", "thousand tokens")
+        paired_bars(axes[3], labels, agg(leg_g, "output_tokens") / 1000, agg(sym_g, "output_tokens") / 1000, "{:.1f}k")
+        style(axes[3], f"LLM output tokens, {unit}", "thousand tokens")
     paired_bars(req_axis, [r.replace("_", " ").replace("avoid moving ", "avoid ") for r in reqs],
                 [legacy[f"p_{r}"].mean() for r in reqs], [symbolic[f"p_{r}"].mean() for r in reqs], "{:.2f}",
                 [symbolic[f"p_best_{r}"].mean() for r in reqs])
     style(req_axis, f"Final probability per requirement (mean over {len(common)} grids)", "probability")
     req_axis.set_ylim(0, 1.12)
-    plt.setp(req_axis.get_xticklabels(), rotation=35, ha="right")
-    for ax in axes[panels:]:
-        ax.set_visible(False)
+    if not has_tokens:
+        plt.setp(req_axis.get_xticklabels(), rotation=35, ha="right")
 
     handles, names = axes[0].get_legend_handles_labels()
     order = sorted(range(len(names)), key=lambda i: "best" in names[i])  # bars first, best-case tick last
     handles, names = [handles[i] for i in order], [names[i] for i in order]
     fig.legend(handles, names, loc="upper center", ncol=3, frameon=False, fontsize=10, labelcolor=INK,
                bbox_to_anchor=(0.5, 0.955))
-    title = args.title or f"Legacy vs symbolic policies: qwen3:14b, {len(common)} gridworlds"
+    title = args.title or (f"Legacy vs symbolic policies: qwen3:14b, {len(common)} gridworlds"
+                           + (", grouped by grid size" if len(common) > 8 else ""))
     fig.suptitle(title, x=0.012, ha="left", y=0.99, fontsize=13, color=INK, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.925), h_pad=3, w_pad=2.5)
 

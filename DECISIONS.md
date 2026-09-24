@@ -59,6 +59,7 @@ Decisions made while generalizing, to review together. Each entry has the decisi
   2. *exact*: legacy DTMC recomputed vs new MDP best **and** worst, all with **interval iteration** (sound error bounds, epsilon 1e-9, tolerance 1e-7). This is the real model-equivalence test.
 - Why interval iteration: at default settings (and even at epsilon 1e-10 with plain value iteration), PRISM's worst case (Pmin) for the nested-until sequence properties stops early, by up to 4e-3 at default settings and 5e-6 at 1e-10. At 1e-10 one legacy policy didn't converge at all. With interval iteration, best and worst agree to 1e-10.
 - Side finding: the legacy run's own reported sequence-property values carry up to ~1e-3 solver error at default settings. That's negligible for the paper's conclusions, but worth knowing.
+- Solver fallback: for one of the 100 legacy policies (grid 9, attempt 4), interval iteration does not converge at any epsilon (non-progressing loops). That policy falls back to Gauss-Seidel at epsilon 1e-12, where legacy and new agree to 2e-11. PRISM's `-exact` engine can't be used because it doesn't support LTL formulas.
 - Every iteration's policy of every sample is checked, not just the final one (the legacy planner now records the full policy at every iteration).
 
 ## Comparison
@@ -71,3 +72,11 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - For this comparison: keep **(a)**, the sound but conservative worst case (the adversary sees `obs_idx`; the rules don't). The strictness only affects partial policies, since with full coverage best == worst.
 - The exact observation-based fix isn't practical. PRISM's POMDP engine took ~1 minute on a 4x4 grid, rejects the moving-obstacle requirements ("target for reachability is not observable"), and optimizes over history-dependent strategies, not memoryless rules.
 - **TODO (b)**: add a per-domain switch to expose extra variables to rules (e.g. `obs_idx` in gridworld). The worst case is then exact, because the adversary sees nothing the policy can't. This changes the information available to the policy, so keep it off for legacy comparisons.
+
+## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
+- `out/results/comparison_grid20/report.md`, `viz/figures/grid20.png`. Symbolic numbers come from the **capped** run (`symbolic_grid20_capped`).
+- Success 0/20 legacy vs 1/20 symbolic (worst case). Mean requirements met 4.30 vs 5.25. Shortfall 3.16 vs 2.11. Output tokens 12.2k vs 5.0k. Wall time 415 s vs 170 s. LLM calls 15 vs 5.
+- Symbolic output tokens stay flat with grid size (~4–6k); legacy's grow from 5.4k (4x4) to 20.3k (8x8).
+- The two are roughly tied on 4x4 grids.
+- Caveats: a single seed; the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case.
+- Suggested ablations: the same examples in both prompts; symbolic loop restricted to atomic rules; multiple seeds.
