@@ -74,6 +74,6 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - Symbolic output tokens stay flat with grid size (~4–6k); legacy's grow from 5.4k (4x4) to 20.3k (8x8).
 - The two are roughly tied on 4x4 grids.
 - Loop usage: refine 63 attempts (35% improved the best so far), blind retry 10 (60%), extend 4 (100%). qwen nearly always wrote a catch-all rule, so policies were almost complete and extend rarely ran.
-- These results were produced with `stall_limit=2` and the catch-all nudge in the prompt. Both have since changed (`stall_limit=1`, nudge commented out in `_problem.md.j2`), so a re-run would differ.
+- These results were produced with the catch-all nudge in the prompt. It has since been commented out in `_problem.md.j2`, so a re-run would differ.
 - Caveats: a single seed; the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case.
 - Suggested ablations: the same examples in both prompts; symbolic loop restricted to atomic rules; multiple seeds.

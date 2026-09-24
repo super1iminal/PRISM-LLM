@@ -28,7 +28,7 @@ from core.verifier import PolicyVerifier, Verification
 class PlannerConfig:
     max_attempts: int = 5       # LLM generation rounds (1 initial + feedback rounds)
     max_fixups: int = 2         # extra calls per round when the answer has invalid rules
-    stall_limit: int = 1        # rounds without improvement before a fresh retry
+    stall_limit: int = 2        # rounds without improvement before a fresh retry
     horizon: int = 100          # steps for the occupancy in the mass analysis
     top_k: int = 10             # hotspots / rules shown in feedback
 
