@@ -11,7 +11,6 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 ## Cleanup
 - Branch `symbolic-policies` was created from `generalize` (52c899b).
 - Removed: Vanilla, VanillaPlus, Feedback and FeedbackMinus planners, RL (`RLCounterfactual`, `GridWorldStepper`), `UniformPlanner`, `Repairer.py`, `PlotRQs.py`, `PlotResults.py`, `moving-obstacle-plan.md` and `prism_portable.yml` (replaced by `requirements.txt`). All of it is still on `main`.
-- **Kept** `out/results/100-balanced-paper-results/` (the paper's numbers and plots). It's data, not code, and handy for reference. **[REVIEW]** Delete it if you want the branch fully barebones.
 - The surviving "current approach" (FeedbackSimplified) now lives in `src/legacy/`. It's entirely gridworld-specific, and it's kept only as the baseline for the regression and comparison runs. It isn't part of the new approach.
 - The legacy planner has **not changed behaviour**. I only added instrumentation: every verified per-iteration policy, raw LLM outputs and token counts are stored for the regression step. `-exportstates` to a fixed shared path was removed from the legacy PRISM call. It was a side effect only, and it wasn't safe to run in parallel.
 - The LLM is a small `core/llm.py` wrapper around the `ollama` Python client with JSON-schema structured output, which replaces LangChain. Settings: `num_ctx=16384`, `num_predict=8192`, `think=False`, and the model's default temperature and sampling.
@@ -24,14 +23,13 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - **MDP fully user-specified in PRISM** (`model.prism.j2`). Policy actions are the *action labels* of the commands. The planner never generates dynamics, only a `policy` module that synchronizes on those labels.
 - **Requirements** are user-specified as PRISM path formulas with a bound (`>=`/`<=`) and a threshold, plus English text for the prompt. Best and worst case are `Pmax`/`Pmin` (swapped for `<=`).
 - **English description** (`description.md.j2`) and **visual** (`visual.txt.j2`) are separate user templates injected into generic core prompts. A domain can override any core prompt template by dropping a file with the same name in its directory.
-- **Policy-visible variables** are declared in the spec (ranges read from the model). For gridworld these are `x, y, g1..gN`. The obstacle phase `obs_idx` is hidden, matching the legacy per-cell policies. Consequence **[REVIEW]**: the worst-case adversary *can* see `obs_idx` (it resolves uncovered states per full MDP state), so worst case is conservative relative to observation-based completions. That's sound, just pessimistic.
-- The gridworld MDP was rewritten as a symbolic PRISM template (formulas for move/slip/bounce) rather than enumerating cells. `tests/test_gridworld_equivalence.py` and `src/regression.py` confirm it is equivalent to the legacy DTMC to within 1e-8.
+- **Policy-visible variables** are declared in the spec (ranges read from the model). For gridworld these are `x, y, g1..gN`. The obstacle phase `obs_idx` is hidden, matching the legacy per-cell policies.
+- The gridworld MDP was rewritten as a symbolic PRISM template (formulas for move/slip/bounce) rather than enumerating cells. `tests/test_gridworld_equivalence.py` and `src/regression.py` confirm it is equivalent to the legacy DTMC (5e-10 across 100 policies under interval iteration).
 
 ## Generalization: symbolic policies
 - Output: `{"rules": [{"condition", "action"}]}` via JSON-schema structured output. The action is an enum of the domain's labels.
 - Condition language: a small PRISM-compatible expression subset (`= != < <= > >= + - & | ! =>`, parentheses, `true/false`), parsed and type-checked in Python. It is lenient about common LLM spellings (`==`, `&&`, `and`, `True`, a trailing `-> action`). I added the trailing-action case after qwen put `-> right` inside conditions during the smoke tests.
 - Invalid answers are re-asked with the error message, up to 2 extra calls per attempt. If still invalid, the attempt counts as an empty policy.
-- **Output schema caps**: at most 64 rules, conditions at most 200 characters (JSON-schema `maxItems`/`maxLength`, enforced by Ollama's constrained decoding). Added after the first full run: qwen sometimes fell into repetition loops (`g3 & g1 & g2 & g3 ...`, or ~300 near-duplicate rules), each running to the 8192-token limit (~2.5 min) and then re-asked twice, which also slowed the other worker. That run was aborted at 5/20 and restarted with the caps; the partial output is kept in `out/results/symbolic_grid20_aborted_uncapped/`. **[REVIEW]** the cap values.
 - **First-match compilation**: rule *i*'s effective guard is `c_i & !c_j` for only those earlier rules *j* that can overlap it. Overlaps are found by enumerating the policy-visible space when it is ≤ 200k valuations, and otherwise every earlier rule is negated. This keeps 500-atom legacy policies compact.
 - Old per-state policies are expressible as one atomic rule per state (`core.rules.atomic_rules`, `domains/gridworld/legacy_translate.py`).
 - The rule listing shown back to the LLM uses the same JSON-per-line shape as its output. The example rules also moved to JSON form (qwen copied the `cond -> action` notation into the condition field).
@@ -40,7 +38,6 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - Success means **every requirement holds in the worst case**. The best-case pass rate is reported separately.
 - The switch follows the slides. If best case fails anything → **refine** (the LLM returns a complete new rule list). If only worst case fails → **extend** (the LLM returns *only new rules*, **appended** after existing ones). Appending means existing decisions are unchanged, so worst case can only go up. Best case can go down, which then triggers refine.
 - **Keep-best** like legacy: score = (#worst-case failures, #best-case failures, total worst shortfall, total best shortfall). Feedback is always built from the best policy so far.
-- **Blind retry**: after `stall_limit=2` consecutive non-improving attempts, the next attempt uses the fresh initial prompt. This follows the "retry is good / try@k" slide. **[REVIEW]** In the smoke test qwen returned an identical answer to an identical refine prompt, so `stall_limit=1` may be better.
 - `max_attempts=5` generation rounds, the same number as legacy. Legacy makes one call per goal per round (3 per round). Symbolic makes one per round, plus re-asks for invalid answers.
 - Per instance, one extra PRISM run computes the unconstrained optimum of each requirement on the bare MDP. It is used for refine-mode blame and reported as an upper bound on what is achievable.
 
@@ -68,15 +65,15 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - The prompts differ in content by design. Legacy has two long worked examples with reasoning. Symbolic has a short rule-syntax example block. I did not port the worked examples. **[REVIEW]**
 - The legacy "final" probabilities are those of its kept-best policy (reconstructed with its own keep-best rule for runs that predate the `final_prism_probs` field).
 
-## Worst-case strictness (decided)
-- For this comparison: keep **(a)**, the sound but conservative worst case (the adversary sees `obs_idx`; the rules don't). The strictness only affects partial policies, since with full coverage best == worst.
-- The exact observation-based fix isn't practical. PRISM's POMDP engine took ~1 minute on a 4x4 grid, rejects the moving-obstacle requirements ("target for reachability is not observable"), and optimizes over history-dependent strategies, not memoryless rules.
-- **TODO (b)**: add a per-domain switch to expose extra variables to rules (e.g. `obs_idx` in gridworld). The worst case is then exact, because the adversary sees nothing the policy can't. This changes the information available to the policy, so keep it off for legacy comparisons.
+## TODO
+- Per-domain switch to expose extra variables to rules (e.g. `obs_idx` in gridworld), which makes the worst case exact. Keep it off for legacy comparisons.
 
 ## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
 - `out/results/comparison_grid20/report.md`, `viz/figures/grid20.png`. Symbolic numbers come from the **capped** run (`symbolic_grid20_capped`).
 - Success 0/20 legacy vs 1/20 symbolic (worst case). Mean requirements met 4.30 vs 5.25. Shortfall 3.16 vs 2.11. Output tokens 12.2k vs 5.0k. Wall time 415 s vs 170 s. LLM calls 15 vs 5.
 - Symbolic output tokens stay flat with grid size (~4–6k); legacy's grow from 5.4k (4x4) to 20.3k (8x8).
 - The two are roughly tied on 4x4 grids.
+- Loop usage: refine 63 attempts (35% improved the best so far), blind retry 10 (60%), extend 4 (100%). qwen nearly always wrote a catch-all rule, so policies were almost complete and extend rarely ran.
+- These results were produced with `stall_limit=2` and the catch-all nudge in the prompt. Both have since changed (`stall_limit=1`, nudge commented out in `_problem.md.j2`), so a re-run would differ.
 - Caveats: a single seed; the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case.
 - Suggested ablations: the same examples in both prompts; symbolic loop restricted to atomic rules; multiple seeds.
