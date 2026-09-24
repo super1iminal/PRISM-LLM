@@ -80,6 +80,12 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - `out/results/symbolic_uuv`, figure `viz/figures/uuv.png` (`viz/plot_domain.py`, which works for any domain and plots final policies against the domain's `reference_policies.json` and the range any controller achieves).
 - North Sea: success in 2 attempts (0.6723 / 0.8064). Caribbean: fails. The final policy behaves like always-high (0.348 / 0.860 vs 0.862 needed).
 - There is no legacy baseline for UUV (legacy is gridworld-only). The non-LLM reference to beat is `stay`, the only reference policy that passes both scenarios.
+- Comparison with the paper (`viz/plot_uuv_summary.py` → `viz/figures/uuv_summary.png` and `.md`):
+  - The paper doesn't synthesize a controller. Its managing subsystem is nondeterministic, and its best case per requirement is PRISM's separate maximum. No single controller reaches both best cases (always-high maximizes safety but misses the North Sea deadline).
+  - Ours is within 0.002 (safety) and 0.012 (deadline) of those separate maxima.
+  - On the paper's Table 2 measures, our North Sea policy needs 26.04 energy and 23.93 time to finish, against the paper's best possible 24.78 and 23.66.
+  - Size: 25 rules vs ≥1,620 (North Sea) and ≥8,850 (Caribbean) states that an optimal PRISM strategy must decide (reachable states with more than one distinct choice). For the step-bounded deadline, the optimal strategy also depends on the step count.
+  - Transfer: the North Sea rules reused unchanged on the Caribbean keep safety (0.347) but not the deadline (0.824).
 
 ## Forced states (core change, made for UUV)
 - `PolicyVerifier.forced_states()` finds the states of the bare MDP where every choice has the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
