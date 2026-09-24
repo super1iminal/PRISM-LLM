@@ -31,6 +31,7 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - Output: `{"rules": [{"condition", "action"}]}` via JSON-schema structured output. The action is an enum of the domain's labels.
 - Condition language: a small PRISM-compatible expression subset (`= != < <= > >= + - & | ! =>`, parentheses, `true/false`), parsed and type-checked in Python. It is lenient about common LLM spellings (`==`, `&&`, `and`, `True`, a trailing `-> action`). I added the trailing-action case after qwen put `-> right` inside conditions during the smoke tests.
 - Invalid answers are re-asked with the error message, up to 2 extra calls per attempt. If still invalid, the attempt counts as an empty policy.
+- **Output schema caps**: at most 64 rules, conditions at most 200 characters (JSON-schema `maxItems`/`maxLength`, enforced by Ollama's constrained decoding). Added after the first full run: qwen sometimes fell into repetition loops (`g3 & g1 & g2 & g3 ...`, or ~300 near-duplicate rules), each running to the 8192-token limit (~2.5 min) and then re-asked twice, which also slowed the other worker. That run was aborted at 5/20 and restarted with the caps; the partial output is kept in `out/results/symbolic_grid20_aborted_uncapped/`. **[REVIEW]** the cap values.
 - **First-match compilation**: rule *i*'s effective guard is `c_i & !c_j` for only those earlier rules *j* that can overlap it. Overlaps are found by enumerating the policy-visible space when it is ≤ 200k valuations, and otherwise every earlier rule is negated. This keeps 500-atom legacy policies compact.
 - Old per-state policies are expressible as one atomic rule per state (`core.rules.atomic_rules`, `domains/gridworld/legacy_translate.py`).
 - The rule listing shown back to the LLM uses the same JSON-per-line shape as its output. The example rules also moved to JSON form (qwen copied the `cond -> action` notation into the condition field).
@@ -53,9 +54,11 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - The prompt table shows best, worst and threshold for every requirement, plus coverage (reachable situations vs uncovered).
 
 ## Regression
-- Two checks, since PRISM's default convergence (legacy used `-power` with default epsilon) leaves ~1e-5 error in stored values:
-  1. *stored*: new pipeline (default settings) vs values the legacy run reported, tolerance 1e-4.
-  2. *exact*: legacy DTMC recomputed vs new MDP, both at epsilon 1e-10, tolerance 1e-7. This is the real model-equivalence test.
+- Two checks:
+  1. *stored*: new best case at default PRISM settings vs the values the legacy run reported (tolerance 1e-9). These use the same solver, so they match to rounding (observed 1e-15).
+  2. *exact*: legacy DTMC recomputed vs new MDP best **and** worst, all with **interval iteration** (sound error bounds, epsilon 1e-9, tolerance 1e-7). This is the real model-equivalence test.
+- Why interval iteration: at default settings (and even at epsilon 1e-10 with plain value iteration), PRISM's worst case (Pmin) for the nested-until sequence properties stops early, by up to 4e-3 at default settings and 5e-6 at 1e-10. At 1e-10 one legacy policy didn't converge at all. With interval iteration, best and worst agree to 1e-10.
+- Side finding: the legacy run's own reported sequence-property values carry up to ~1e-3 solver error at default settings. That's negligible for the paper's conclusions, but worth knowing.
 - Every iteration's policy of every sample is checked, not just the final one (the legacy planner now records the full policy at every iteration).
 
 ## Comparison
@@ -63,3 +66,8 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - LLM time is client-side wall time for both, so it includes queueing behind the other worker. Tokens are contention-free and the fairer cost measure.
 - The prompts differ in content by design. Legacy has two long worked examples with reasoning. Symbolic has a short rule-syntax example block. I did not port the worked examples. **[REVIEW]**
 - The legacy "final" probabilities are those of its kept-best policy (reconstructed with its own keep-best rule for runs that predate the `final_prism_probs` field).
+
+## Worst-case strictness (decided)
+- For this comparison: keep **(a)**, the sound but conservative worst case (the adversary sees `obs_idx`; the rules don't). The strictness only affects partial policies, since with full coverage best == worst.
+- The exact observation-based fix isn't practical. PRISM's POMDP engine took ~1 minute on a 4x4 grid, rejects the moving-obstacle requirements ("target for reachability is not observable"), and optimizes over history-dependent strategies, not memoryless rules.
+- **TODO (b)**: add a per-domain switch to expose extra variables to rules (e.g. `obs_idx` in gridworld). The worst case is then exact, because the adversary sees nothing the policy can't. This changes the information available to the policy, so keep it off for legacy comparisons.

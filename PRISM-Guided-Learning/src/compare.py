@@ -73,6 +73,11 @@ def main():
             row.update({f"symbolic_worst_{k}": s.get(f"final_worst_{k}") for k in requirements})
             row.update({f"symbolic_best_{k}": s.get(f"final_best_{k}") for k in requirements})
             row.update({f"optimum_{k}": s.get(f"optimum_{k}") for k in requirements})
+        for prefix in ("legacy_", "symbolic_worst_", "symbolic_best_"):
+            probs = {k: row[prefix + k] for k in requirements if row.get(prefix + k) is not None}
+            if probs:
+                row[prefix + "met"] = sum(p >= get_threshold_for_key(k) for k, p in probs.items())
+                row[prefix + "shortfall"] = sum(max(0.0, get_threshold_for_key(k) - p) for k, p in probs.items())
         rows.append(row)
     per_sample = pd.DataFrame(rows).set_index("sample_id")
     per_sample.to_csv(out_dir / "per_sample.csv")
@@ -98,6 +103,10 @@ def main():
         "|---|---|---|",
         f"| success | {rate('legacy_success')} | {rate('symbolic_success')} |",
         f"| success in best case only | n/a | {rate('symbolic_best_case_success')} |",
+        f"| mean requirements met (of {len(requirements)}) | {mean('legacy_met', '{:.2f}')} | "
+        f"{mean('symbolic_worst_met', '{:.2f}')} (best case {mean('symbolic_best_met', '{:.2f}')}) |",
+        f"| mean total shortfall below thresholds | {mean('legacy_shortfall', '{:.3f}')} | "
+        f"{mean('symbolic_worst_shortfall', '{:.3f}')} (best case {mean('symbolic_best_shortfall', '{:.3f}')}) |",
         f"| mean iterations | {mean('legacy_iterations', '{:.2f}')} | {mean('symbolic_iterations', '{:.2f}')} |",
         f"| mean LLM calls | {mean('legacy_llm_calls')} | {mean('symbolic_llm_calls')} |",
         f"| mean output tokens | {mean('legacy_output_tokens', '{:.0f}')} | {mean('symbolic_output_tokens', '{:.0f}')} |",
@@ -118,10 +127,17 @@ def main():
                      f"{mean('symbolic_best_' + k, '{:.3f}')} | {mean('optimum_' + k, '{:.3f}')} |")
 
     if "size" in per_sample:
-        lines += ["", "## Success by grid size", "", "| size | legacy | symbolic |", "|---|---|---|"]
+        lines += ["", "## By grid size", "",
+                  "| size | legacy success | symbolic success | legacy req. met | symbolic req. met (worst) | "
+                  "legacy output tokens | symbolic output tokens |",
+                  "|---|---|---|---|---|---|---|"]
         for size, grp in per_sample.groupby("size"):
-            lines.append(f"| {int(size)} | {int(grp.legacy_success.fillna(False).sum())}/{len(grp)} | "
-                         f"{int(grp.symbolic_success.fillna(False).sum()) if 'symbolic_success' in grp else 0}/{len(grp)} |")
+            sym_ok = int(grp.symbolic_success.fillna(False).sum()) if "symbolic_success" in grp else 0
+            lines.append(f"| {int(size)} | {int(grp.legacy_success.fillna(False).sum())}/{len(grp)} | {sym_ok}/{len(grp)} | "
+                         f"{grp.get('legacy_met', pd.Series(dtype=float)).mean():.2f} | "
+                         f"{grp.get('symbolic_worst_met', pd.Series(dtype=float)).mean():.2f} | "
+                         f"{grp.get('legacy_output_tokens', pd.Series(dtype=float)).mean():.0f} | "
+                         f"{grp.get('symbolic_output_tokens', pd.Series(dtype=float)).mean():.0f} |")
 
     report = "\n".join(lines) + "\n"
     (out_dir / "report.md").write_text(report, encoding="utf-8")

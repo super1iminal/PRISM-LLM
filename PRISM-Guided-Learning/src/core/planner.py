@@ -33,13 +33,16 @@ class PlannerConfig:
     top_k: int = 10             # hotspots / rules shown in feedback
 
 
-def rule_schema(actions: List[str]) -> type[BaseModel]:
+def rule_schema(actions: List[str], max_rules: int = 64, max_condition_chars: int = 200) -> type[BaseModel]:
+    """JSON schema for the LLM's answer. The length bounds are enforced by constrained decoding,
+    which stops degenerate repetition loops from running into the token limit."""
     rule = create_model(
         "Rule",
-        condition=(str, Field(description="Boolean condition over the state variables")),
+        condition=(str, Field(description="Boolean condition over the state variables",
+                              max_length=max_condition_chars)),
         action=(Literal.__getitem__(tuple(actions)), Field(description="Action to take")),
     )
-    return create_model("RuleList", rules=(List[rule], ...))
+    return create_model("RuleList", rules=(List[rule], Field(..., max_length=max_rules)))
 
 
 def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
