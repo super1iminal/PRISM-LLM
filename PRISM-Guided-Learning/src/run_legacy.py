@@ -113,6 +113,7 @@ def save_outputs(results: List[Dict], run_dir: str) -> None:
             "sample_id": idx,
             "success": result.get("Success", False),
             "error": result.get("error"),
+            "final_prism_probs": result.get("Prism_Probabilities", {}),  # of the kept (best) policy
             "iteration_prism_probs": result.get("Iteration_Prism_Probs", []),
             # Each policy is a list of [state, action] with state = [x, y, g1, ..., gN]
             "iteration_policies": [

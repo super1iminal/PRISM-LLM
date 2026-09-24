@@ -1,33 +1,54 @@
 # PRISM-Guided-Learning
 
-This repository contains implementation of LLM-Based Grid-World Path Planning With Probabilistic Model Checking. 
+LLM-based planning with probabilistic verification refinement. The LLM writes a **symbolic,
+possibly partial policy** (ordered rules over the state variables) for a user-specified MDP.
+PRISM checks it in the best and worst case over all completions of the policy, and the feedback
+tells the LLM whether to *refine* existing rules or *extend* coverage, and where.
 
-See [LLM-Based Grid-World Path Planning With Probabilistic Model Checking](https://doi.org/10.1145/3803437.3806714) for more information 
+Predecessor paper: [LLM-Based Grid-World Path Planning With Probabilistic Model Checking](https://doi.org/10.1145/3803437.3806714).
+Its per-state approach survives as the `legacy` baseline.
 
 ## Requirements
 
-- included a .yml with required libraries
-- an openai api key
-- a gemini api key
-- PRISM Model Checker (for PMC integration)
+- Python 3.11+ and `pip install -r requirements.txt`
+- [PRISM](https://www.prismmodelchecker.org/download.php), with `prism` on `PATH` or `PRISM_PATH` set
+- [Ollama](https://ollama.com) with the model in `src/settings.py` (default `qwen3:14b-q4_K_M`, thinking off)
 
-## Installation
+## Layout
 
-1.Download the repo
+```
+PRISM-Guided-Learning/
+  src/
+    core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts
+    legacy/          previous per-state approach (gridworld only), kept as a baseline
+    run_symbolic.py  new approach on any domain
+    run_legacy.py    legacy approach on gridworld
+    regression.py    legacy policies -> symbolic rules -> identical PRISM results
+    compare.py       end-to-end comparison report
+  domains/           case studies (see domains/README.md); gridworld/ holds its datasets
+  tests/
+  out/results/       run outputs
+DECISIONS.md         design decisions to review
+```
 
-2.Install required Python Packages
+## Running (from `PRISM-Guided-Learning/`)
 
-3.Install PRISM (https://www.prismmodelchecker.org/download.php)
+```bash
+python src/run_legacy.py --data grid_20_balanced.csv --out out/results/legacy_grid20
+```
 
-4.Update the PRISM path in the code (in the 'get_prism_path()' functions and in `/prism-4.9/bin/prism` executable)
+```bash
+python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/symbolic_grid20
+```
 
-5.Set your OPENAI_API_KEY environment variable to your openai key (I do it in .bashrc, not sure how to do it on windows)
+```bash
+python src/regression.py --legacy-run out/results/legacy_grid20
+```
 
-## Structure
+```bash
+python src/compare.py --legacy out/results/legacy_grid20 --symbolic out/results/symbolic_grid20
+```
 
-- Final results are in `PRISM-Guided-Learning/out/results/100-balanced-paper-results`
-
-- Source files are in `PRISM-Guided-Learning/src`
-
-- Instructions for running the code are above
-
+```bash
+python -m pytest tests
+```

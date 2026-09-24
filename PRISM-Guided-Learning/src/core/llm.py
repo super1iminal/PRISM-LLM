@@ -1,7 +1,8 @@
 """Minimal structured-output LLM client (local Ollama)."""
 import threading
+import time
 from dataclasses import dataclass, field
-from typing import List, Type, TypeVar
+from typing import List, Optional, Type, TypeVar
 
 import ollama
 from pydantic import BaseModel
@@ -17,7 +18,8 @@ class LLMCall:
     raw_output: str
     prompt_tokens: int
     output_tokens: int
-    seconds: float
+    seconds: float          # client-side wall time, including any queueing at the server
+    server_seconds: float   # Ollama's own total_duration
 
 
 @dataclass
@@ -36,12 +38,13 @@ class LLMUsage:
 class OllamaLLM:
     """Calls an Ollama model constrained to a pydantic schema.
 
-    `invoke(prompt)` returns an instance of `schema`. Every call is also recorded in
+    `invoke(prompt)` returns an instance of `schema` (the default given at construction, or
+    one passed per call). Every call is also recorded in
     a per-thread `LLMUsage`, so concurrent workers sharing one client can each read
     back their own raw outputs and token counts via `usage()` / `reset_usage()`.
     """
 
-    def __init__(self, schema: Type[T], model: str = OLLAMA_MODEL, think: bool = OLLAMA_THINK,
+    def __init__(self, schema: Optional[Type[T]] = None, model: str = OLLAMA_MODEL, think: bool = OLLAMA_THINK,
                  num_ctx: int = OLLAMA_NUM_CTX, num_predict: int = OLLAMA_NUM_PREDICT):
         self.schema = schema
         self.model = model
@@ -58,11 +61,13 @@ class OllamaLLM:
     def reset_usage(self) -> None:
         self._local.usage = LLMUsage()
 
-    def invoke_raw(self, prompt: str) -> str:
+    def invoke_raw(self, prompt: str, schema: Optional[Type[T]] = None) -> str:
+        schema = schema or self.schema
+        start = time.time()
         response = self._client.chat(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            format=self.schema.model_json_schema(),
+            format=schema.model_json_schema(),
             think=self.think,
             options=self.options,
         )
@@ -72,9 +77,11 @@ class OllamaLLM:
             raw_output=content,
             prompt_tokens=response.prompt_eval_count or 0,
             output_tokens=response.eval_count or 0,
-            seconds=(response.total_duration or 0) / 1e9,
+            seconds=time.time() - start,
+            server_seconds=(response.total_duration or 0) / 1e9,
         ))
         return content
 
-    def invoke(self, prompt: str) -> T:
-        return self.schema.model_validate_json(self.invoke_raw(prompt))
+    def invoke(self, prompt: str, schema: Optional[Type[T]] = None) -> T:
+        schema = schema or self.schema
+        return schema.model_validate_json(self.invoke_raw(prompt, schema))

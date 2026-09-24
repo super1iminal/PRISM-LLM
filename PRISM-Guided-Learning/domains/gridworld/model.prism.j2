@@ -1,0 +1,56 @@
+// Gridworld {{ n }}x{{ n }}: visit goals {{ goals | map(attribute='k') | join(', ') }} in order.
+// x = row, y = column, (0,0) is the top-left start cell. The policy picks one of the actions
+// up/right/down/left; the move succeeds with probability {{ prob_forward }} and slips 90 degrees
+// left/right with probability {{ prob_slip_left }}/{{ prob_slip_right }}. Walls clamp, static obstacles bounce the agent back.
+mdp
+
+const int N = {{ n }};
+{% if cycle %}
+
+// Moving obstacle: cycles through {{ cycle | length }} positions, one step per agent move
+formula obs_next = obs_idx = {{ cycle | length - 1 }} ? 0 : obs_idx + 1;
+{% endif %}
+
+// Result of moving in each direction from (x, y)
+{% for m in moves %}
+formula {{ m.name }}_r = min(max(x{{ '%+d' % m.dr }}, 0), N-1);
+formula {{ m.name }}_c = min(max(y{{ '%+d' % m.dc }}, 0), N-1);
+formula {{ m.name }}_blocked = {% for r, c in static %}({{ m.name }}_r={{ r }} & {{ m.name }}_c={{ c }}) | {% endfor %}false;
+formula {{ m.name }}_x = {{ m.name }}_blocked ? x : {{ m.name }}_r;
+formula {{ m.name }}_y = {{ m.name }}_blocked ? y : {{ m.name }}_c;
+{% for g in goals %}
+formula {{ m.name }}_hits_g{{ g.k }} = !{{ m.name }}_blocked & {{ m.name }}_r={{ g.row }} & {{ m.name }}_c={{ g.col }};
+{% endfor %}
+{% endfor %}
+
+module agent
+  x : [0..N-1] init 0;
+  y : [0..N-1] init 0;
+{% for g in goals %}
+  g{{ g.k }} : bool init false;  // goal {{ g.k }} reached (in order)
+{% endfor %}
+{% if cycle %}
+  obs_idx : [0..{{ cycle | length - 1 }}] init 0;
+{% endif %}
+
+{% macro outcome(d) -%}
+(x'={{ d }}_x) & (y'={{ d }}_y){% for g in goals %} & (g{{ g.k }}'=g{{ g.k }} | ({% if not loop.first %}g{{ loop.previtem.k }} & {% endif %}{{ d }}_hits_g{{ g.k }})){% endfor %}{% if cycle %} & (obs_idx'=obs_next){% endif %}
+{%- endmacro %}
+{% for m in moves %}
+  [{{ m.name }}] true ->
+{% for d, p in outcomes[m.name] %}
+      {{ '+ ' if not loop.first else '  ' }}{{ p }} : {{ outcome(d) }}
+{% endfor %}
+      ;
+{% endfor %}
+endmodule
+
+{% for g in goals %}
+label "at_goal{{ g.k }}" = x={{ g.row }} & y={{ g.col }};
+{% endfor %}
+{% if cycle %}
+label "at_moving_obs" = {% for r, c in cycle %}(obs_idx={{ loop.index0 }} & x={{ r }} & y={{ c }}){% if not loop.last %} | {% endif %}{% endfor %};
+{% endif %}
+{% for g in goals %}
+label "in_seg{{ g.k }}" = {% if not loop.first %}g{{ loop.previtem.k }} & {% endif %}!g{{ g.k }};
+{% endfor %}
