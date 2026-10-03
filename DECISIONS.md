@@ -107,7 +107,12 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - **Ablations, seeds and "which difference drives the gain" are deferred**, except the retry-policy sweep Marsha suggested (R1–R5, `docs/ablations.md`). Rule transfer (5×5 → 8×8) is dropped.
 - **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV).
 - **Energy budget for UUV** (`docs/plan.md` A3). It's expressible in PRISM, so it closes a gap in our core, not in PRISM.
-- **[REVIEW]** Legacy with the obstacle visible needs one action per (cell, phase), up to 384 per goal on 8×8, which exceeds the output cap. The proposal is one call per (goal, obstacle phase).
+- Legacy with the obstacle visible: one call per (goal, obstacle phase), accepted for now. **All symbolic runs come first; legacy runs come after.**
+- Retry sweep settings accepted: R3 restarts every 3rd round; R4 counts progress as a drop of at least 0.05 in total worst-case shortfall.
+- **2 seeds per condition**, and every seed's outputs are kept.
+- **Energy requirement (A3) on hold:** it's a big core change. When it's done, calibrate the threshold like the others.
+- **All settings go in one config** (`docs/config.md`, plan item A0): defaults plus named conditions, with the resolved config saved per run.
+- **[REVIEW]** Mass horizon H for UUV (the deadline?) is still open. Gridworld stays at 100.
 
 ## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
 - `out/results/comparison_grid20/report.md`, `viz/figures/grid20.png`. Symbolic numbers come from the **capped** run (`symbolic_grid20_capped`).

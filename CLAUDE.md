@@ -5,6 +5,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 ## Docs (`docs/`)
 - `plan.md`: the current work plan. Code changes (Phase A) all land before any run.
 - `semantics.md`: the formal semantics of rule sets, the induced MDP and the loop branch. **Update it whenever the inputs, the rule language or the REFINE/EXTEND branch change.**
+- `config.md`: every run setting, its default, where it lives and whether it is ablated. Keep it in sync with `configs/`.
 - `ablations.md` + `ablation_now.png` / `ablation_deferred.png`: planned ablations. Regenerate the PNGs with `viz/plot_ablation_grid.py` after editing its tables.
 
 ## Where things live

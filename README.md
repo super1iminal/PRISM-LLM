@@ -30,7 +30,7 @@ PRISM-Guided-Learning/
   tests/
   out/results/       run outputs
 DECISIONS.md         design decisions to review
-docs/                plan.md (work plan), semantics.md (formal semantics), ablations.md (+ grid figures)
+docs/                plan.md (work plan), semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids)
 ```
 
 ## Running (from `PRISM-Guided-Learning/`)

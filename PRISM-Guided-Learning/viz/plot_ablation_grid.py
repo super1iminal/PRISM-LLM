@@ -17,7 +17,7 @@ CHANGED_FILL, CHANGED_INK = "#fde7dc", "#9a3412"   # differs from the row's refe
 REF_FILL = "#f1f0ec"
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 
-SEEDS = 3
+SEEDS = 2
 H_LEGACY, H_SYMBOLIC = 1.15, 0.5   # measured GPU hours per 20-grid run (2 workers), obstacle hidden
 H_LEGACY_VISIBLE = 4.5             # estimate: legacy writes one action per (cell, obstacle phase); mean cycle 3.9
 
@@ -45,12 +45,10 @@ def leg(**changes):
 
 # Row: (id, name, family, values, question, seeds, gpu hours or None, is_reference)
 NOW = [
-    ("group", "Main comparison  (re-run after the fixes in docs/plan.md)"),
-    ("B1", "Legacy", "legacy", LEGACY_REF, "Baseline for the paper's comparison", SEEDS,
-     SEEDS * H_LEGACY_VISIBLE, True),
+    ("group", "1. Symbolic  (main method; reference for the sweep)"),
     ("B2", "Symbolic (full)", "symbolic", SYMBOLIC_REF, "Main method; reference for the sweep", SEEDS,
      SEEDS * H_SYMBOLIC, True),
-    ("group", "Retry-policy sweep  (vs. B2; Marsha's suggestion)"),
+    ("group", "2. Retry-policy sweep  (vs. B2; Marsha's suggestion)"),
     ("R1", "Never retry", "symbolic", sym(retry="never"), "Is feedback alone enough?", SEEDS, SEEDS * H_SYMBOLIC, False),
     ("R2", "Retry after 1 stall", "symbolic", sym(retry="after 1 stall"), "Retry sooner when stuck?", SEEDS,
      SEEDS * H_SYMBOLIC, False),
@@ -60,6 +58,9 @@ NOW = [
      SEEDS, SEEDS * H_SYMBOLIC, False),
     ("R5", "Retry every round", "symbolic", sym(feedback="none", retry="every round", blame="—"),
      "Is feedback better than resampling at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
+    ("group", "3. Legacy  (after all symbolic runs)"),
+    ("B1", "Legacy", "legacy", LEGACY_REF, "Baseline for the paper's comparison", SEEDS,
+     SEEDS * H_LEGACY_VISIBLE, True),
     ("group", "Free  (from the runs above)"),
     ("F1", "Rounds budget 1–5", "both", ["—"] * 5, "Success vs budget (pass@k-style curves)", None, 0.0, False),
 ]
@@ -171,7 +172,7 @@ def main():
     draw(NOW, "Ablations: now", common, [
         f"GPU hours per 20-grid run: symbolic {H_SYMBOLIC} h (measured); legacy {H_LEGACY_VISIBLE} h "
         f"(estimate: {H_LEGACY} h measured with the obstacle hidden, × mean cycle length 3.9).",
-        "Symbolic rows include the joint best-case branch. R4's ε is the minimum drop in total worst-case "
+        "Run in group order (symbolic first). Symbolic rows include the joint best-case branch. R4's ε is the minimum drop in total worst-case "
         "shortfall that counts as progress (proposed 0.05).",
     ], DOCS / "ablation_now.png")
     draw(DEFERRED, "Ablations: deferred", common, [
