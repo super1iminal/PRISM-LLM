@@ -72,7 +72,9 @@ def kept_coverage(run_dir: Path) -> pd.Series:
 def mode_stats(run_dir: Path) -> dict:
     df = pd.read_parquet(run_dir / SYMBOLIC_FILE).reset_index()
     df = df[df.iteration > 1]
-    return {f"{m}_rounds": int((df["mode"] == m).sum()) for m in ("refine", "extend", "initial", "table")} | {
+    feedback = df[df["mode"].isin(["refine", "extend", "table"])]
+    return {"feedback_improved": float(feedback.improved.mean()) if len(feedback) else np.nan} | {
+        f"{m}_rounds": int((df["mode"] == m).sum()) for m in ("refine", "extend", "initial", "table")} | {
         f"{m}_improved": float(df[df["mode"] == m].improved.mean()) if (df["mode"] == m).any() else np.nan
         for m in ("refine", "extend", "initial", "table")}
 
@@ -190,7 +192,7 @@ def plot_conditions(table, data, out):
 def plot_mechanics(table, out):
     t = table[~table.condition.isin(["B1", "L1", "L2"])].reset_index(drop=True)
     panels = [("uncovered", "Uncovered situations, kept policy", "% of reachable", "{:.0f}%"),
-              ("refine_improved", "Refine rounds that improved the policy", "share", "{:.0%}"),
+              ("feedback_improved", "Feedback rounds that improved the policy", "share", "{:.0%}"),
               ("tokens_k", "LLM output tokens per grid", "thousand", "{:.1f}k"),
               ("minutes", "Wall time per grid", "minutes", "{:.1f}")]
     fig, axes = plt.subplots(1, 4, figsize=(16, 3.8), facecolor=SURFACE)
@@ -270,10 +272,10 @@ def write_markdown(out_dir, table, budget, pending, uuv):
     lines += ["## Overview", "", "![conditions](conditions.png)", "", "## Budget curves", "", "![budget](budget.png)",
               "", "## Loop mechanics (symbolic)", "", "![mechanics](mechanics.png)", "", "## Table", "",
               "| cond | change | seeds | solved | req. met (seed range) | best case | shortfall | uncovered % | "
-              "vs | Δ met [95% CI] | p | refine improved | out tokens | min/grid |",
+              "vs | Δ met [95% CI] | p | feedback rounds improved | out tokens | min/grid |",
               "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in table.iterrows():
-        refine = f"{r.refine_improved:.0%}" if "refine_improved" in r and pd.notna(r.refine_improved) else ""
+        refine = f"{r.feedback_improved:.0%}" if "feedback_improved" in r and pd.notna(r.feedback_improved) else ""
         diff = f"{r['diff']:+.2f} {r.ci}" if r.vs else ""
         lines.append(f"| {r.condition} | {r.change} | {r.seeds} | {r.solved:.1f} | {r.met:.2f} "
                      f"({r.met_seed_min:.2f} to {r.met_seed_max:.2f}) | {r.met_best:.2f} | {r.shortfall:.2f} | "
