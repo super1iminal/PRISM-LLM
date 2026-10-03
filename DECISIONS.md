@@ -97,8 +97,17 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - `_problem.md.j2`: the boolean example uses the domain's first boolean policy variable, and is left out when there is none. The rendered gridworld text is identical (`g1`).
 - `_results.md.j2`: "reachable situations (combinations of the state variables)" became "... where the action matters". This is the only wording change in gridworld prompts compared with the runs above.
 
-## TODO
-- Per-domain switch to expose extra variables to rules (e.g. `obs_idx` in gridworld), which makes the worst case exact. Keep it off for legacy comparisons.
+## Sept 24 meeting (Marsha, Aren) and follow-ups
+- Plan of record: `docs/plan.md`. Semantics: `docs/semantics.md`. Ablations: `docs/ablations.md`.
+- **Story still open.** Generalization and readability are "a nice bonus", not the reason. The reason should be something the LLM adds beyond PRISM: expressiveness gaps (Aren) or model engineering from the problem description (Marsha). Asher writes this.
+- **Target SEAMS** (Oct 23), with ICAPS (Dec 7 abstract) as the fallback. Write first, then finish.
+- **Obstacle phase becomes visible to rules, for legacy and symbolic alike** (Marsha called the leak "just a bug"). This replaces the old TODO. The hidden setting stays available, so the old runs remain reproducible.
+- **Joint best case:** approved. **V^opt stays in the loop** (regret is an ablation, S5, not a replacement).
+- **Ceilings** (per-instance optimum + joint feasibility) are "foundational". Asher promised them promptly.
+- **Ablations, seeds and "which difference drives the gain" are deferred**, except the retry-policy sweep Marsha suggested (R1–R5, `docs/ablations.md`). Rule transfer (5×5 → 8×8) is dropped.
+- **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV).
+- **Energy budget for UUV** (`docs/plan.md` A3). It's expressible in PRISM, so it closes a gap in our core, not in PRISM.
+- **[REVIEW]** Legacy with the obstacle visible needs one action per (cell, phase), up to 384 per goal on 8×8, which exceeds the output cap. The proposal is one call per (goal, obstacle phase).
 
 ## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
 - `out/results/comparison_grid20/report.md`, `viz/figures/grid20.png`. Symbolic numbers come from the **capped** run (`symbolic_grid20_capped`).

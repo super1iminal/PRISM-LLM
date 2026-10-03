@@ -17,3 +17,5 @@ python viz/plot_comparison.py --legacy out/results/legacy_grid20 --symbolic out/
 ```bash
 python viz/plot_runs.py --legacy out/results/legacy_grid20 --symbolic "catch-all asked=out/results/symbolic_grid20_capped" --symbolic "no catch-all=out/results/symbolic_grid20_nocatchall" --out viz/figures/catchall_ablation.png
 ```
+
+- `plot_ablation_grid.py`: draws the planned ablation grids into `docs/` (`ablation_now.png`, `ablation_deferred.png`). Edit its tables when the plan changes.
