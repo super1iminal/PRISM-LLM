@@ -120,6 +120,7 @@ class SymbolicPlanner:
         iterations: List[Dict[str, Any]] = []
         best: Optional[Tuple[SymbolicPolicy, Verification, Tuple]] = None
         kept_joint: Optional[bool] = None   # joint feasibility of the kept policy, once queried
+        joint_queried = False
         mode, prompt, stall = "initial", self.domain.render("initial.md.j2", instance, **base_ctx), 0
 
         for attempt in range(1, max_rounds + 1):
@@ -139,7 +140,7 @@ class SymbolicPlanner:
             improved = best is None or score < best[2]
             if improved:
                 best = (candidate, v, score)
-                kept_joint = None
+                kept_joint, joint_queried = None, False
             gain = (previous_shortfall - best[2][2]) if previous_shortfall is not None else float("inf")
             log("Results: " + ", ".join(f"{r.name}: best={v.best[r.name]:.4f} worst={v.worst[r.name]:.4f}"
                                         for r in reqs))
@@ -189,12 +190,12 @@ class SymbolicPlanner:
                 else:
                     joint_conflict = False
                     if not failing_best and cfg.planner.branch == "joint":
-                        if kept_joint is None:
+                        if not joint_queried:
                             t = time()
-                            kept_joint = verifier.jointly_feasible(best_policy)
+                            kept_joint, joint_queried = verifier.jointly_feasible(best_policy), True
                             record["joint_time"] = time() - t
                         record["kept_joint_feasible"] = kept_joint
-                        joint_conflict = not kept_joint
+                        joint_conflict = kept_joint is False   # undecided: fall back to per-requirement
                         record["branch_disagreement"] = joint_conflict
                         if joint_conflict:
                             log("Each requirement passes its best case, but no single completion passes all: refine")

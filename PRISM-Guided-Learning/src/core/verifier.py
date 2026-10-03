@@ -81,11 +81,12 @@ class PolicyVerifier:
         objectives = ", ".join(f"P{r.bound}{r.threshold} [ {r.formula} ]" for r in self.spec.requirements)
         return f"multi({objectives})"
 
-    def jointly_feasible(self, policy: Optional[SymbolicPolicy] = None) -> bool:
+    def jointly_feasible(self, policy: Optional[SymbolicPolicy] = None) -> Optional[bool]:
         """Whether a single completion of `policy` (any scheduler, possibly randomized and with memory)
         meets all thresholds simultaneously. `None` asks the question of the bare MDP (the ceiling).
 
-        "No" is exact; "yes" is optimistic for memoryless, observation-based completions.
+        "No" is exact; "yes" is optimistic for memoryless, observation-based completions. None means
+        undecided (PRISM's exact LP method does not support e.g. step-bounded requirements).
         """
         return self.runner.check(self.compose(policy), self.joint_query())
 

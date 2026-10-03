@@ -131,12 +131,24 @@ class PrismRunner:
         self.multi_args = [f"-{config.multi_engine}"] + ([f"-{config.multi_method}"] if config.multi_method else [])
         self.method_args = [f"-{config.method}"] if config.method else []
 
-    def check(self, model: str, prop: str) -> bool:
+    def check(self, model: str, prop: str) -> Optional[bool]:
         """Decide one boolean property, e.g. a multi-objective achievability query `multi(...)`.
 
         Uses `prism.multi_engine` (sparse: the explicit engine has no multi-objective support) and
-        `prism.multi_method` (lp: exact, where value iteration can fail on periodic chains).
+        `prism.multi_method` (lp: exact, where value iteration can fail on periodic chains). Returns None
+        (undecided) when LP cannot handle the query.
         """
+        stdout = self._check(model, prop, self.multi_args)
+        if "not currently supported with linear programming" in stdout:
+            # e.g. step-bounded objectives (UUV's deadline). PRISM's value-iteration alternative is
+            # approximate and wrongly answers "no" at tight thresholds, so report "undecided".
+            return None
+        m = re.search(r"^Result: (true|false)", stdout, re.M)
+        if "Error:" in stdout or not m:
+            raise PrismError(_error_excerpt(stdout))
+        return m.group(1) == "true"
+
+    def _check(self, model: str, prop: str, engine_args: List[str]) -> str:
         with tempfile.TemporaryDirectory(prefix="prism_") as tmp:
             model_path = os.path.join(tmp, "model.prism")
             props_path = os.path.join(tmp, "props.props")
@@ -144,14 +156,10 @@ class PrismRunner:
                 f.write(model)
             with open(props_path, "w", encoding="utf-8") as f:
                 f.write(prop.rstrip(";") + ";\n")
-            cmd = [self.prism_path, model_path, props_path, *self.multi_args, "-javamaxmem",
+            cmd = [self.prism_path, model_path, props_path, *engine_args, "-javamaxmem",
                    self.java_max_mem, "-maxiters", str(self.max_iters)]
-            stdout = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                    timeout=self.timeout).stdout
-        m = re.search(r"^Result: (true|false)", stdout, re.M)
-        if "Error:" in stdout or not m:
-            raise PrismError(_error_excerpt(stdout))
-        return m.group(1) == "true"
+            return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                  timeout=self.timeout).stdout
 
     def run(self, model: str, properties: Sequence[str], export_transitions: bool = False) -> PrismResult:
         """Check `properties` (one per entry) on `model`.

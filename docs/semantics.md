@@ -1,6 +1,6 @@
 # Rule-set semantics
 
-> **Keep this current.** It describes the inputs as they are today: a user-written PRISM MDP and LLM-written rules over declared variables. Update it whenever the inputs change (e.g. the LLM builds the model), the rule language changes, or the REFINE/EXTEND branch changes. Items marked *(planned)* are not implemented yet; see `docs/plan.md`.
+> **Keep this current.** It describes the inputs as they are today: a user-written PRISM MDP and LLM-written rules over declared variables. Update it whenever the inputs change (e.g. the LLM builds the model), the rule language changes, or the REFINE/EXTEND branch changes. Items marked *(planned)* are not implemented yet; see `docs/plan.md`. Last updated for Phase A (branch `phase-a`).
 
 ## Inputs (per instance)
 - **MDP** `M = (S, s0, Act, P)`, given as a PRISM `mdp` model. `A ⊆ Act` are the *policy actions*: the action labels the policy controls. Other labels (e.g. UUV's `[step]`) are never restricted.
@@ -21,14 +21,16 @@ Domains must keep every policy action enabled in every decision state (gridworld
 - **Best case** `b_i` = the optimum over all schedulers of `M_R` (`Pmax` if `⋈_i` is `≥`, `Pmin` if `≤`). **Worst case** `w_i` is the opposite optimum.
 - **Soundness.** PRISM's schedulers are history-dependent and randomized, and they see the full state. So `[w_i, b_i]` contains the value of *every* deployment consistent with `R`: any fallback at uncovered states, with or without memory or extra observations. **If `w_i ⋈_i θ_i` for all `i`, every such deployment satisfies every requirement.** This is the success criterion. A passing rule set is a *permissive strategy* (Dräger et al.).
 - **Full coverage** (no reachable uncovered state) gives `b_i = w_i`: the value of the single policy `R` defines.
-- **Joint best case** *(planned)*: does a single scheduler `σ` of `M_R` exist with `P^σ(φ_i) ⋈_i θ_i` for all `i` at once? This is PRISM's `multi(…)` query (sparse engine). Per-requirement best cases passing doesn't imply this. A "no" is exact. A "yes" is still optimistic for memoryless, observation-based completions.
-- **Observation:** when `X` omits state variables (gridworld's `obs_idx`), the schedulers see more than the rules, so `w_i` is conservative and `b_i` optimistic. *(Planned: per-domain switch making them visible; on for both legacy and symbolic.)*
+- **Joint best case** `J`: does a single scheduler `σ` of `M_R` exist with `P^σ(φ_i) ⋈_i θ_i` for all `i` at once? This is PRISM's `multi(…)` query (sparse engine, exact LP). Per-requirement best cases passing doesn't imply this. A "no" is exact. A "yes" is still optimistic for memoryless, observation-based completions. Where LP doesn't apply (step-bounded requirements, e.g. UUV's deadline), `J` is *undecided*.
+- **Observation:** `X` = the spec's variables plus the config's `domain.visible_extra` (gridworld default: `obs_idx`, for legacy too). Any state variable outside `X` is seen by the schedulers but not the rules, which makes `w_i` conservative and `b_i` optimistic. The runs before Phase A hid `obs_idx` (condition `pre_phase_a`).
+- **Numerics:** values are computed with Gauss-Seidel (`prism.method`). Rules that read `obs_idx` can make `M_R` periodic, and plain value iteration then does not converge.
 
 ## Loop branch
 Each round: verify `R`, then
 - **done** if every `w_i` passes;
-- **REFINE** (the LLM rewrites the whole list) if no completion can pass, judged per requirement today *(planned: joint best case)*;
-- **EXTEND** (the LLM returns new rules, appended to the end) otherwise.
+- **REFINE** (the LLM rewrites the whole list) if no completion can pass: some `b_i` fails, or else `J` is "no" (`planner.branch: joint`; the old runs used `per_requirement`, which never asks `J`);
+- **EXTEND** (the LLM returns new rules, appended to the end) otherwise, including when `J` is undecided;
+- unless the retry policy (`planner.retry`) says to start over from the initial prompt instead. That check comes first.
 
 Appending only removes choices at previously uncovered states, so EXTEND never lowers `w_i` and never raises `b_i`. The best rule set so far is kept, scored lexicographically by (worst-case failures, best-case failures, worst shortfall, best shortfall).
 

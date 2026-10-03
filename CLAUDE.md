@@ -18,7 +18,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 ## Environment (Windows)
 - Python venv at the repo root: `.venv/Scripts/python`. Install with `.venv/Scripts/python -m pip install -r requirements.txt`.
 - PRISM 4.10.1 is on PATH as `prism` (`prism.bat`), or set `PRISM_PATH`.
-- Ollama serves `qwen3:14b-q4_K_M` locally on a 16 GB RTX 4080 Super. It needs ~11.7 GB of VRAM, so **a running game or other GPU app will crash runs with CUDA out-of-memory**. Check `nvidia-smi` first. Settings are in `src/settings.py` (thinking off, 16k context).
+- Ollama serves `qwen3:14b-q4_K_M` locally on a 16 GB RTX 4080 Super. It needs ~11.7 GB of VRAM, so **a running game or other GPU app will crash runs with CUDA out-of-memory**. Check `nvidia-smi` first. Run settings are in `configs/default.yaml` (thinking off, 16k context); `src/settings.py` only holds paths.
 - Run scripts from `PRISM-Guided-Learning/`, e.g. `../.venv/Scripts/python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/<name>`.
 
 ## Commands
@@ -26,7 +26,9 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - New approach: `src/run_symbolic.py --domain <name> --data <dataset> [--limit N] --workers 2 --out out/results/<name>`
 - Legacy baseline (gridworld only): `src/run_legacy.py`
 - Regression (legacy policies reproduced in the new pipeline): `src/regression.py --legacy-run out/results/legacy_grid20`
-- Comparison report: `src/compare.py`; figures: `viz/plot_comparison.py`, `viz/plot_runs.py`
+- Conditions × seeds: `src/run_ablation.py B2 R1 --seeds 1 2 [--dry-run] [--set key=value]` (settings: `configs/`, `docs/config.md`)
+- Ceilings: `src/ceilings.py --domain gridworld --data grid_20_balanced.csv`
+- Comparison report: `src/compare.py`; figures: `viz/plot_comparison.py`, `viz/plot_runs.py`, `viz/plot_budget.py`
 
 ## Experiment etiquette
 - **Ask before starting any LLM run.** A 20-grid run takes 30–60 min of GPU time. Use `--limit 1` for smoke tests.

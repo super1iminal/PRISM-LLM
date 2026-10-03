@@ -1,78 +1,50 @@
 # Configuration
 
-Every setting that affects a run, in one place. **Today these are scattered across the code (the "Where today" column). Phase A0 in `docs/plan.md` moves them into one config file.** Keep this table in sync with that file.
+Every setting that affects a run lives in `PRISM-Guided-Learning/configs/`:
+- `default.yaml`: every key below with its default.
+- `conditions.yaml`: named conditions (B1, B2, R1–R5, S4, `pre_phase_a`), each a small override of the default.
+- Schema and validation: `src/config.py`. Unknown keys and unsupported values are errors.
+- Every run writes its resolved config to `<run>/config.json`.
 
-## Target layout (A0)
-- `PRISM-Guided-Learning/configs/default.yaml`: every setting below with its default, grouped as in the tables.
-- `PRISM-Guided-Learning/configs/conditions.yaml`: named conditions (B1, B2, R1–R5, S1…, L1…), each a small override of the default.
-- `src/config.py`: loads the default, applies a condition plus any CLI overrides, and validates against dataclasses (unknown keys are errors).
-- Every run writes its fully resolved config to `<run>/config.json`, so any result can be traced to its exact settings.
-- Domain constants that **define the problem** (thresholds, dynamics) stay in the domain's files. They're listed here for reference but aren't run settings.
+```bash
+python src/run_symbolic.py --condition R2 --set run.limit=1 --set llm.seed=1
+```
 
-## LLM
-| Key | Default | Where today | Ablated? |
+```bash
+python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
+```
+
+**Keep this table in sync with `default.yaml`.** Domain constants that define the problem (thresholds, dynamics) stay in the domain's own files and are listed at the end for reference.
+
+| Key | Default | What it does | Ablated by |
 |---|---|---|---|
-| `llm.model` | `qwen3:14b-q4_K_M` | `settings.py` (or `$OLLAMA_MODEL`) | deferred (stronger model) |
-| `llm.think` | `false` | `settings.py` | no |
-| `llm.num_ctx` | 16384 | `settings.py` | no |
-| `llm.num_predict` | 8192 | `settings.py` | no |
-| `llm.seed` | none (new: one per seed) | not set (new, A5) | seeds 1, 2 |
-| `llm.temperature` | model default | not set | no |
+| `approach` | `symbolic` | `symbolic` or `legacy` planner | B1 |
+| `domain.name` / `domain.dataset` | `gridworld` / `grid_20_balanced.csv` | case study and instances | — |
+| `domain.visible_extra` | `[obs_idx]` | extra state variables rules (and legacy) may read, if the model has them | `pre_phase_a` (hidden) |
+| `llm.model` | `qwen3:14b-q4_K_M` | Ollama model | deferred (stronger model) |
+| `llm.think` | `false` | qwen3 thinking mode | — |
+| `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits | — |
+| `llm.seed` | `null` | sampling seed (set per seed by `run_ablation.py`) | seeds 1, 2 |
+| `llm.temperature` | `null` | `null` = the model's default | — |
+| `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free) |
+| `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
+| `planner.retry` | `stall:2` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always` | R1–R5 |
+| `planner.branch` | `joint` | REFINE vs EXTEND: one completion must pass every requirement (`joint`), or each on its own (`per_requirement`, used by the old runs) | `pre_phase_a` |
+| `planner.feedback` | `blame` | feedback content (`table`, S1, not implemented yet) | S1 (deferred) |
+| `planner.max_rules` / `max_condition_chars` | 64 / 200 | schema caps (stop repetition loops) | — |
+| `feedback.blame` | `mass` | blame signal (`regret`, S5, not implemented yet) | S5 (deferred) |
+| `feedback.horizon` | 100 | mass-analysis occupancy horizon (steps) | — |
+| `feedback.horizon_by_domain` | `{}` | per-domain horizon (UUV value still open) | — |
+| `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
+| `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | done (catch-all ablation) |
+| `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
+| `prism.method` | `gaussseidel` | PRISM solver; plain value iteration fails on periodic chains (rules that read `obs_idx`) | — |
+| `prism.multi_engine` / `multi_method` | `sparse` / `lp` | joint queries (the explicit engine can't do them; LP is exact) | — |
+| `prism.java_max_mem` / `max_iters` / `timeout_s` | 4g / 1,000,000 / 900 | PRISM limits | — |
+| `rules.max_enumeration` | 200,000 | state-space size up to which first-match guards are simplified | — |
+| `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
+| `run.workers` / `run.limit` | 2 / `null` | parallel instances / first N instances only | — |
 
-## Symbolic planner
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `planner.max_rounds` | 5 | `PlannerConfig.max_attempts` | F1 (budget curves, free) |
-| `planner.max_fixups` | 2 re-asks per round | `PlannerConfig.max_fixups` | no |
-| `planner.retry` | `stall:2` | `PlannerConfig.stall_limit` | **R1** `never`, **R2** `stall:1`, **R3** `every:3`, **R4** `gain:0.05`, **R5** `always` |
-| `planner.branch` | `joint` (new) | per-requirement (A2) | no |
-| `planner.feedback` | `blame` | hard-coded | S1 `table`, R5 `none` |
-| `planner.max_rules` / `max_condition_chars` | 64 / 200 | `rule_schema()` | no |
-| `planner.keep_best_score` | (worst fails, best fails, worst shortfall, best shortfall) | `_score()` | no |
+**Deferred legacy ablations** (L1 retry, L2 no examples) need legacy settings that don't exist yet; they'll be added to `LegacyConfig` when those runs are scheduled.
 
-## Feedback (mass analysis)
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `feedback.blame` | `mass` | `MassAnalyzer` | S5 `regret` |
-| `feedback.horizon` (H) | 100 steps | `PlannerConfig.horizon` | no (per-domain value is an open decision) |
-| `feedback.top_k` | 10 rules / hotspots | `PlannerConfig.top_k` | no |
-| `feedback.states_per_rule` | 3 | `analysis.py` | no |
-
-## Prompt
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `prompt.catch_all_instruction` | on | `core/templates/_problem.md.j2` | done (`DECISIONS.md` catch-all ablation) |
-| `prompt.examples` | on (domain's `examples.md.j2`, incl. catch-all rule) | domain template | S4 off, L2 off (legacy) |
-
-## Domain / observation
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `domain.name` / `domain.dataset` | `gridworld` / `grid_20_balanced.csv` | CLI | no |
-| `domain.visible_extra` | `[obs_idx]` for gridworld (new) | hidden today (A1) | no (decided: visible for all new runs) |
-| Gridworld dynamics | 0.7 / 0.15 / 0.15 | `domains/gridworld/domain.py` | constant |
-| Gridworld thresholds | goals 0.8, ordering 0.8, avoid 0.7 | `domains/gridworld/domain.py` | constant |
-| UUV thresholds | per scenario | `domains/uuv/data/uuv_paper.csv` | constant |
-
-## Verifier (PRISM)
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `prism.engine` | `explicit` (`sparse` for `multi`) | `core/prism.py` | no |
-| `prism.java_max_mem` | 4g | `PrismRunner` | no |
-| `prism.max_iters` | 1,000,000 | `PrismRunner` | no |
-| `prism.timeout_s` | 900 | `PrismRunner` | no |
-| `rules.max_enumeration` | 200,000 valuations | `rules.py` | no |
-
-## Legacy
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `legacy.max_rounds` | 5 | CLI | no |
-| `legacy.retry` | `never` | n/a | L1 `stall:2` |
-| `legacy.examples` | 2 worked examples | `legacy/prompting.py` | L2 off |
-| `legacy.calls` | per goal (new: per goal × obstacle phase) | `legacy/planner.py` | no |
-
-## Run
-| Key | Default | Where today | Ablated? |
-|---|---|---|---|
-| `run.workers` | 2 | CLI | no |
-| `run.seeds` | [1, 2] | n/a (new) | n/a |
-| `run.limit` | all instances | CLI | no |
+**Domain constants (not run settings):** gridworld dynamics 0.7/0.15/0.15 and thresholds (goals 0.8, ordering 0.8, avoid 0.7) in `domains/gridworld/domain.py`; UUV thresholds per scenario in `domains/uuv/data/uuv_paper.csv`.

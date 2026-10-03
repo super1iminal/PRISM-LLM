@@ -48,6 +48,14 @@ python src/run_symbolic.py --domain uuv --data uuv_paper.csv --out out/results/s
 ```
 
 ```bash
+python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2 --dry-run
+```
+
+```bash
+python src/ceilings.py --domain gridworld --data grid_20_balanced.csv
+```
+
+```bash
 python src/regression.py --legacy-run out/results/legacy_grid20
 ```
 

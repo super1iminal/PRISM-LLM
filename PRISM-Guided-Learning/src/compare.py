@@ -4,6 +4,8 @@ Usage: python src/compare.py --legacy out/results/legacy_grid20 --symbolic out/r
 
 Success means every requirement meets its threshold: for legacy, on the full per-state policy;
 for symbolic, in the worst case over all completions of the (possibly partial) rule list.
+With per-instance ceilings (src/ceilings.py, picked up automatically), the report also gives
+solved-of-solvable and the shortfall below what is actually achievable (min(threshold, optimum)).
 """
 import argparse
 import json
@@ -14,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 from core.domain import load_domain
+from settings import RESULTS_PATH
 from legacy.gridworld import GridWorld as LegacyGridWorld
 from legacy.requirements import SimplifiedVerifier, get_threshold_for_key
 
@@ -27,8 +30,11 @@ def main():
     parser.add_argument("--legacy", required=True)
     parser.add_argument("--symbolic", required=True)
     parser.add_argument("--data", default="grid_20_balanced.csv", help="Gridworld dataset both runs used")
+    parser.add_argument("--ceilings", default=None, help="Ceilings CSV (default: out/results/ceilings/gridworld_<data>.csv)")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
+    ceilings_path = Path(args.ceilings) if args.ceilings else         RESULTS_PATH / "ceilings" / f"gridworld_{Path(args.data).stem}.csv"
+    ceilings = pd.read_csv(ceilings_path, index_col="sample_id") if ceilings_path.exists() else None
     instances = load_domain("gridworld").load_instances(args.data)
     legacy_dir, symbolic_dir = Path(args.legacy), Path(args.symbolic)
     out_dir = Path(args.out) if args.out else symbolic_dir.parent / "comparison"
@@ -69,15 +75,22 @@ def main():
                         "symbolic_llm_time": sym_all[sym_all.sample_id == sid].llm_time.sum(),
                         "symbolic_prism_time": sym_all[sym_all.sample_id == sid].prism_time.sum(),
                         "symbolic_rules": s["final_num_rules"],
+                        "symbolic_uncovered_pct": 100 * (s["uncovered_situations"] / s["reachable_situations"]
+                                                         if s["reachable_situations"] else 0.0),
                         "symbolic_invalid_answers": sym_all[sym_all.sample_id == sid].invalid_answers.sum()})
             row.update({f"symbolic_worst_{k}": s.get(f"final_worst_{k}") for k in requirements})
             row.update({f"symbolic_best_{k}": s.get(f"final_best_{k}") for k in requirements})
             row.update({f"optimum_{k}": s.get(f"optimum_{k}") for k in requirements})
+        if ceilings is not None and sid in ceilings.index:
+            row["solvable"] = bool(ceilings.loc[sid, "jointly_feasible"] == True)  # noqa: E712
         for prefix in ("legacy_", "symbolic_worst_", "symbolic_best_"):
             probs = {k: row[prefix + k] for k in requirements if row.get(prefix + k) is not None}
             if probs:
                 row[prefix + "met"] = sum(p >= get_threshold_for_key(k) for k, p in probs.items())
                 row[prefix + "shortfall"] = sum(max(0.0, get_threshold_for_key(k) - p) for k, p in probs.items())
+                if ceilings is not None and sid in ceilings.index:
+                    target = {k: min(get_threshold_for_key(k), ceilings.loc[sid, f"optimum_{k}"]) for k in probs}
+                    row[prefix + "achievable_shortfall"] = sum(max(0.0, target[k] - p) for k, p in probs.items())
         rows.append(row)
     per_sample = pd.DataFrame(rows).set_index("sample_id")
     per_sample.to_csv(out_dir / "per_sample.csv")
@@ -89,6 +102,19 @@ def main():
 
     def mean(col, fmt="{:.1f}"):
         return fmt.format(per_sample[col].mean()) if col in per_sample else "n/a"
+
+    def median(col, fmt="{:.1f}"):
+        """Median [interquartile range] over samples."""
+        if col not in per_sample:
+            return "n/a"
+        q = per_sample[col].quantile([0.25, 0.5, 0.75])
+        return f"{fmt.format(q[0.5])} [{fmt.format(q[0.25])}–{fmt.format(q[0.75])}]"
+
+    def solved_of_solvable(col):
+        if "solvable" not in per_sample or col not in per_sample:
+            return "n/a"
+        solvable = per_sample[per_sample.solvable]
+        return f"{int(solvable[col].fillna(False).sum())}/{len(solvable)}"
 
     lines = [
         "# Legacy vs symbolic: end-to-end comparison",
@@ -102,7 +128,11 @@ def main():
         "| metric | legacy (per-state) | symbolic (rules) |",
         "|---|---|---|",
         f"| success | {rate('legacy_success')} | {rate('symbolic_success')} |",
+        f"| success, of jointly solvable instances | {solved_of_solvable('legacy_success')} | "
+        f"{solved_of_solvable('symbolic_success')} |",
         f"| success in best case only | n/a | {rate('symbolic_best_case_success')} |",
+        f"| shortfall below the achievable (mean) | {mean('legacy_achievable_shortfall', '{:.3f}')} | "
+        f"{mean('symbolic_worst_achievable_shortfall', '{:.3f}')} |",
         f"| mean requirements met (of {len(requirements)}) | {mean('legacy_met', '{:.2f}')} | "
         f"{mean('symbolic_worst_met', '{:.2f}')} (best case {mean('symbolic_best_met', '{:.2f}')}) |",
         f"| mean total shortfall below thresholds | {mean('legacy_shortfall', '{:.3f}')} | "
@@ -115,7 +145,19 @@ def main():
         f"| mean PRISM time (s) | {mean('legacy_prism_time')} | {mean('symbolic_prism_time')} |",
         f"| mean wall time per sample (s) | {mean('legacy_time')} | {mean('symbolic_time')} |",
         f"| mean final rules | n/a | {mean('symbolic_rules')} |",
+        f"| uncovered situations, last round's policy (mean %) | n/a | {mean('symbolic_uncovered_pct')} |",
         f"| invalid LLM answers (total) | n/a | {int(per_sample['symbolic_invalid_answers'].sum()) if 'symbolic_invalid_answers' in per_sample else 'n/a'} |",
+        "",
+        "## Medians [interquartile range] per sample",
+        "",
+        "| metric | legacy | symbolic |",
+        "|---|---|---|",
+        f"| requirements met | {median('legacy_met', '{:.0f}')} | {median('symbolic_worst_met', '{:.0f}')} |",
+        f"| shortfall | {median('legacy_shortfall', '{:.2f}')} | {median('symbolic_worst_shortfall', '{:.2f}')} |",
+        f"| output tokens | {median('legacy_output_tokens', '{:.0f}')} | {median('symbolic_output_tokens', '{:.0f}')} |",
+        f"| prompt (input) tokens | {median('legacy_prompt_tokens', '{:.0f}')} | {median('symbolic_prompt_tokens', '{:.0f}')} |",
+        f"| PRISM time (s) | {median('legacy_prism_time')} | {median('symbolic_prism_time')} |",
+        f"| wall time (s) | {median('legacy_time', '{:.0f}')} | {median('symbolic_time', '{:.0f}')} |",
         "",
         "## Mean final probability per requirement",
         "",

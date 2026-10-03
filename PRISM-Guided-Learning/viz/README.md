@@ -19,3 +19,5 @@ python viz/plot_runs.py --legacy out/results/legacy_grid20 --symbolic "catch-all
 ```
 
 - `plot_ablation_grid.py`: draws the planned ablation grids into `docs/` (`ablation_now.png`, `ablation_deferred.png`). Edit its tables when the plan changes.
+
+- `plot_budget.py`: success / requirements met / shortfall vs rounds budget k (ablation F1), replaying keep-best on the first k rounds of existing runs; pools `seed_*` dirs.

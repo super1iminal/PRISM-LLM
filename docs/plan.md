@@ -4,31 +4,36 @@ Target: **SEAMS 2027** (research track Oct 23; check the official site), with IC
 
 **Rule: finish every code change in Phase A before any LLM run**, so a small tweak never forces a re-run. Runs need an explicit go (see `CLAUDE.md`).
 
-## Phase A: code (no GPU)
-| # | Change | Notes / decisions needed before coding |
+## Phase A: code (no GPU). Done on branch `phase-a`, except A3
+| # | Change | Status |
 |---|---|---|
-| A0 | **One config:** move every setting into `configs/default.yaml`, named conditions into `configs/conditions.yaml`, and save the resolved config per run. | Inventory and target layout: `docs/config.md`. Do this first; A1–A7 add their settings there. |
-| A1 | **Observation switch:** a per-domain `visible` option; gridworld exposes `obs_idx` to rules **and** to legacy. | **Legacy cost:** one action per (cell, phase) means 8×8 × 6 = 384 actions per goal, which is over the 8192-token output cap. Decided (for now): legacy makes one call per goal *per obstacle phase* (64 actions each). The legacy side can land last, since legacy runs come after all symbolic runs. Regression and `legacy_translate` gain `obs_idx`; the hidden setting stays available for the old runs. |
-| A2 | **Joint best case** in the REFINE/EXTEND branch (PRISM `multi(…)`, `-sparse` engine, about 1.3 s per check). | Log per-requirement vs joint disagreements per round, so we can report how often the old branch was wrong. |
-| A3 | *On hold (a big change; may break things).* **Reward requirements** in core: `R{r} ≤ c [F goal]`, best = `Rmin`, worst = `Rmax`; UUV gets an energy budget. | When we do it: calibrate the threshold like the others (`domains/uuv/data/calibrate.py`). Mass analysis uses the reward vectors (the stake is a cost-to-go gap). PRISM's multi-objective queries accept mixed P/R objectives. Not needed for any gridworld run. |
-| A4 | **Retry policies** in `PlannerConfig`: `stall:k`, `never`, `every:k`, `gain<ε`, `always`. | R3: k = 3. R4: ε = 0.05 total shortfall. |
-| A5 | **Seeds:** `--seed` in both runners, passed to Ollama's `seed` option. | |
-| A6 | **Ablation runner** `src/run_ablation.py` with a condition registry, and the `out/results/ablations/…` layout. | See `docs/ablations.md`. |
-| A7 | **Mass horizon H** as a config value, settable per domain (gridworld stays at 100). | **Open:** UUV = its deadline? Decide before any UUV run. It doesn't affect the gridworld runs. |
-| A8 | **Analysis:** ceilings script, renormalized metrics, F1 budget curves, revised write-up statistics (medians and spread, input tokens, PRISM time, coverage, no "every metric"). | |
-| A9 | Tests for A1–A4, plus a `--limit 1` smoke run of each changed path (asks first). | |
+| A0 | **One config:** `configs/default.yaml` + `conditions.yaml`, `src/config.py`, resolved `config.json` per run. | Done. See `docs/config.md`. |
+| A1 | **Obstacle phase visible** (`domain.visible_extra: [obs_idx]`) to rules **and** legacy. | Done. Legacy makes one call per (goal, phase). Equivalence tests cover phase-observing policies. `pre_phase_a` reproduces the hidden setting. |
+| A2 | **Joint best case** in the REFINE/EXTEND branch (PRISM `multi(…)`, sparse engine, exact LP). | Done. Each round logs `kept_joint_feasible` and `branch_disagreement`. If LP can't decide (step-bounded requirements, i.e. UUV), the result is *undecided* and the loop uses the per-requirement branch; PRISM's value-iteration variant wrongly said "no" on UUV. |
+| A3 | **Reward requirements** (UUV energy). | **On hold.** When done, calibrate the threshold like the others. |
+| A4 | **Retry policies**: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. | Done (`src/core/retry.py`). R3 every:3, R4 gain:0.05. |
+| A5 | **Seeds** (`llm.seed`, passed to Ollama). | Done. |
+| A6 | **Ablation runner** `src/run_ablation.py` (conditions × seeds, resumable, `--dry-run`). | Done. |
+| A7 | **Mass horizon H** configurable (`feedback.horizon`, `horizon_by_domain`). | Done. Gridworld 100. **Open:** UUV value (decide before the next UUV run). |
+| A8 | **Analysis.** Ceilings (`src/ceilings.py`); ceiling-aware metrics, medians and coverage in `src/compare.py`; F1 budget curves (`viz/plot_budget.py`, pools `seed_*` dirs). | Done. Still to do once runs exist: pool seeds in `viz/plot_runs.py`, paired tests. |
+| A9 | Tests (41 passing). Dry runs of the loop with a fake LLM, B2/R3/R4/R5. | Done. **Smoke runs with the real LLM need a go.** |
 
-## Phase B: deliverables without GPU (can go to Marsha before any run)
-- **Per-instance ceilings:** for each grid and UUV scenario, PRISM's best achievable value per requirement (bare MDP, full state) and whether all thresholds are achievable *at once* (`multi` query). This separates "the LLM failed" from "the instance is impossible". Shortfall is renormalized against the achievable value.
-- `docs/semantics.md` (drafted; update after A1–A3).
-- F1 budget curves from the existing runs (illustrative only, since they predate A1–A2).
+**Found while implementing:** with `obs_idx` visible, rules can make the induced chain *periodic*, and PRISM's default value iteration then fails to converge (an instance would crash mid-run). The default solver is now Gauss-Seidel (`prism.method`), and joint queries use exact LP. Checks that reproduce old numbers (the UUV paper, the regression) pin PRISM's defaults.
 
-## Phase C: runs (after A, with a go)
+## Phase B: deliverables without GPU (ready)
+- **Ceilings:** `out/results/ceilings/gridworld_grid_20_balanced.md` and `uuv_uuv_paper.md`.
+  - Gridworld: 19/20 grids jointly solvable, and almost every requirement's optimum is 1.0. Grid 17 is not solvable: `complete_sequence` can reach at most 0.70 against a 0.80 threshold.
+  - Re-scored existing runs (`src/compare.py`): solved of solvable 0/19 legacy vs 1/19 symbolic.
+  - UUV: joint undecided (step-bounded), but the `stay` reference policy is a witness that both scenarios are solvable.
+- **Budget curves** from the existing runs: `viz/figures/budget_grid20.png`. Symbolic starts behind (3.25 vs 4.00 requirements met after 1 round) but improves every round to 5.25; legacy plateaus at 4.30 after round 3.
+- `docs/semantics.md` updated for A1–A2.
+
+## Phase C: runs (with a go)
 2 seeds per condition, every seed's outputs kept (`docs/ablations.md`). **All symbolic runs first, then legacy.**
-1. Smoke tests (`--limit 1`) for each changed path.
-2. B2 symbolic: gridworld, 2 seeds (~1 h).
-3. Retry sweep R1–R5: 2 seeds each (~5 h).
-4. B1 legacy with the obstacle visible: 2 seeds (estimated ~9 h).
+1. Smoke tests: `python src/run_ablation.py B2 R5 B1 --seeds 1 --set run.limit=1` (then delete those dirs).
+2. B2 symbolic, 2 seeds (~1 h): `python src/run_ablation.py B2`.
+3. Retry sweep, 2 seeds each (~5 h): `python src/run_ablation.py R1 R2 R3 R4 R5`.
+4. B1 legacy with the obstacle visible, 2 seeds (estimated ~9 h): `python src/run_ablation.py B1`.
 5. Later: UUV with the energy requirement (after A3), and the deferred ablations once the story is settled.
 
 ## "Why an LLM?" (Asher to write; inputs)
@@ -37,4 +42,6 @@ The meeting asked for a reason the LLM goes *beyond* PRISM: ~3 paragraphs plus e
 - **Model engineering.** Start from the problem description. The LLM builds the PRISM model, PRISM's counterexamples drive revisions, and the revisions double as a justification of the model (Marsha).
 - **Restricted observation.** Memoryless observation-based policies are hard to synthesize, and PRISM's POMDP engine rejected our obstacle requirements outright.
 
-Note: an **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). A3 closes a gap in *our core*, not in PRISM, so it doesn't support the expressiveness argument by itself.
+Notes:
+- An **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). A3 closes a gap in *our core*, not in PRISM, so it doesn't support the expressiveness argument by itself.
+- The ceilings make the synthesis question sharper: PRISM's optimum reaches 1.0 on almost every gridworld requirement.
