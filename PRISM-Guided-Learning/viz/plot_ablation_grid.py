@@ -12,7 +12,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 
 SURFACE, INK, INK_2, INK_3, RULE = "#fcfcfb", "#0b0b0b", "#52514e", "#8a8984", "#e4e3df"
-LEGACY, SYMBOLIC = "#2a78d6", "#eb6834"
+# Badge colours by ablation family, the same as the results charts (viz/ablation_summary.py)
+FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback content": "#1baf7a",
+                 "Blame signal": "#eda100", "Legacy variants": "#4a3aa7"}
+FAMILY_OF = {"B1": "Baselines", "B2": "Baselines", "R1": "Retry sweep", "R2": "Retry sweep", "R3": "Retry sweep",
+             "R4": "Retry sweep", "R5": "Retry sweep", "S1": "Feedback content", "S4": "Feedback content",
+             "S5": "Blame signal", "V1": "Blame signal", "V2": "Blame signal", "L1": "Legacy variants",
+             "L2": "Legacy variants"}
 CHANGED_FILL, CHANGED_INK = "#fde7dc", "#9a3412"   # differs from the row's reference
 REF_FILL = "#f1f0ec"
 DOCS = Path(__file__).resolve().parents[2] / "docs"
@@ -129,7 +135,7 @@ def draw(rows, title, subtitle, notes, out):
         y0, y1, mid = y - row_h, y, y - row_h / 2
         if is_ref:
             ax.add_patch(Rectangle((left, y0), xs[-1] - left, row_h, color=REF_FILL, lw=0, zorder=0))
-        color = {"legacy": LEGACY, "symbolic": SYMBOLIC}.get(family, INK_3)
+        color = FAMILY_COLORS.get(FAMILY_OF.get(rid), INK_3)
         ax.add_patch(FancyBboxPatch((xs[0] + 0.08, y0 + 0.16), xs[1] - xs[0] - 0.16, row_h - 0.32,
                                     boxstyle="round,pad=0,rounding_size=0.06", color=color, lw=0))
         ax.text((xs[0] + xs[1]) / 2, mid, rid, color="white", fontsize=9, fontweight="bold", ha="center", va="center")
