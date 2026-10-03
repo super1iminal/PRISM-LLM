@@ -1,6 +1,9 @@
 """Run the legacy (per-state policy, FeedbackSimplified) planner on a gridworld dataset.
 
-Usage: python src/run_legacy.py [--data grid_20_balanced.csv] [--workers 2] [--max-attempts 5]
+Usage: python src/run_legacy.py [--set section.key=value ...] [--out DIR]
+       (shortcuts: --data, --workers, --max-attempts, --limit)
+Settings come from configs/ (approach is forced to legacy). With `obs_idx` in domain.visible_extra
+(the default), the policy also observes the moving obstacle's phase: one LLM call per (goal, phase).
 """
 import argparse
 import datetime
@@ -11,37 +14,56 @@ from typing import Dict, List
 
 import pandas as pd
 
+from config import Config, load_config
 from core.llm import OllamaLLM
 from legacy.data_loader import DataLoader
 from legacy.planner import FeedbackSimplifiedLLMPlanner
 from legacy.prompting import ActionPolicy
 from logging_utils import setup_logger
-from settings import DOMAINS_PATH, OLLAMA_MODEL, RESULTS_PATH
+from settings import DOMAINS_PATH, RESULTS_PATH
 
 APPROACH_NAME = "LEGACY_FEEDBACK_SIMPLIFIED"
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", default="grid_20_balanced.csv")
-    parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--max-attempts", type=int, default=5)
+    parser.add_argument("--condition", default=None, help="Named condition from configs/conditions.yaml")
+    parser.add_argument("--set", action="append", help="Config override section.key=value (repeatable)")
+    parser.add_argument("--data")
+    parser.add_argument("--workers", type=int)
+    parser.add_argument("--max-attempts", type=int)
+    parser.add_argument("--limit", type=int)
     parser.add_argument("--out", default=None, help="Output directory (default: timestamped under out/results)")
     args = parser.parse_args()
 
-    dataloader = DataLoader(str(DOMAINS_PATH / "gridworld" / "data" / args.data))
-    dataloader.load_data()
-
+    overrides = ["approach=legacy"] + list(args.set or [])
+    for flag, key in (("data", "domain.dataset"), ("workers", "run.workers"), ("max_attempts", "legacy.max_rounds"),
+                      ("limit", "run.limit")):
+        if getattr(args, flag) is not None:
+            overrides.append(f"{key}={getattr(args, flag)}")
+    cfg = load_config(args.condition, overrides)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
-    run_dir = args.out or os.path.join(RESULTS_PATH, f"legacy_{len(dataloader.data)}_{timestamp}")
+    print(run(cfg, args.out or os.path.join(RESULTS_PATH, f"legacy_{timestamp}")))
+
+
+def run(cfg: Config, run_dir: str) -> str:
+    """Run the legacy planner on `cfg.domain.dataset` (gridworld only); write results to `run_dir`."""
+    if cfg.domain.name != "gridworld":
+        raise ValueError("the legacy planner only supports gridworld")
     os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(cfg.to_dict(), f, indent=1)
+    dataloader = DataLoader(str(DOMAINS_PATH / "gridworld" / "data" / cfg.domain.dataset))
+    dataloader.load_data()
+    dataloader.data = dataloader.data[:cfg.run.limit]
     logger = setup_logger("eval", run_dir=run_dir, include_timestamp=False)
 
-    model = OllamaLLM(ActionPolicy)
-    planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=OLLAMA_MODEL.replace(":", "_"),
-                                           max_attempts=args.max_attempts)
+    model = OllamaLLM(ActionPolicy, cfg.llm)
+    planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=cfg.llm.model.replace(":", "_"),
+                                           max_attempts=cfg.legacy.max_rounds,
+                                           observe_obstacle="obs_idx" in cfg.domain.visible_extra)
     start_time = time()
-    results = planner.evaluate(dataloader, max_workers=args.workers, run_dir=run_dir)
+    results = planner.evaluate(dataloader, max_workers=cfg.run.workers, run_dir=run_dir)
     logger.info(f"{APPROACH_NAME} finished in {time() - start_time:.2f} seconds")
     for idx, result in enumerate(results):
         logger.info(f"  Gridworld {idx+1}: LTL Score = {result['LTL_Score']:.4f}, success = {result['Success']}")
@@ -49,7 +71,7 @@ def main():
     save_results(results, dataloader, APPROACH_NAME, run_dir)
     save_outputs(results, run_dir)
     logger.info(f"Results saved to: {run_dir}")
-    print(run_dir)
+    return run_dir
 
 
 def results_to_multiindex_df(results: List[Dict], dataloader: DataLoader) -> pd.DataFrame:

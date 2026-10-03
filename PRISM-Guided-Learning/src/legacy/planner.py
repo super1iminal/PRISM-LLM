@@ -38,12 +38,15 @@ def _evaluate_single_gridworld_feedback_simplified(args: Tuple) -> Dict:
     planner = FeedbackSimplifiedLLMPlanner(
         model=model,
         model_name=model_name,
-        max_attempts=config.get('max_attempts', 3)
+        max_attempts=config.get('max_attempts', 3),
+        observe_obstacle=config.get('observe_obstacle', False)
     )
+    observes = planner.observe_obstacle and bool(gridworld.moving_obstacle_positions)
 
     # Setup logger for this worker in the shared directory
     planner.logger = setup_logger(f"worker_{idx}", run_dir=run_dir, include_timestamp=False)
-    planner.prism_verifier = PrismVerifier(get_prism_path(), planner.logger)
+    planner.prism_verifier = PrismVerifier(get_prism_path(), planner.logger,
+                                           method="-gaussseidel" if observes else "-power")
     model.reset_usage()
 
     start_time = time()
@@ -52,6 +55,7 @@ def _evaluate_single_gridworld_feedback_simplified(args: Tuple) -> Dict:
     planner.model_generator = PrismModelGenerator(gridworld, planner.logger)
     planner.simplified_verifier = SimplifiedVerifier(planner.prism_verifier, gridworld, planner.logger)
     planner.num_goals = len(gridworld.goals)
+    planner.phases = list(range(gridworld.num_obs_steps)) if observes else [None]
     planner.q_table = planner.initialize_q_table()
     planner.prism_probs = {}
 
@@ -96,8 +100,12 @@ class FeedbackSimplifiedLLMPlanner:
     build_prompt(is_feedback=True), producing a ~50% shorter, repair-focused prompt.
     """
 
-    def __init__(self, model, model_name: str, max_attempts: int = 3):
+    def __init__(self, model, model_name: str, max_attempts: int = 3, observe_obstacle: bool = False):
         self.action_space = 4
+        # With observe_obstacle, the policy also depends on the moving obstacle's phase: one LLM call
+        # per (goal, phase) instead of per goal, each covering every cell for that phase.
+        self.observe_obstacle = observe_obstacle
+        self.phases = [None]
         self.prism_probs = {}
         self.max_attempts = max_attempts  # Total LLM attempts per goal (1 initial + N-1 feedback)
         self.model = model
@@ -157,6 +165,7 @@ class FeedbackSimplifiedLLMPlanner:
         # Prepare arguments with shared run directory
         config = {
             'max_attempts': self.max_attempts,
+            'observe_obstacle': self.observe_obstacle,
             'run_dir': log_dir,  # Pass shared directory to workers
             'model': self.model,
             'model_name': self.model_name
@@ -238,8 +247,9 @@ class FeedbackSimplifiedLLMPlanner:
         for x in range(self.size):
             for y in range(self.size):
                 for goal_combo in goal_combinations:
-                    state = (x, y) + goal_combo
-                    policy[state] = 2  # Default: DOWN
+                    for phase in self.phases:
+                        state = (x, y) + goal_combo + self._phase_suffix(phase)
+                        policy[state] = 2  # Default: DOWN
 
         self.logger.info(f"Policy initialized with {len(policy)} states.")
         return policy
@@ -301,8 +311,25 @@ class FeedbackSimplifiedLLMPlanner:
                 needs_requery.append(idx)
         return needs_requery
 
+    @staticmethod
+    def _phase_suffix(phase) -> tuple:
+        return (phase,) if phase is not None else ()
+
+    def _with_phase_note(self, prompt: str, phase) -> str:
+        """Tell the LLM which obstacle phase this per-cell policy is for (phase-observing runs only)."""
+        if phase is None:
+            return prompt
+        cycle = self.env.moving_obstacle_positions
+        note = (f"OBSTACLE PHASE:\nThe policy can see where the moving obstacle is. Give the best action for every "
+                f"cell for the moments when the obstacle is at position {phase} of its cycle, cell {cycle[phase]} "
+                f"(the full cycle is {cycle}, one position per step; next it moves to {cycle[(phase + 1) % len(cycle)]}).\n\n")
+        for marker in ("CRITICAL REQUIREMENTS:", "REQUIREMENTS:"):
+            if marker in prompt:
+                return prompt.replace(marker, note + marker, 1)
+        return prompt + "\n" + note
+
     def _get_feedback_prompt(self, goal_idx: int, goal: Tuple[int, int],
-                              future_goals: List[Tuple[int, int]]) -> str:
+                              future_goals: List[Tuple[int, int]], phase=None) -> str:
         """Generate focused repair prompt for correction iteration"""
 
         goal_nums = sorted(self.env.goals.keys())
@@ -310,7 +337,7 @@ class FeedbackSimplifiedLLMPlanner:
 
         # Get the applicable goal state for this goal index
         goal_state_list = self._get_applicable_goal_states(goal_idx)[0]
-        goal_state = tuple(goal_state_list)
+        goal_state = tuple(goal_state_list) + self._phase_suffix(phase)
 
         policy_vis = generate_policy_visual(
             self.size, self.q_table, goal_state,
@@ -325,7 +352,7 @@ class FeedbackSimplifiedLLMPlanner:
         # Show ALL probs but annotate which are relevant to this goal
         prob_summary = format_probability_summary(self.prism_probs, relevant_keys=set(segment_probs.keys()))
 
-        return build_repair_prompt(
+        return self._with_phase_note(build_repair_prompt(
             size=self.size,
             s_obstacles=self.env.static_obstacles,
             f_goals=future_goals,
@@ -337,9 +364,9 @@ class FeedbackSimplifiedLLMPlanner:
             probability_summary=prob_summary,
             policy_visual=policy_vis,
             policy_raw=policy_raw,
-        )
+        ), phase)
 
-    def _apply_response_to_q_table(self, response: ActionPolicy, goal_idx: int):
+    def _apply_response_to_q_table(self, response: ActionPolicy, goal_idx: int, phase=None):
         """Apply LLM response to policy table"""
         applicable_goals = self._get_applicable_goal_states(goal_idx)
 
@@ -352,7 +379,7 @@ class FeedbackSimplifiedLLMPlanner:
 
             for goal_state_list in applicable_goals:
                 goal_state_tuple = tuple(goal_state_list)
-                state = (x, y) + goal_state_tuple
+                state = (x, y) + goal_state_tuple + self._phase_suffix(phase)
 
                 if state in self.q_table:
                     self.logger.info(f"Setting action for state {state} to {state_action.best_action}")
@@ -409,30 +436,31 @@ class FeedbackSimplifiedLLMPlanner:
 
             future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
-            self.logger.info(f"Calling LLM for goal {goal_num}...")
-            prompt_text = get_prompt(
-                self.size,
-                self.env.static_obstacles,
-                future_goals,
-                self.env.moving_obstacle_positions,
-                goal,
-                self.env.prob_forward,
-                self.env.prob_slip_left,
-                self.env.prob_slip_right
-            )
-            self.logger.info(f"=== PROMPT for goal {goal_num} ===\n{prompt_text}")
-            llm_start = time()
-            try:
-                response = self.model.invoke(prompt_text)
-            except Exception as e:
-                self.logger.error(f"LLM invoke failed for goal {goal_num}: {type(e).__name__}: {e}")
-                raise
-            iter_llm_time += time() - llm_start
-            self.logger.info("LLM Response received.")
-            self.logger.info(response.states)
+            for phase in self.phases:
+                self.logger.info(f"Calling LLM for goal {goal_num} (obstacle phase {phase})...")
+                prompt_text = self._with_phase_note(get_prompt(
+                    self.size,
+                    self.env.static_obstacles,
+                    future_goals,
+                    self.env.moving_obstacle_positions,
+                    goal,
+                    self.env.prob_forward,
+                    self.env.prob_slip_left,
+                    self.env.prob_slip_right
+                ), phase)
+                self.logger.info(f"=== PROMPT for goal {goal_num} (phase {phase}) ===\n{prompt_text}")
+                llm_start = time()
+                try:
+                    response = self.model.invoke(prompt_text)
+                except Exception as e:
+                    self.logger.error(f"LLM invoke failed for goal {goal_num}: {type(e).__name__}: {e}")
+                    raise
+                iter_llm_time += time() - llm_start
+                self.logger.info("LLM Response received.")
+                self.logger.info(response.states)
 
-            goal_responses[goal_num] = response
-            self._apply_response_to_q_table(response, idx)
+                goal_responses[goal_num] = response
+                self._apply_response_to_q_table(response, idx, phase)
 
         # Initial verification
         prism_start = time()
@@ -473,24 +501,25 @@ class FeedbackSimplifiedLLMPlanner:
                 goal = self.env.goals[goal_num]
                 future_goals = [self.env.goals[k] for k in goal_nums if k > goal_num]
 
-                self.logger.info(f"Re-planning goal {goal_num} with simplified repair prompt")
+                for phase in self.phases:
+                    self.logger.info(f"Re-planning goal {goal_num} (obstacle phase {phase}) with simplified repair prompt")
 
-                feedback_prompt = self._get_feedback_prompt(
-                    idx, goal, future_goals
-                )
-                self.logger.info(f"=== PROMPT for goal {goal_num} (feedback) ===\n{feedback_prompt}")
+                    feedback_prompt = self._get_feedback_prompt(
+                        idx, goal, future_goals, phase
+                    )
+                    self.logger.info(f"=== PROMPT for goal {goal_num} (phase {phase}, feedback) ===\n{feedback_prompt}")
 
-                llm_start = time()
-                try:
-                    response = self.model.invoke(feedback_prompt)
-                except Exception as e:
-                    self.logger.error(f"Feedback Simplified LLM invoke failed for goal {goal_num} (attempt {attempt}): {type(e).__name__}: {e}")
-                    raise
-                iter_llm_time += time() - llm_start
-                self.logger.info("Feedback Simplified LLM Response received.")
+                    llm_start = time()
+                    try:
+                        response = self.model.invoke(feedback_prompt)
+                    except Exception as e:
+                        self.logger.error(f"Feedback Simplified LLM invoke failed for goal {goal_num} (attempt {attempt}): {type(e).__name__}: {e}")
+                        raise
+                    iter_llm_time += time() - llm_start
+                    self.logger.info("Feedback Simplified LLM Response received.")
 
-                goal_responses[goal_num] = response
-                self._apply_response_to_q_table(response, idx)
+                    goal_responses[goal_num] = response
+                    self._apply_response_to_q_table(response, idx, phase)
 
             # Re-verify
             prism_start = time()

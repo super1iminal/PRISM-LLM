@@ -13,7 +13,7 @@ class PrismModelGenerator:
         self.has_moving_obs = bool(gridWorld.moving_obstacle_positions)
 
     def _generate_transitions(self, x: int, y: int, goal_states: tuple,
-                           best_action: int) -> list:
+                           best_action: int, phase: int = None) -> list:
         """Generate transitions with stochastic slip model.
 
         Uses deterministic policy with stochastic execution:
@@ -27,6 +27,7 @@ class PrismModelGenerator:
             x, y: Current position
             goal_states: Tuple of booleans indicating which goals have been reached
             best_action: Best action (0=UP, 1=RIGHT, 2=DOWN, 3=LEFT)
+            phase: Moving obstacle phase this action applies to (None: every phase)
         """
 
         # Actions: [0=UP, 1=RIGHT, 2=DOWN, 3=LEFT]
@@ -51,7 +52,8 @@ class PrismModelGenerator:
         goal_guard_parts = " & ".join([f"g{i+1}={str(goal_states[i]).lower()}"
                                        for i in range(self.num_goals)])
         action_label = "[step]" if self.has_moving_obs else "[]"
-        guard = f"  {action_label} (x={x} & y={y} & {goal_guard_parts}) ->"
+        phase_guard = f" & obs_idx={phase}" if phase is not None else ""
+        guard = f"  {action_label} (x={x} & y={y} & {goal_guard_parts}{phase_guard}) ->"
 
         updates = []
 
@@ -98,7 +100,8 @@ class PrismModelGenerator:
 
         Args:
             policy: Dictionary mapping states to best action (0-3)
-                    State format: (x, y, g1, g2, ..., gN) where N is number of goals
+                    State format: (x, y, g1, g2, ..., gN) where N is number of goals, optionally
+                    followed by the moving obstacle phase obs_idx (policies that observe it)
         """
         self.debug_transitions = set()
 
@@ -115,17 +118,20 @@ class PrismModelGenerator:
         total_states = 0
 
         goal_combinations = list(product([False, True], repeat=self.num_goals))
+        observes_phase = any(len(state) == 3 + self.num_goals for state in policy)
+        phases = list(range(self.gridWorld.num_obs_steps)) if observes_phase else [None]
 
         for x in range(self.gridWorld.size):
             for y in range(self.gridWorld.size):
                 for goal_combo in goal_combinations:
-                    state = (x, y) + goal_combo
-                    if state in policy:
-                        total_states += 1
-                        transitions = self._generate_transitions(
-                            x, y, goal_combo, policy[state]
-                        )
-                        model.extend(transitions)
+                    for phase in phases:
+                        state = (x, y) + goal_combo + ((phase,) if phase is not None else ())
+                        if state in policy:
+                            total_states += 1
+                            transitions = self._generate_transitions(
+                                x, y, goal_combo, policy[state], phase
+                            )
+                            model.extend(transitions)
 
         model.append("endmodule")
         model.append("")

@@ -19,18 +19,20 @@ pytestmark = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on 
 LOG = logging.getLogger("test")
 
 
-@pytest.mark.parametrize("sample", [0, 7, 16])
-def test_random_policy_matches_legacy(sample):
-    domain = load_domain("gridworld")
+@pytest.mark.parametrize("sample,observe", [(0, False), (7, False), (16, False), (0, True), (16, True)])
+def test_random_policy_matches_legacy(sample, observe):
+    """Also with the obstacle phase observed: legacy phase guards vs rules over obs_idx."""
+    domain = load_domain("gridworld", ["obs_idx"] if observe else [])
     instance = domain.load_instances("grid_20_balanced.csv")[sample]
     d = instance.data
     rng = random.Random(sample)
-    states = [(x, y, g1, g2, g3) for x in range(d["n"]) for y in range(d["n"])
-              for g1 in (False, True) for g2 in (False, True) for g3 in (False, True)]
+    gw = LegacyGridWorld(d["n"], d["goals"], d["static"], d["moving"])
+    phases = [(p,) for p in range(gw.num_obs_steps)] if observe else [()]
+    states = [(x, y, g1, g2, g3) + ph for x in range(d["n"]) for y in range(d["n"])
+              for g1 in (False, True) for g2 in (False, True) for g3 in (False, True) for ph in phases]
     legacy_policy = [(s, rng.randrange(4)) for s in states]
 
     runner = PrismRunner(extra_args=["-epsilon", "1e-10"])
-    gw = LegacyGridWorld(d["n"], d["goals"], d["static"], d["moving"])
     model = PrismModelGenerator(gw, LOG).generate_prism_model(dict(legacy_policy))
     legacy = runner.run(model, [r.property for r in SimplifiedVerifier(None, gw, LOG).requirements]).initial_values
 

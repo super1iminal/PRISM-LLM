@@ -7,15 +7,19 @@ LEGACY_ACTIONS = {0: "up", 1: "right", 2: "down", 3: "left"}
 
 
 def legacy_policy_to_rules(policy: Iterable[Tuple[Sequence, int]], num_goals: int) -> List[Tuple[str, str]]:
-    """`policy`: pairs (state, action) with state = (x, y, g1, ..., gN) and action 0-3.
+    """`policy`: pairs (state, action) with state = (x, y, g1, ..., gN[, obs_idx]) and action 0-3.
 
     Every state becomes one exact-match rule, so the result covers exactly the states the
-    legacy policy assigned and chooses the same actions.
+    legacy policy assigned and chooses the same actions. Policies that observe the moving
+    obstacle carry its phase last; their rules then need `obs_idx` to be a visible variable.
     """
     assignments = []
     for state, action in policy:
-        x, y, *flags = state
+        x, y, *rest = state
+        flags, phase = rest[:num_goals], rest[num_goals:]
         valuation: Dict = {"x": x, "y": y}
         valuation.update({f"g{k + 1}": bool(flags[k]) for k in range(num_goals)})
+        if phase:
+            valuation["obs_idx"] = int(phase[0])
         assignments.append((valuation, LEGACY_ACTIONS[int(action)]))
     return atomic_rules(assignments)

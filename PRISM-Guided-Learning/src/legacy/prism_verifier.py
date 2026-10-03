@@ -5,8 +5,11 @@ import os
 import traceback
 
 class PrismVerifier:
-    def __init__(self, prism_bin_path: str, logger):
+    def __init__(self, prism_bin_path: str, logger, method: str = "-power"):
         self.prism_bin_path = prism_bin_path
+        # The power method oscillates on periodic chains (policies that depend on the obstacle
+        # phase); those runs pass "-gaussseidel".
+        self.method = method
         self.logger = logger
         self.temp_files = []
 
@@ -40,7 +43,7 @@ class PrismVerifier:
                 "-explicit",
                 "-javamaxmem", "4g",
                 "-maxiters", "1000000",  
-                "-power", 
+                self.method,
                 "-verbose",
             ]
 
