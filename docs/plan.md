@@ -18,7 +18,7 @@ Target: **SEAMS 2027** (research track Oct 23; check the official site), with IC
 | A8 | **Analysis.** Ceilings (`src/ceilings.py`); ceiling-aware metrics, medians and coverage in `src/compare.py`; F1 budget curves (`viz/plot_budget.py`, pools `seed_*` dirs). | Done. Still to do once runs exist: pool seeds in `viz/plot_runs.py`, paired tests. |
 | A9 | Tests (41 passing). Dry runs of the loop with a fake LLM, B2/R3/R4/R5. | Done. **Smoke runs with the real LLM need a go.** |
 
-**Found while implementing:** with `obs_idx` visible, rules can make the induced chain *periodic*, and PRISM's default value iteration then fails to converge (an instance would crash mid-run). The default solver is now Gauss-Seidel (`prism.method`), and joint queries use exact LP. Checks that reproduce old numbers (the UUV paper, the regression) pin PRISM's defaults.
+**Found while implementing:** solver and LP changes for periodic chains; see `DECISIONS.md`, "Phase A".
 
 ## Phase B: deliverables without GPU (ready)
 - **Ceilings:** `out/results/ceilings/gridworld_grid_20_balanced.md` and `uuv_uuv_paper.md`.
