@@ -1,6 +1,7 @@
 """Print what the requirement thresholds in a UUV dataset are calibrated against.
 
-For each scenario: the best and worst value of each requirement over all controllers (bare MDP),
+For each scenario: the best and worst value of each requirement over all controllers (bare MDP;
+for reward requirements such as energy, best = lowest),
 and the worst-case values of the reference policies in reference_policies.json. Run from
 PRISM-Guided-Learning/:
     python domains/uuv/data/calibrate.py [uuv_paper.csv]
@@ -24,10 +25,10 @@ def main(dataset: str = "uuv_paper.csv") -> None:
     for instance in domain.load_instances(dataset):
         verifier = PolicyVerifier(domain, instance)
         spec = verifier.spec
-        props = [f"{op}=? [ {r.formula} ]" for r in spec.requirements for op in ("Pmax", "Pmin")]
+        props = [f"{op}=? [ {r.formula} ]" for r in spec.requirements for op in (r.best_op(), r.worst_op())]
         bounds = verifier.runner.run(verifier.model, props).initial_values
         print(f"{instance.data['name']}: " + ", ".join(
-            f"{r.name} in [{bounds[2 * i + 1]:.4f}, {bounds[2 * i]:.4f}] (threshold {r.threshold})"
+            f"{r.name}: best {bounds[2 * i]:.4f}, worst {bounds[2 * i + 1]:.4f} (threshold {r.bound} {r.threshold})"
             for i, r in enumerate(spec.requirements)))
         for name, rules in REFERENCE.items():
             v = verifier.verify(SymbolicPolicy.from_raw(spec.variables, list(spec.actions), rules), analysis=False)

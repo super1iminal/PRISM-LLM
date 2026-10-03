@@ -4,7 +4,7 @@ from time import time
 from typing import Dict, List, Optional, Set, Tuple
 
 from core.domain import Domain, Instance, Spec
-from core.prism import PrismResult, PrismRunner, StateKey
+from core.prism import PrismError, PrismResult, PrismRunner, StateKey
 from core.rules import SymbolicPolicy, Value
 
 
@@ -78,7 +78,7 @@ class PolicyVerifier:
 
     def joint_query(self) -> str:
         """PRISM multi-objective query: can one scheduler meet every threshold at once?"""
-        objectives = ", ".join(f"P{r.bound}{r.threshold} [ {r.formula} ]" for r in self.spec.requirements)
+        objectives = ", ".join(r.bounded() for r in self.spec.requirements)
         return f"multi({objectives})"
 
     def jointly_feasible(self, policy: Optional[SymbolicPolicy] = None) -> Optional[bool]:
@@ -88,7 +88,10 @@ class PolicyVerifier:
         "No" is exact; "yes" is optimistic for memoryless, observation-based completions. None means
         undecided (PRISM's exact LP method does not support e.g. step-bounded requirements).
         """
-        return self.runner.check(self.compose(policy), self.joint_query())
+        try:
+            return self.runner.check(self.compose(policy), self.joint_query())
+        except PrismError:
+            return None   # e.g. objective kinds PRISM's multi-objective engine rejects: undecided
 
     def optimum(self) -> Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]:
         """Best achievable value of each requirement on the bare MDP (no policy), cached.

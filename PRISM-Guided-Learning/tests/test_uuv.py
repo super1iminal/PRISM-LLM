@@ -53,9 +53,31 @@ def test_thresholds_separate_reference_policies(domain, sample):
         assert v.uncovered_situations == 0
         return {r.name: r.satisfied(v.worst[r.name]) for r in spec.requirements}
 
-    assert passes(STAY) == {"no_thruster_failure": True, "done_in_time": True}
+    assert passes(STAY) == {"no_thruster_failure": True, "done_in_time": True, "energy_budget": True}
     assert passes([("true", "low")])["no_thruster_failure"] is False
-    assert passes([("true", "high")])["done_in_time"] is False
+    high = passes([("true", "high")])
+    assert high["done_in_time"] is False and high["energy_budget"] is False   # safest, but costs the most energy
+
+
+@pytest.mark.parametrize("sample", [0, 1])
+def test_energy_requirement(domain, sample):
+    """Expected energy until done: best/worst over all controllers are the paper's Table 2 min/max."""
+    instance = domain.load_instances("uuv_paper.csv")[sample]
+    verifier = PolicyVerifier(domain, instance)
+    energy = {r.name: r for r in verifier.spec.requirements}["energy_budget"]
+    assert (energy.reward, energy.bound, energy.best_op(), energy.worst_op()) ==         ("energy", "<=", 'R{"energy"}min', 'R{"energy"}max')
+    assert energy.bounded() == f'R{{"energy"}}<={energy.threshold} [ F "done" ]'
+    assert energy.shortfall(energy.threshold * 1.1) == pytest.approx(0.1)   # relative, like a probability gap
+    optimum, _, _ = verifier.optimum()
+    assert round(optimum["energy_budget"], 2) == PAPER[instance.data["name"]][1]
+    assert verifier.jointly_feasible() is None   # step-bounded deadline: LP cannot decide
+
+
+def test_requirement_prompt_text(domain):
+    instance = domain.load_instances("uuv_paper.csv")[0]
+    bounds = {r.name: r.bound_text() for r in PolicyVerifier(domain, instance).spec.requirements}
+    assert bounds["done_in_time"] == "Probability must be >= 0.8"
+    assert bounds["energy_budget"] == "Expected energy must be <= 26.5"
 
 
 def test_forced_states_are_not_situations(domain):

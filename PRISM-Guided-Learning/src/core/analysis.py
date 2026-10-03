@@ -76,6 +76,12 @@ def _occupancy(result: PrismResult, strategy: List[int], horizon: int) -> np.nda
     return visits
 
 
+def _stake_scale(req: Requirement) -> float:
+    """Reward stakes (e.g. energy) count relative to the threshold, so they are on the same scale as
+    probability stakes when masses are summed across requirements (as `Requirement.shortfall` does)."""
+    return 1.0 / (abs(req.threshold) or 1.0) if req.reward is not None else 1.0
+
+
 def _signed(req: Requirement, vector: List[float]) -> np.ndarray:
     """Values oriented so that larger is always better."""
     v = np.asarray(vector, dtype=float)
@@ -97,6 +103,12 @@ class MassAnalyzer:
 
     def _state_masses(self, v: Verification, strategy_values: np.ndarray, gap: np.ndarray,
                       maximize_strategy: bool) -> np.ndarray:
+        # Expected rewards can be infinite (goal not reached with probability 1): cap them so the
+        # greedy strategy still prefers finite values, and give infinite stakes the largest finite one.
+        strategy_values = np.nan_to_num(strategy_values, nan=0.0, posinf=1e12, neginf=-1e12)
+        gap = np.nan_to_num(np.asarray(gap, dtype=float), nan=0.0, posinf=np.inf, neginf=0.0)
+        finite = gap[np.isfinite(gap)]
+        gap = np.where(np.isfinite(gap), gap, finite.max() if finite.size and finite.max() > 0 else 1.0)
         strategy = _greedy(_q_values(v.result, strategy_values), maximize_strategy)
         return _occupancy(v.result, strategy, self.horizon) * np.clip(gap, 0.0, None)
 
@@ -105,7 +117,7 @@ class MassAnalyzer:
         by_valuation: Dict[Tuple, Hotspot] = {}
         for req in failing:
             worst, best = _signed(req, v.worst_vectors[req.name]), _signed(req, v.best_vectors[req.name])
-            masses = self._state_masses(v, worst, best - worst, maximize_strategy=False)
+            masses = self._state_masses(v, worst, best - worst, maximize_strategy=False) * _stake_scale(req)
             for s in np.nonzero(masses > 0)[0]:
                 if v.state_rules[s] is not None or not v.decisions[s]:
                     continue
@@ -131,7 +143,7 @@ class MassAnalyzer:
             opt = _signed(req, opt_vectors[req.name])
             optimum = np.array([opt[opt_index[state]] for state in v.result.states])
             best = _signed(req, v.best_vectors[req.name])
-            masses = self._state_masses(v, best, optimum - best, maximize_strategy=True)
+            masses = self._state_masses(v, best, optimum - best, maximize_strategy=True) * _stake_scale(req)
             for s in np.nonzero(masses > 0)[0]:
                 if not v.decisions[s]:
                     continue

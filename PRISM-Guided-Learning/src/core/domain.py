@@ -33,29 +33,51 @@ CORE_TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 @dataclass
 class Requirement:
+    """A bound on a probability (`P⋈θ [formula]`) or, with `reward`, on an expected reward
+    (`R{"reward"}⋈θ [formula]`, e.g. expected energy until `F "done"`)."""
     name: str
     formula: str              # PRISM path formula, e.g.  F "at_goal1"
     threshold: float
-    bound: str = ">="         # ">=": probability must be at least threshold, "<=": at most
+    bound: str = ">="         # ">=": value must be at least threshold, "<=": at most
     description: str = ""
+    reward: Optional[str] = None   # reward structure name; None for a probability requirement
 
     @property
     def maximize(self) -> bool:
         return self.bound == ">="
 
-    def satisfied(self, probability: float) -> bool:
-        return probability >= self.threshold if self.maximize else probability <= self.threshold
+    def satisfied(self, value: float) -> bool:
+        return value >= self.threshold if self.maximize else value <= self.threshold
 
-    def shortfall(self, probability: float) -> float:
-        """How far `probability` is from satisfying the requirement (0 if satisfied)."""
-        gap = self.threshold - probability if self.maximize else probability - self.threshold
+    def shortfall(self, value: float) -> float:
+        """How far `value` is from satisfying the requirement (0 if satisfied). Reward requirements
+        use the gap relative to the threshold, so they are on the same scale as probabilities."""
+        gap = self.threshold - value if self.maximize else value - self.threshold
+        if self.reward is not None:
+            gap /= abs(self.threshold) or 1.0
         return max(0.0, gap)
 
+    def _op(self, best: bool) -> str:
+        high = self.maximize == best
+        if self.reward is not None:
+            return f'R{{"{self.reward}"}}{"max" if high else "min"}'
+        return "Pmax" if high else "Pmin"
+
     def best_op(self) -> str:
-        return "Pmax" if self.maximize else "Pmin"
+        return self._op(best=True)
 
     def worst_op(self) -> str:
-        return "Pmin" if self.maximize else "Pmax"
+        return self._op(best=False)
+
+    def bounded(self) -> str:
+        """The requirement as a bounded PRISM property, e.g. `P>=0.8 [ F "goal" ]`."""
+        op = f'R{{"{self.reward}"}}' if self.reward is not None else "P"
+        return f"{op}{self.bound}{self.threshold} [ {self.formula} ]"
+
+    def bound_text(self) -> str:
+        """How the bound reads in the prompt."""
+        what = "Probability" if self.reward is None else f"Expected {self.reward}"
+        return f"{what} must be {self.bound} {self.threshold}"
 
 
 @dataclass
@@ -137,7 +159,7 @@ class Domain:
                 raise ValueError(f"policy variable {name!r} is not declared in the model; give its type/range in the spec")
             variables.append(var)
         requirements = [Requirement(r["name"], r["formula"], float(r["threshold"]), r.get("bound", ">="),
-                                    r.get("description", "")) for r in raw["requirements"]]
+                                    r.get("description", ""), r.get("reward")) for r in raw["requirements"]]
         return Spec(variables, dict(raw["actions"]), requirements)
 
     def format_state(self, valuation: Dict[str, Value]) -> str:

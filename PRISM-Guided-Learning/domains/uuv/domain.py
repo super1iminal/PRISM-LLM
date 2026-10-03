@@ -54,6 +54,9 @@ class UUV(Domain):
                 "deadline": int(row["deadline"]),
                 "safe_threshold": float(row["safe_threshold"]),
                 "on_time_threshold": float(row["on_time_threshold"]),
+                # Optional expected-energy budget (blank or missing column: no energy requirement)
+                "energy_threshold": (float(row["energy_threshold"]) if "energy_threshold" in row
+                                     and pd.notna(row["energy_threshold"]) else None),
             }))
         return instances
 

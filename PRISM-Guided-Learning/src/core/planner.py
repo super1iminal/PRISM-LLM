@@ -220,13 +220,15 @@ class SymbolicPlanner:
                         } for b in blame]
                         prompt = self.domain.render("refine.md.j2", instance, **base_ctx, **results_ctx,
                                                     failing=[r.name for r in blamed], blame=blame_ctx,
+                                                    with_cost=any(r.reward is not None for r in blamed),
                                                     joint_conflict=joint_conflict)
                     else:
                         mode = "extend"
                         hotspots = analyzer.uncovered_hotspots(best_v, failing_worst)
                         hot_ctx = [{"mass": h.mass, "state": self.domain.format_state(h.valuation)} for h in hotspots]
                         prompt = self.domain.render("extend.md.j2", instance, **base_ctx, **results_ctx,
-                                                    failing=[r.name for r in failing_worst], hotspots=hot_ctx)
+                                                    failing=[r.name for r in failing_worst], hotspots=hot_ctx,
+                                                    with_cost=any(r.reward is not None for r in failing_worst))
             record["iteration_time"] = time() - iter_start
 
         best_policy, best_v, _ = best
