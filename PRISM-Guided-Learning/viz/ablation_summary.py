@@ -82,6 +82,11 @@ def mode_stats(run_dir: Path) -> dict:
 def load_run(condition: str, run_dir: Path, solvable: set) -> pd.DataFrame:
     legacy = (run_dir / LEGACY_FILE).exists()
     df = add_summary_metrics(load_legacy(run_dir, DATASET) if legacy else load_symbolic(run_dir))
+    raw = pd.read_parquet(run_dir / (LEGACY_FILE if legacy else SYMBOLIC_FILE)).reset_index()
+    per = raw.groupby("sample_id")
+    df["input_tokens"] = per.llm_prompt_tokens.first()
+    df["prism_s"] = (per.prism_time.sum() + (per.joint_time.sum() if "joint_time" in raw else 0)
+                     if "prism_time" in raw else np.nan)
     if legacy:
         df["met_best"], df["uncovered_pct"] = df["met"], 0.0
     else:
@@ -130,6 +135,10 @@ def condition_table(data: pd.DataFrame, extra: dict) -> pd.DataFrame:
             "solved": per_seed.apply(lambda g: int((g.solved & g.solvable).sum())).mean(),
             "met": d.met.mean(), "met_seed_min": per_seed.met.mean().min(), "met_seed_max": per_seed.met.mean().max(),
             "met_best": d.met_best.mean(), "shortfall": d.shortfall.mean(), "uncovered": d.uncovered_pct.mean(),
+            "met_median": d.met.median(), "met_q1": d.met.quantile(0.25), "met_q3": d.met.quantile(0.75),
+            "short_median": d.shortfall.median(), "short_q1": d.shortfall.quantile(0.25),
+            "short_q3": d.shortfall.quantile(0.75), "input_k": d.input_tokens.mean() / 1000,
+            "prism_s": d.prism_s.mean(),
             "tokens_k": d.output_tokens.mean() / 1000, "minutes": d.time_s.mean() / 60,
             "vs": reference if test else "", "diff": test["diff"] if test else np.nan,
             "ci": f"[{test['lo']:+.2f}, {test['hi']:+.2f}]" if test else "", "p": test["p"] if test else np.nan,
@@ -191,11 +200,9 @@ def plot_conditions(table, data, out):
 
 def plot_mechanics(table, out):
     t = table[~table.condition.isin(["B1", "L1", "L2"])].reset_index(drop=True)
-    panels = [("uncovered", "Uncovered situations, kept policy", "% of reachable", "{:.0f}%"),
-              ("feedback_improved", "Feedback rounds that improved the policy", "share", "{:.0%}"),
-              ("tokens_k", "LLM output tokens per grid", "thousand", "{:.1f}k"),
-              ("minutes", "Wall time per grid", "minutes", "{:.1f}")]
-    fig, axes = plt.subplots(1, 4, figsize=(16, 3.8), facecolor=SURFACE)
+    panels = [("uncovered", "Rule coverage: uncovered situations, kept policy", "% of reachable", "{:.0f}%"),
+              ("feedback_improved", "Feedback rounds that improved the policy", "share", "{:.0%}")]
+    fig, axes = plt.subplots(1, 2, figsize=(14, 3.8), facecolor=SURFACE)
     for ax, (col, title, ylabel, fmt) in zip(axes, panels):
         x = np.arange(len(t))
         values = t[col].fillna(0) if col in t else np.zeros(len(t))
@@ -207,6 +214,36 @@ def plot_mechanics(table, out):
         style(ax, title, ylabel)
     fig.suptitle("Symbolic loop mechanics by condition", x=0.01, ha="left", fontsize=13, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.9))
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def plot_costs(table, data, out):
+    """Per-grid cost and outcome distributions: median bars with interquartile whiskers."""
+    t = table.reset_index(drop=True)
+    panels = [("met", "Requirements met (of 9), worst case", "per grid", 1, "{:.1f}"),
+              ("shortfall", "Shortfall below thresholds", "per grid", 1, "{:.2f}"),
+              ("input_tokens", "LLM input tokens", "thousand per grid", 1e-3, "{:.1f}k"),
+              ("output_tokens", "LLM output tokens", "thousand per grid", 1e-3, "{:.1f}k"),
+              ("prism_s", "PRISM time", "seconds per grid", 1, "{:.0f}"),
+              ("time_s", "Wall time", "minutes per grid", 1 / 60, "{:.1f}")]
+    fig, axes = plt.subplots(2, 3, figsize=(16, 7.5), facecolor=SURFACE)
+    for ax, (col, title, ylabel, k, fmt) in zip(axes.flat, panels):
+        x = np.arange(len(t))
+        for i, condition in enumerate(t.condition):
+            v = data[data.condition == condition][col].dropna() * k
+            if not len(v):
+                continue
+            q1, med, q3 = v.quantile([0.25, 0.5, 0.75])
+            ax.bar(i, med, 0.65, color=FAMILY_COLORS[t.family[i]])
+            ax.errorbar(i, med, yerr=[[med - q1], [q3 - med]], color=INK, capsize=4, lw=1)
+            ax.annotate(fmt.format(med), (i, q3), ha="center", va="bottom", xytext=(0, 2),
+                        textcoords="offset points", fontsize=7, color=INK_2)
+        ax.set_xticks(x, t.condition)
+        style(ax, title, ylabel)
+    fig.suptitle("Per grid, all seeds pooled: bars = median, whiskers = interquartile range", x=0.01, ha="left",
+                 fontsize=13, fontweight="bold", color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.93), h_pad=2.5)
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
 
@@ -287,11 +324,12 @@ def uuv_table(root: Path) -> str:
         for _, f in final.iterrows():
             values = ", ".join(f"{r} {f[f'final_worst_{r}']:.3f}" for r in reqs)
             rows.append(f"| {run_dir.name} | {['North Sea', 'Caribbean'][int(f.sample_id)]} | {bool(f.success)} | "
-                        f"{int(df[df.sample_id == f.sample_id].iteration.max())} | {int(f.final_num_rules)} | {values} |")
+                        f"{int(df[df.sample_id == f.sample_id].iteration.max())} | {int(f.final_num_rules)} | "
+                        f"{f.llm_prompt_tokens / 1000:.1f}k / {f.llm_output_tokens / 1000:.1f}k | {values} |")
     if not rows:
         return ""
-    return ("| seed | scenario | solved (worst case) | rounds | rules | final worst-case values |\n"
-            "|---|---|---|---|---|---|\n" + "\n".join(rows))
+    return ("| seed | scenario | solved (worst case) | rounds | rules | tokens in / out | final worst-case values |\n"
+            "|---|---|---|---|---|---|---|\n" + "\n".join(rows))
 
 
 def write_markdown(out_dir, table, budget, pending, uuv):
@@ -303,18 +341,25 @@ def write_markdown(out_dir, table, budget, pending, uuv):
              "Regenerate: `python viz/ablation_summary.py`.", ""]
     if pending:
         lines += ["**Pending runs:** " + ", ".join(pending), ""]
-    lines += ["## Overview", "", "![conditions](conditions.png)", "", "## Budget curves", "", "![budget](budget.png)",
-              "", "## Loop mechanics (symbolic)", "", "![mechanics](mechanics.png)", "", "## Table", "",
-              "| cond | change | seeds | solved | req. met (seed range) | best case | shortfall | uncovered % | "
-              "vs | Δ met [95% CI] | p | feedback rounds improved | out tokens | min/grid |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines += ["## Overview", "", "![conditions](conditions.png)", "",
+              "## Distributions and costs (medians, interquartile range)", "", "![costs](costs.png)", "",
+              "## Budget curves", "", "![budget](budget.png)", "",
+              "## Loop mechanics (symbolic)", "", "![mechanics](mechanics.png)", "",
+              "## Outcomes (per grid, seeds pooled)", "",
+              "| cond | change | seeds | req. met: mean (seed range) | median [IQR] | best case | "
+              "shortfall: median [IQR] | uncovered % | vs | Δ met [95% CI] | p | feedback rounds improved |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in table.iterrows():
-        refine = f"{r.feedback_improved:.0%}" if "feedback_improved" in r and pd.notna(r.feedback_improved) else ""
+        improved = f"{r.feedback_improved:.0%}" if "feedback_improved" in r and pd.notna(r.feedback_improved) else ""
         diff = f"{r['diff']:+.2f} {r.ci}" if r.vs else ""
-        lines.append(f"| {r.condition} | {r.change} | {r.seeds} | {r.solved:.1f} | {r.met:.2f} "
-                     f"({r.met_seed_min:.2f} to {r.met_seed_max:.2f}) | {r.met_best:.2f} | {r.shortfall:.2f} | "
-                     f"{r.uncovered:.0f} | {r.vs} | {diff} | {'' if pd.isna(r.p) else f'{r.p:.3f}'} | {refine} | "
-                     f"{r.tokens_k:.1f}k | {r.minutes:.1f} |")
+        lines.append(f"| {r.condition} | {r.change} | {r.seeds} | {r.met:.2f} ({r.met_seed_min:.2f} to "
+                     f"{r.met_seed_max:.2f}) | {r.met_median:.0f} [{r.met_q1:.0f} to {r.met_q3:.0f}] | {r.met_best:.2f} | "
+                     f"{r.short_median:.2f} [{r.short_q1:.2f} to {r.short_q3:.2f}] | {r.uncovered:.0f} | {r.vs} | "
+                     f"{diff} | {'' if pd.isna(r.p) else f'{r.p:.3f}'} | {improved} |")
+    lines += ["", "## Costs (mean per grid)", "",
+              "| cond | input tokens | output tokens | PRISM time (s) | wall time (min) |", "|---|---|---|---|---|"]
+    lines += [f"| {r.condition} | {r.input_k:.1f}k | {r.tokens_k:.1f}k | {r.prism_s:.0f} | {r.minutes:.1f} |"
+              for _, r in table.iterrows()]
     ks = list(budget.columns)
     lines += ["", "## Requirements met after k rounds", "", "| cond | " + " | ".join(f"k={k}" for k in ks) + " |",
               "|---|" + "---|" * len(ks)]
@@ -348,6 +393,7 @@ def main():
 
     plot_conditions(table, data, out_dir / "conditions.png")
     plot_mechanics(table, out_dir / "mechanics.png")
+    plot_costs(table, data, out_dir / "costs.png")
     budget = plot_budget(runs, out_dir / "budget.png")
     plot_uuv(args.root, out_dir / "uuv.png")
     write_markdown(out_dir, table, budget, pending, uuv_table(args.root))
