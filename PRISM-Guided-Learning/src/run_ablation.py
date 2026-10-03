@@ -7,7 +7,6 @@ config.json. Finished runs (results parquet present) are skipped, so an interrup
 restarted with the same command. Runs execute one after another, never concurrently.
 """
 import argparse
-import os
 import shutil
 from pathlib import Path
 
@@ -18,8 +17,8 @@ ABLATIONS_PATH = RESULTS_PATH / "ablations"
 RESULT_FILES = {"symbolic": "SYMBOLIC_results.parquet", "legacy": "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet"}
 
 
-def run_dir_for(condition: str, seed: int) -> Path:
-    return ABLATIONS_PATH / condition / f"seed_{seed}"
+def run_dir_for(condition: str, seed: int, root: Path = ABLATIONS_PATH) -> Path:
+    return root / condition / f"seed_{seed}"
 
 
 def main():
@@ -28,6 +27,8 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2])
     parser.add_argument("--set", action="append", default=[], help="Extra override section.key=value")
     parser.add_argument("--dry-run", action="store_true", help="Only print what would run")
+    parser.add_argument("--out-root", type=Path, default=ABLATIONS_PATH,
+                        help="Results root (default out/results/ablations; use out/results/smoke for smoke tests)")
     args = parser.parse_args()
 
     # Resolve every config first, so a typo fails before any GPU time is spent
@@ -35,7 +36,7 @@ def main():
     for condition in args.conditions:
         for seed in args.seeds:
             cfg = load_config(condition, list(args.set) + [f"llm.seed={seed}"])
-            plan.append((condition, seed, cfg, run_dir_for(condition, seed)))
+            plan.append((condition, seed, cfg, run_dir_for(condition, seed, args.out_root)))
 
     for condition, seed, cfg, run_dir in plan:
         done = (run_dir / RESULT_FILES[cfg.approach]).exists()
@@ -53,5 +54,4 @@ def main():
 
 
 if __name__ == "__main__":
-    os.makedirs(ABLATIONS_PATH, exist_ok=True)
     main()
