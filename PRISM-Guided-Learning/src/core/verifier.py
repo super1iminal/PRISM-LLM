@@ -30,12 +30,14 @@ class PolicyVerifier:
     gives best == worst.
     """
 
-    def __init__(self, domain: Domain, instance: Instance, runner: Optional[PrismRunner] = None):
+    def __init__(self, domain: Domain, instance: Instance, runner: Optional[PrismRunner] = None,
+                 max_enumeration: int = 200_000):
         self.domain = domain
         self.instance = instance
         self.spec: Spec = domain.spec(instance)
         self.model = domain.model(instance)
         self.runner = runner or PrismRunner()
+        self.max_enumeration = max_enumeration
         self._optimum: Optional[Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]] = None
         self._forced: Optional[Set[StateKey]] = None
 
@@ -53,7 +55,7 @@ class PolicyVerifier:
     def verify(self, policy: SymbolicPolicy, analysis: bool = True) -> Verification:
         """Model check `policy`. With `analysis`, also export per-state values and transitions."""
         start = time()
-        model = self.model + "\n" + policy.to_prism_module() + "\n"
+        model = self.compose(policy)
         props = self._properties([lambda r: r.best_op(), lambda r: r.worst_op()], vectors=analysis)
         result = self.runner.run(model, props, export_transitions=analysis)
 
@@ -67,6 +69,25 @@ class PolicyVerifier:
         self._assign_rules(v, policy)
         v.seconds = time() - start
         return v
+
+    def compose(self, policy: Optional[SymbolicPolicy]) -> str:
+        """The domain's MDP restricted by `policy` (the bare MDP when `policy` is None)."""
+        if policy is None:
+            return self.model
+        return self.model + "\n" + policy.to_prism_module(self.max_enumeration) + "\n"
+
+    def joint_query(self) -> str:
+        """PRISM multi-objective query: can one scheduler meet every threshold at once?"""
+        objectives = ", ".join(f"P{r.bound}{r.threshold} [ {r.formula} ]" for r in self.spec.requirements)
+        return f"multi({objectives})"
+
+    def jointly_feasible(self, policy: Optional[SymbolicPolicy] = None) -> bool:
+        """Whether a single completion of `policy` (any scheduler, possibly randomized and with memory)
+        meets all thresholds simultaneously. `None` asks the question of the bare MDP (the ceiling).
+
+        "No" is exact; "yes" is optimistic for memoryless, observation-based completions.
+        """
+        return self.runner.check(self.compose(policy), self.joint_query())
 
     def optimum(self) -> Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]:
         """Best achievable value of each requirement on the bare MDP (no policy), cached.

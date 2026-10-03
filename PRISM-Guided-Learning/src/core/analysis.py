@@ -89,10 +89,11 @@ def _normalize(items, total: float) -> None:
 
 
 class MassAnalyzer:
-    def __init__(self, verifier: PolicyVerifier, horizon: int = 100, top_k: int = 10):
+    def __init__(self, verifier: PolicyVerifier, horizon: int = 100, top_k: int = 10, states_per_rule: int = 3):
         self.verifier = verifier
         self.horizon = horizon
         self.top_k = top_k
+        self.states_per_rule = states_per_rule
 
     def _state_masses(self, v: Verification, strategy_values: np.ndarray, gap: np.ndarray,
                       maximize_strategy: bool) -> np.ndarray:
@@ -145,7 +146,7 @@ class MassAnalyzer:
         for rule, blame in blames.items():
             if total > 0:
                 _normalize(spots[rule].values(), total)
-            blame.hotspots = sorted(spots[rule].values(), key=lambda h: -h.mass)[:3]
+            blame.hotspots = sorted(spots[rule].values(), key=lambda h: -h.mass)[:self.states_per_rule]
         if total > 0:
             _normalize(blames.values(), total)
         return sorted(blames.values(), key=lambda b: -b.mass)[:self.top_k]

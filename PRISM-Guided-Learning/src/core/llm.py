@@ -7,7 +7,7 @@ from typing import List, Optional, Type, TypeVar
 import ollama
 from pydantic import BaseModel
 
-from settings import OLLAMA_MODEL, OLLAMA_NUM_CTX, OLLAMA_NUM_PREDICT, OLLAMA_THINK
+from config import LLMConfig
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -44,12 +44,16 @@ class OllamaLLM:
     back their own raw outputs and token counts via `usage()` / `reset_usage()`.
     """
 
-    def __init__(self, schema: Optional[Type[T]] = None, model: str = OLLAMA_MODEL, think: bool = OLLAMA_THINK,
-                 num_ctx: int = OLLAMA_NUM_CTX, num_predict: int = OLLAMA_NUM_PREDICT):
+    def __init__(self, schema: Optional[Type[T]] = None, config: Optional[LLMConfig] = None):
+        config = config or LLMConfig()
         self.schema = schema
-        self.model = model
-        self.think = think
-        self.options = {"num_ctx": num_ctx, "num_predict": num_predict}
+        self.model = config.model
+        self.think = config.think
+        self.options = {"num_ctx": config.num_ctx, "num_predict": config.num_predict}
+        if config.seed is not None:
+            self.options["seed"] = config.seed
+        if config.temperature is not None:
+            self.options["temperature"] = config.temperature
         self._client = ollama.Client()
         self._local = threading.local()
 

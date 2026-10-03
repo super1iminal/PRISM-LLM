@@ -5,7 +5,8 @@ A case study lives in `domains/<name>/` and consists of
     domain.py            a `Domain` subclass: loads instances and builds the template context
     model.prism.j2       the MDP in PRISM syntax. Every policy action must be an action label
                          ([up], [down], ...) on the commands it controls
-    spec.yaml.j2         policy-visible variables, actions and requirements (see `Spec`)
+    spec.yaml.j2         policy-visible variables, actions and requirements (see `Spec`), plus
+                         optional_variables: descriptions for variables a config may make visible
     description.md.j2    English description of the MDP for the prompt
     visual.txt.j2        visual representation of the state space for the prompt
     examples.md.j2       (optional) domain-specific rule examples for the prompt
@@ -19,7 +20,7 @@ import inspect
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import jinja2
 import yaml
@@ -73,9 +74,12 @@ class Instance:
 class Domain:
     """Base class for case studies. Subclasses implement `load_instances` and usually `context`."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, visible_extra: Sequence[str] = ()):
         self.root = Path(root)
         self.name = self.root.name
+        # Extra state variables rules may read (config `domain.visible_extra`), on top of the spec's
+        # `variables`. Ignored for instances whose model lacks them. Templates see them as `visible_extra`.
+        self.visible_extra = list(visible_extra)
         self.env = jinja2.Environment(
             loader=jinja2.FileSystemLoader([str(self.root), str(CORE_TEMPLATES)]),
             undefined=jinja2.StrictUndefined, trim_blocks=True, lstrip_blocks=True,
@@ -94,6 +98,7 @@ class Domain:
 
     def render(self, template: str, instance: Optional[Instance] = None, **extra) -> str:
         ctx = self.context(instance) if instance is not None else {}
+        ctx.setdefault("visible_extra", self.visible_extra)
         ctx.update(extra)
         return self.env.get_template(template).render(**ctx)
 
@@ -116,8 +121,12 @@ class Domain:
         raw = yaml.safe_load(self.render("spec.yaml.j2", instance))
         declared = parse_model_variables(self.model(instance))
         variables = []
-        for v in raw["variables"]:
-            v = {"name": v} if isinstance(v, str) else v
+        optional = {v["name"]: v for v in raw.get("optional_variables") or []}
+        listed = [({"name": v} if isinstance(v, str) else v) for v in raw["variables"]]
+        names = {v["name"] for v in listed}
+        listed += [optional.get(name, {"name": name}) for name in self.visible_extra
+                   if name in declared and name not in names]
+        for v in listed:
             name = v["name"]
             if "type" in v:
                 var = Variable(name, v["type"], v.get("low", 0), v.get("high", 1), v.get("description", ""))
@@ -136,7 +145,7 @@ class Domain:
         return " & ".join(f"{k}={str(v).lower() if isinstance(v, bool) else v}" for k, v in valuation.items())
 
 
-def load_domain(name: str) -> Domain:
+def load_domain(name: str, visible_extra: Sequence[str] = ()) -> Domain:
     """Load `domains/<name>/domain.py` and instantiate its Domain subclass."""
     root = DOMAINS_PATH / name
     spec = importlib.util.spec_from_file_location(f"domains.{name}.domain", root / "domain.py")
@@ -146,7 +155,7 @@ def load_domain(name: str) -> Domain:
                if issubclass(c, Domain) and c is not Domain and c.__module__ == module.__name__]
     if len(classes) != 1:
         raise ValueError(f"{root / 'domain.py'} must define exactly one Domain subclass")
-    return classes[0](root)
+    return classes[0](root, visible_extra)
 
 
 # ---------------------------------------------------------------- model parsing helpers

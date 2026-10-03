@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from config import PrismConfig
 from settings import get_prism_path
 
 StateKey = Tuple  # valuation of all model variables, in PRISM's variable order
@@ -119,11 +120,38 @@ class PrismRunner:
     """Thin wrapper around the PRISM command line (explicit engine)."""
 
     def __init__(self, prism_path: Optional[str] = None, extra_args: Sequence[str] = (),
-                 java_max_mem: str = "4g", timeout: float = 900):
+                 config: Optional[PrismConfig] = None):
+        config = config or PrismConfig()
         self.prism_path = prism_path or get_prism_path()
         self.extra_args = list(extra_args)
-        self.java_max_mem = java_max_mem
-        self.timeout = timeout
+        self.java_max_mem = config.java_max_mem
+        self.max_iters = config.max_iters
+        self.timeout = config.timeout_s
+        self.multi_engine = config.multi_engine
+        self.multi_args = [f"-{config.multi_engine}"] + ([f"-{config.multi_method}"] if config.multi_method else [])
+        self.method_args = [f"-{config.method}"] if config.method else []
+
+    def check(self, model: str, prop: str) -> bool:
+        """Decide one boolean property, e.g. a multi-objective achievability query `multi(...)`.
+
+        Uses `prism.multi_engine` (sparse: the explicit engine has no multi-objective support) and
+        `prism.multi_method` (lp: exact, where value iteration can fail on periodic chains).
+        """
+        with tempfile.TemporaryDirectory(prefix="prism_") as tmp:
+            model_path = os.path.join(tmp, "model.prism")
+            props_path = os.path.join(tmp, "props.props")
+            with open(model_path, "w", encoding="utf-8") as f:
+                f.write(model)
+            with open(props_path, "w", encoding="utf-8") as f:
+                f.write(prop.rstrip(";") + ";\n")
+            cmd = [self.prism_path, model_path, props_path, *self.multi_args, "-javamaxmem",
+                   self.java_max_mem, "-maxiters", str(self.max_iters)]
+            stdout = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    timeout=self.timeout).stdout
+        m = re.search(r"^Result: (true|false)", stdout, re.M)
+        if "Error:" in stdout or not m:
+            raise PrismError(_error_excerpt(stdout))
+        return m.group(1) == "true"
 
     def run(self, model: str, properties: Sequence[str], export_transitions: bool = False) -> PrismResult:
         """Check `properties` (one per entry) on `model`.
@@ -143,10 +171,10 @@ class PrismRunner:
                 f.write("\n".join(p.rstrip(";") + ";" for p in properties) + "\n")
 
             cmd = [self.prism_path, model_path, props_path, "-explicit", "-javamaxmem", self.java_max_mem,
-                   "-maxiters", "1000000", "-exportstates", states_path, "-exportlabels", labels_path]
+                   "-maxiters", str(self.max_iters), "-exportstates", states_path, "-exportlabels", labels_path]
             if export_transitions:
                 cmd += ["-exporttrans", trans_path]
-            cmd += self.extra_args
+            cmd += self.method_args + self.extra_args
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                   timeout=self.timeout)
             stdout = proc.stdout

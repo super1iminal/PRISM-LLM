@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from config import PrismConfig
 from core.domain import load_domain
 from core.prism import PrismRunner
 from core.rules import SymbolicPolicy
@@ -34,7 +35,9 @@ def domain():
 @pytest.mark.parametrize("sample", [0, 1])
 def test_bare_mdp_matches_paper(domain, sample):
     instance = domain.load_instances("uuv_paper.csv")[sample]
-    values = PrismRunner().run(domain.model(instance), PAPER_PROPS).initial_values
+    # PRISM's default solver, as the paper used (Gauss-Seidel lands ~3 higher on the slowly
+    # converging Caribbean max-energy reward: 4726.0 vs the reported 4723.29)
+    values = PrismRunner(config=PrismConfig(method="")).run(domain.model(instance), PAPER_PROPS).initial_values
     for value, expected in zip(values, PAPER[instance.data["name"]]):
         assert round(value, 2) == pytest.approx(expected)
 

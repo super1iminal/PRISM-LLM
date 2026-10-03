@@ -1,6 +1,8 @@
 """Run the symbolic-policy planner on a domain dataset.
 
-Usage: python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv [--workers 2]
+Usage: python src/run_symbolic.py [--condition B2] [--set section.key=value ...] [--out DIR]
+       (shortcuts: --domain, --data, --workers, --max-attempts, --limit)
+Settings come from configs/ (see docs/config.md); the resolved config is saved as <run>/config.json.
 """
 import argparse
 import datetime
@@ -13,34 +15,58 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
+from config import Config, load_config
 from core.domain import Instance, load_domain
 from core.llm import OllamaLLM
-from core.planner import PlannerConfig, SymbolicPlanner
+from core.planner import SymbolicPlanner
 from logging_utils import setup_logger
 from settings import RESULTS_PATH
 
 APPROACH_NAME = "SYMBOLIC"
 
 
+def cli_overrides(args) -> List[str]:
+    """Map the old shortcut flags onto config overrides."""
+    out = list(args.set or [])
+    for flag, key in (("domain", "domain.name"), ("data", "domain.dataset"), ("workers", "run.workers"),
+                      ("max_attempts", "planner.max_rounds"), ("limit", "run.limit")):
+        if getattr(args, flag, None) is not None:
+            out.append(f"{key}={getattr(args, flag)}")
+    return out
+
+
+def add_cli(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--condition", default=None, help="Named condition from configs/conditions.yaml")
+    parser.add_argument("--set", action="append", help="Config override section.key=value (repeatable)")
+    parser.add_argument("--domain")
+    parser.add_argument("--data")
+    parser.add_argument("--workers", type=int)
+    parser.add_argument("--max-attempts", type=int)
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--out", default=None, help="Output directory (default: timestamped under out/results)")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--domain", default="gridworld")
-    parser.add_argument("--data", default="grid_20_balanced.csv")
-    parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--max-attempts", type=int, default=5)
-    parser.add_argument("--limit", type=int, default=None, help="Only run the first N instances")
-    parser.add_argument("--out", default=None, help="Output directory (default: timestamped under out/results)")
+    add_cli(parser)
     args = parser.parse_args()
-
-    domain = load_domain(args.domain)
-    instances = domain.load_instances(args.data)[:args.limit]
+    cfg = load_config(args.condition, cli_overrides(args))
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
-    run_dir = args.out or os.path.join(RESULTS_PATH, f"symbolic_{args.domain}_{len(instances)}_{timestamp}")
+    run_dir = args.out or os.path.join(RESULTS_PATH, f"symbolic_{cfg.domain.name}_{timestamp}")
+    print(run(cfg, run_dir))
+
+
+def run(cfg: Config, run_dir: str) -> str:
+    """Solve every instance of `cfg.domain` with the symbolic planner; write results to `run_dir`."""
     os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(cfg.to_dict(), f, indent=1)
+    domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
+    instances = domain.load_instances(cfg.domain.dataset)[:cfg.run.limit]
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
-    llm = OllamaLLM()
-    planner = SymbolicPlanner(domain, llm, PlannerConfig(max_attempts=args.max_attempts))
+    llm = OllamaLLM(config=cfg.llm)
+    planner = SymbolicPlanner(domain, llm, cfg)
 
     def solve(instance: Instance) -> Dict[str, Any]:
         logger = setup_logger(f"worker_{instance.id}", run_dir=run_dir, include_timestamp=False)
@@ -56,7 +82,7 @@ def main():
         return result
 
     results: Dict[str, Dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with ThreadPoolExecutor(max_workers=cfg.run.workers) as pool:
         futures = {pool.submit(solve, inst): inst for inst in instances}
         for future in as_completed(futures):
             inst = futures[future]
@@ -68,7 +94,7 @@ def main():
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")
-    print(run_dir)
+    return run_dir
 
 
 def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> pd.DataFrame:
@@ -92,10 +118,15 @@ def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> p
                 "uncovered_situations": it["uncovered_situations"],
                 "iteration_time": it.get("iteration_time", 0.0),
                 "prism_time": it["prism_time"],
+                "joint_time": it.get("joint_time", 0.0),
                 "llm_time": it["llm_time"],
                 "iter_llm_calls": it["llm_calls"],
                 "iter_llm_output_tokens": it["llm_output_tokens"],
+                "iter_llm_prompt_tokens": it["llm_prompt_tokens"],
                 "invalid_answers": len(it["invalid_answers"]),
+                "improved": it.get("improved"),
+                "kept_joint_feasible": it.get("kept_joint_feasible"),
+                "branch_disagreement": it.get("branch_disagreement", False),
                 **{f"prob_best_{k}": p for k, p in it["best"].items()},
                 **{f"prob_worst_{k}": p for k, p in it["worst"].items()},
                 "best_case_success_iter": it["best_case_success"],

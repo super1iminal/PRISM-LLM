@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from config import PrismConfig
 from core.domain import load_domain
 from core.prism import PrismError, PrismRunner
 from core.rules import SymbolicPolicy
@@ -64,7 +65,7 @@ def main():
     run_dir = Path(args.legacy_run)
     domain = load_domain("gridworld")
     instances = domain.load_instances(args.data)
-    default_runner = PrismRunner()
+    default_runner = PrismRunner(config=PrismConfig(method=""))   # PRISM defaults, as in the legacy run
 
     jobs = []
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
@@ -93,7 +94,7 @@ def main():
         solvers = [("interval iteration", ["-intervaliter", "-epsilon", args.epsilon]),
                    ("Gauss-Seidel 1e-12", ["-gaussseidel", "-epsilon", "1e-12"])]
         for solver, solver_args in solvers:
-            runner = PrismRunner(extra_args=solver_args)
+            runner = PrismRunner(extra_args=solver_args, config=PrismConfig(method=""))
             try:
                 v_tight = PolicyVerifier(domain, instance, runner).verify(policy, analysis=False)
                 exact_legacy = dict(zip(names, legacy_dtmc_values(instance, legacy_policy, runner)))

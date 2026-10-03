@@ -18,8 +18,4 @@ def get_prism_path() -> str:
     return path
 
 
-# LLM (local Ollama)
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:14b-q4_K_M")
-OLLAMA_NUM_CTX = 16384
-OLLAMA_NUM_PREDICT = 8192
-OLLAMA_THINK = False
+# Run settings (LLM, planner, PRISM limits, ...) live in configs/default.yaml; see src/config.py.
