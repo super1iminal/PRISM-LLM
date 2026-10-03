@@ -16,14 +16,9 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 - qwen3 runs with **thinking off**, on **20 grids**.
 
 ## Cleanup
-- Branch `symbolic-policies` was created from `generalize` (52c899b).
-- Removed: Vanilla, VanillaPlus, Feedback and FeedbackMinus planners, RL (`RLCounterfactual`, `GridWorldStepper`), `UniformPlanner`, `Repairer.py`, `PlotRQs.py`, `PlotResults.py`, `moving-obstacle-plan.md` and `prism_portable.yml` (replaced by `requirements.txt`). All of it is still on `main`.
-- The surviving "current approach" (FeedbackSimplified) now lives in `src/legacy/`. It's entirely gridworld-specific, and it's kept only as the baseline for the regression and comparison runs. It isn't part of the new approach.
-- The legacy planner has **not changed behaviour**. I only added instrumentation: every verified per-iteration policy, raw LLM outputs and token counts are stored for the regression step. `-exportstates` to a fixed shared path was removed from the legacy PRISM call. It was a side effect only, and it wasn't safe to run in parallel.
-- The LLM is a small `core/llm.py` wrapper around the `ollama` Python client with JSON-schema structured output, which replaces LangChain. Settings: `num_ctx=16384`, `num_predict=8192`, `think=False`, and the model's default temperature and sampling.
-- The PRISM path is `$PRISM_PATH`, else `prism` on PATH (no more hardcoded path). All output paths are now absolute, relative to `PRISM-Guided-Learning/`.
-- The gridworld datasets moved to `domains/gridworld/data/`. `grid_20_balanced.csv` = the first 4 grids of each size (4–8) from `grid_50_balanced.csv`, so still balanced by size.
-- The local Ollama model was missing its weight blob (manifest present, 9.3 GB blob gone), so I re-pulled `qwen3:14b-q4_K_M` with your OK.
+- The old planners (Vanilla, VanillaPlus, Feedback, FeedbackMinus, RL), their plotting scripts and the predecessor paper's code were removed from this line of work; all of it is still on `main`.
+- The surviving approach (FeedbackSimplified) lives in `src/legacy/`, gridworld-only, kept as the baseline. Its behaviour is unchanged except instrumentation (per-iteration policies, raw outputs, tokens) and the Phase A obstacle-visibility switch.
+- `grid_20_balanced.csv` = the first 4 grids of each size (4–8) from `grid_50_balanced.csv`, so still balanced by size.
 
 ## Generalization: inputs (what a case study provides)
 - A case study is a directory `domains/<name>/` with a `Domain` subclass (instance loading and template context) plus Jinja2 templates. See `domains/README.md`.
@@ -82,7 +77,6 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 - **[REVIEW] Thresholds are tight by design.** In this model the controller has little leverage. Over all controllers, safety ranges over [0.654, 0.674] (North Sea) and [0.321, 0.355] (Caribbean). Done-in-time ranges over [0.52, 0.82] (T=30) and [0.06, 0.87] (T=70), and the low end is the adversary switching altitude back and forth. Thresholds (North Sea 0.670 / 0.80, Caribbean 0.345 / 0.862) are set so that "hold your altitude, go highest when a search starts" passes. Always-low, always-high (and, in the Caribbean, always-med) each fail at least one requirement. The best rule policy found by local search clears both by only ~0.003 / 0.002. Reproduce with `domains/uuv/data/calibrate.py`. Looser thresholds would make any sensible complete policy pass, so the case study would then mostly test coverage.
 - PRISM's multi-objective query (`multi(Pmax [F<=T], P>=p [G ..])`) gave a value below a concrete policy's (0.795 vs 0.807), so it wasn't used for calibration.
 - `done_in_time` is step-bounded, so the per-state vectors used by the mass analysis assume the full T steps remain from every state. The ranking is a heuristic there, as for LTL.
-- States where the action has no effect (following, found, done: about 70% of UUV states) were first counted as situations, so they showed up as uncovered and in feedback. This is fixed in core (see "Forced states" below).
 
 ## UUV results (qwen3:14b, uuv_paper, 5 attempts, thinking off)
 - `out/results/symbolic_uuv`, figure `viz/figures/uuv.png` (`viz/plot_domain.py`, which works for any domain and plots final policies against the domain's `reference_policies.json` and the range any controller achieves).
@@ -96,29 +90,16 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
   - Transfer: the North Sea rules reused unchanged on the Caribbean keep safety (0.347) but not the deadline (0.824).
 
 ## Forced states (core change, made for UUV)
+- Motivation: UUV states where the action has no effect (following, found, done: about 70%) showed up as uncovered and in feedback.
 - `PolicyVerifier.forced_states()` finds the states of the bare MDP where every choice has the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
 - Forced states no longer count as situations: `reachable_situations`/`uncovered_situations` count only valuations with at least one reachable decision state. They're also skipped in extend hotspots **and** refine blame, because no rule can change what happens there. `Verification.decisions` marks decision states.
 - Gridworld has no forced states (checked on all 20 grids), so its coverage numbers and feedback are unchanged. UUV North Sea: a search-only policy is now complete (0 of 85 situations uncovered).
-- Cost: one extra PRISM run per verifier when the optimum isn't computed first (tests only; the planner computes the optimum first). The test suite went from ~28 s to ~38 s.
 
-## Prompt template changes (after the gridworld runs)
-- `_problem.md.j2`: the boolean example uses the domain's first boolean policy variable, and is left out when there is none. The rendered gridworld text is identical (`g1`).
-- `_results.md.j2`: "reachable situations (combinations of the state variables)" became "... where the action matters". This is the only wording change in gridworld prompts compared with the runs above.
-
-## Sept 24 meeting (Marsha, Aren) and follow-ups
-- Plan of record: `docs/plan.md`. Semantics: `docs/semantics.md`. Ablations: `docs/ablations.md`.
-- **Story still open** (pinned at the top). Generalization and readability are "a nice bonus", not the reason.
-- **Target SEAMS** (Oct 23), with ICAPS (Dec 7 abstract) as the fallback. Write first, then finish.
-- **Obstacle phase becomes visible to rules, for legacy and symbolic alike** (Marsha called the leak "just a bug"). This replaces the old TODO. The hidden setting stays available, so the old runs remain reproducible.
-- **Joint best case:** approved. **V^opt stays in the loop** (regret is an ablation, S5, not a replacement).
-- **Ceilings** (per-instance optimum + joint feasibility) are "foundational". Asher promised them promptly.
-- **Ablations and "which difference drives the gain" are deferred**, except the retry-policy sweep Marsha suggested (R1–R5). Planned vs deferred: `docs/ablations.md`. Rule transfer (5×5 → 8×8) is dropped.
-- **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV).
-- **Energy budget for UUV** (`docs/plan.md` A3), calibrated like the other thresholds. It's expressible in PRISM, so it closes a gap in our core, not in PRISM. Done on branch `energy`.
-- Legacy with the obstacle visible: one call per (goal, obstacle phase), accepted for now. **All symbolic runs come first; legacy runs come after.**
-- Retry sweep settings accepted: R3 restarts every 3rd round; R4 counts progress as a drop of at least 0.05 in total worst-case shortfall.
-- **2 seeds per condition**, and every seed's outputs are kept.
-- **All settings go in one config** (`docs/config.md`, plan item A0): defaults plus named conditions, with the resolved config saved per run.
+## Sept 24 meeting (Marsha, Aren)
+Most outcomes became the plan (`docs/plan.md`: target, Phase A items, run order) and the ablation set (`docs/ablations.md`: retry sweep, seeds, what is deferred). Only what isn't recorded there:
+- The story is open (pinned at the top). Generalization and readability are "a nice bonus", not the reason.
+- **V^opt stays in the loop**; regret is an ablation (S5), not a replacement. Ceilings are "foundational", not an experiment.
+- **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV). Rule transfer (5×5 → 8×8) is dropped.
 - **[REVIEW]** Mass horizon H for UUV (the deadline?) is still open. Gridworld stays at 100.
 
 ## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
@@ -139,12 +120,10 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 - After the ablation, the catch-all instruction and example were **restored**, since they give qwen better results. Re-run without them when studying extend, or with a stronger model.
 
 ## Phase A (branch `phase-a`)
-- Implemented per `docs/plan.md`: central config, joint best-case branch, obstacle phase visible (symbolic and legacy), retry policies, seeds, ablation runner, configurable horizon, ceilings, budget curves, ceiling-aware report. A3 (energy) is on branch `energy`.
+What was built is in `docs/plan.md` (Phase A table; ceilings and budget curves under Phase B). Decisions and findings from building it:
 - **PRISM solver changed to Gauss-Seidel** (`prism.method`). With `obs_idx` readable, a rule set can make the induced chain periodic. PRISM's default value iteration then fails to converge, which would crash an instance mid-run. Found with a three-rule test policy. Gauss-Seidel and policy iteration agree on those models. Checks that reproduce old numbers pin PRISM's defaults: the UUV paper's numbers (Gauss-Seidel gives 4726.0 for the Caribbean max energy, vs the reported 4723.29) and the regression's stored-values check.
 - **Joint queries use exact LP** (`prism.multi_method: lp`); value iteration has the same convergence problem there. LP can't handle step-bounded objectives (UUV's deadline). There, PRISM's value-iteration fallback wrongly says "not jointly feasible" even though the `stay` policy passes both scenarios. So the joint query returns *undecided*, and the loop falls back to the per-requirement branch. **[REVIEW]** This means the joint fix applies to gridworld but not UUV.
 - **Legacy with the obstacle visible:** one call per (goal, obstacle phase); a short note in the prompt says which phase the per-cell policy is for. The legacy DTMC is solved with Gauss-Seidel when phases are observed (power method otherwise, as before). **[REVIEW]** Prompt wording of that note.
-- **Ceilings:** 19/20 gridworld grids are jointly solvable. Grid 17 can't be solved: `complete_sequence` ≤ 0.70 against a 0.80 threshold. Almost every requirement's optimum is 1.0. On the existing runs, that's 0/19 (legacy) vs 1/19 (symbolic) of solvable grids.
-- **Budget curves** (existing runs): symbolic is behind after round 1 (3.25 vs 4.00 requirements met), overtakes at round 2, and reaches 5.25. Legacy plateaus at 4.30 from round 3. This is the first direct evidence the feedback loop helps.
 - **R4 detail:** a round that doesn't improve the kept policy has gain 0, so R4 also restarts after any non-improving round, not just slow ones.
 - **Smoke-test findings (fixed before the main runs):**
   - With one fixed sampling seed, every repeat of a prompt gave the *identical* answer: R5's five rounds produced 1 distinct output, and B2 produced 3 in 5 rounds. Each call now uses a seed derived from the run seed and the call's index within the instance: reproducible, and 3/3 distinct in the re-test.

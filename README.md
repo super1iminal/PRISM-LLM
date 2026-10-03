@@ -12,7 +12,7 @@ Its per-state approach survives as the `legacy` baseline.
 
 - Python 3.11+ and `pip install -r requirements.txt`
 - [PRISM](https://www.prismmodelchecker.org/download.php), with `prism` on `PATH` or `PRISM_PATH` set
-- [Ollama](https://ollama.com) with the model in `src/settings.py` (default `qwen3:14b-q4_K_M`, thinking off)
+- [Ollama](https://ollama.com) with the model in `configs/default.yaml` (default `qwen3:14b-q4_K_M`, thinking off)
 
 ## Layout
 
