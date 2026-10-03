@@ -143,3 +143,15 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - **Smoke-test findings (fixed before the main runs):**
   - With one fixed sampling seed, every repeat of a prompt gave the *identical* answer: R5's five rounds produced 1 distinct output, and B2 produced 3 in 5 rounds. Each call now uses a seed derived from the run seed and the call's index within the instance: reproducible, and 3/3 distinct in the re-test.
   - A real qwen rule set (16 rules reading `obs_idx`) did not converge even with Gauss-Seidel, and plain policy iteration failed too. Modified policy iteration solved it and matches Gauss-Seidel exactly on the other models tried. It is now the fallback (`prism.fallback_methods`). If every method fails, the planner scores the round as an empty policy instead of losing the instance. Legacy's verifier retries with `-bgaussseidel` then `-intervaliter` before its old silent all-zero fallback. **[REVIEW]** The legacy fallbacks are untested on a real non-converging case.
+
+## A3: reward requirements (UUV energy), branch `energy`
+- Core: a requirement may bound an expected reward (`reward: energy` in the spec, PRISM `R{"energy"}<=c [ F "done" ]`). Best and worst are `Rmin`/`Rmax`. Shortfall and blame stakes are taken relative to the threshold, so energy doesn't swamp the probability terms when they are summed. Infinite expected rewards (goal not surely reached) are capped in the mass analysis.
+- UUV gets `energy_budget` (dataset column `energy_threshold`, optional), and the description now spells out the paper's energy costs. Calibrated like the other thresholds (`calibrate.py`), so `stay` passes:
+  - North Sea: ≤ 26.5. `stay` uses 26.43, and `always_high` (27.13) fails it. `always_med` (25.98) still passes everything, as before.
+  - Caribbean: ≤ 62.5. `stay` uses 62.17, and `always_high` (62.99) now fails on energy too.
+  - Bare-MDP best and worst match the paper's Table 2 (24.78 / 59.08 min).
+  - This creates a real trade-off: higher altitude is safer but costs energy.
+- The joint query stays undecided for UUV (step-bounded deadline), so UUV keeps the per-requirement branch.
+- Gridworld prompts render byte-identically to before (checked), so the gridworld runs are unaffected. The prompt wording for blame/hotspots mentions cost only when a reward requirement is failing.
+- **[REVIEW]** Energy thresholds and the description of the energy costs.
+- The mass horizon for UUV is still open.

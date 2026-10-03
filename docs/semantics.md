@@ -5,7 +5,7 @@
 ## Inputs (per instance)
 - **MDP** `M = (S, s0, Act, P)`, given as a PRISM `mdp` model. `A ⊆ Act` are the *policy actions*: the action labels the policy controls. Other labels (e.g. UUV's `[step]`) are never restricted.
 - **Policy-visible variables** `X`, a subset of the state variables, with finite domains. `obs(s)` is the projection of a state `s` onto `X`.
-- **Requirements** `φ_i ⋈_i θ_i`, where `φ_i` is a PRISM path formula, `⋈_i ∈ {≥, ≤}` and `θ_i` is a threshold. *(Planned: expected-reward requirements `R{r} ≤ c [F goal]`, for UUV energy.)*
+- **Requirements** `φ_i ⋈_i θ_i`, where `⋈_i ∈ {≥, ≤}` and `θ_i` is a threshold, on either a probability `P[φ_i]` (`φ_i` a PRISM path formula) or an expected reward `R{r}[φ_i]` (e.g. UUV's expected energy until `F "done"`). Below, "value" means either. Best/worst for a reward bound `≤` are `Rmin`/`Rmax`. Shortfalls and blame stakes of reward requirements are taken relative to `θ_i`, so they are summed on the same scale as probabilities.
 
 ## Rules
 A rule set is an ordered list `R = ⟨(c_1, a_1), …, (c_n, a_n)⟩`, where each `c_j` is a boolean expression over `X` (`= != < <= > >= + - & | ! =>`, integer/boolean constants) and `a_j ∈ A`.

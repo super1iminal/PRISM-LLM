@@ -4,13 +4,13 @@ Target: **SEAMS 2027** (research track Oct 23; check the official site), with IC
 
 **Rule: finish every code change in Phase A before any LLM run**, so a small tweak never forces a re-run. Runs need an explicit go (see `CLAUDE.md`).
 
-## Phase A: code (no GPU). Done on branch `phase-a`, except A3
+## Phase A: code (no GPU). Done on branch `phase-a` (A3 on `energy`)
 | # | Change | Status |
 |---|---|---|
 | A0 | **One config:** `configs/default.yaml` + `conditions.yaml`, `src/config.py`, resolved `config.json` per run. | Done. See `docs/config.md`. |
 | A1 | **Obstacle phase visible** (`domain.visible_extra: [obs_idx]`) to rules **and** legacy. | Done. Legacy makes one call per (goal, phase). Equivalence tests cover phase-observing policies. `pre_phase_a` reproduces the hidden setting. |
 | A2 | **Joint best case** in the REFINE/EXTEND branch (PRISM `multi(…)`, sparse engine, exact LP). | Done. Each round logs `kept_joint_feasible` and `branch_disagreement`. If LP can't decide (step-bounded requirements, i.e. UUV), the result is *undecided* and the loop uses the per-requirement branch; PRISM's value-iteration variant wrongly said "no" on UUV. |
-| A3 | **Reward requirements** (UUV energy). | **On hold.** When done, calibrate the threshold like the others. |
+| A3 | **Reward requirements** (UUV energy). | Done on branch `energy` (worktree `../PRISM-LLM-energy`), to merge into `phase-a` after the gridworld batch. UUV thresholds ≤ 26.5 / ≤ 62.5, calibrated like the others. |
 | A4 | **Retry policies**: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. | Done (`src/core/retry.py`). R3 every:3, R4 gain:0.05. |
 | A5 | **Seeds** (`llm.seed`, passed to Ollama). | Done. |
 | A6 | **Ablation runner** `src/run_ablation.py` (conditions × seeds, resumable, `--dry-run`). | Done. |

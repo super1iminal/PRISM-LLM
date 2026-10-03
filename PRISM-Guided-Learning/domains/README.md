@@ -7,7 +7,7 @@ particular domain. Everything domain-specific lives in these files:
 |---|---|
 | `domain.py` | exactly one subclass of `core.domain.Domain`. It implements `load_instances(dataset)` (dataset → list of `Instance`) and `context(instance)`, the variables that every template below is rendered with. |
 | `model.prism.j2` | **The MDP, fully specified in PRISM** (`mdp` model type): state variables, initial state, commands, transition probabilities and labels. Every policy action must be the action label of the commands it enables (`[up] guard -> 0.7 : ... + 0.3 : ...;`). The planner adds a `policy` module that synchronizes on these labels. Exactly one initial state. |
-| `spec.yaml.j2` | `actions` (label → English), `variables` (the **policy-visible** state variables, with a description. Types and ranges are read from the model unless given as `type`/`low`/`high`), and `requirements` (`name`, PRISM path `formula`, `bound` `>=` or `<=`, `threshold`, English `description`). |
+| `spec.yaml.j2` | `actions` (label → English), `variables` (the **policy-visible** state variables, with a description. Types and ranges are read from the model unless given as `type`/`low`/`high`), `optional_variables` (descriptions for variables a config may make visible via `domain.visible_extra`), and `requirements` (`name`, PRISM path `formula`, `bound` `>=` or `<=`, `threshold`, English `description`; add `reward: <structure>` for an expected-reward bound such as UUV's `energy_budget`). |
 | `description.md.j2` | English description of the MDP for the prompt: states, dynamics, transition probabilities. |
 | `visual.txt.j2` | Visual representation of the state space for the prompt. |
 | `examples.md.j2` | *(optional)* Example rules in this domain's vocabulary. |
