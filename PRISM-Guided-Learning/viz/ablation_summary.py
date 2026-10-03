@@ -145,7 +145,7 @@ def _bar_panel(ax, table, data, col, title, ylabel, fmt):
     for i, condition in enumerate(table.condition):
         seeds = data[data.condition == condition].groupby("seed")
         values = seeds.apply(lambda g: int((g.solved & g.solvable).sum())) if col == "solved" else seeds[
-            {"met": "met", "shortfall": "shortfall", "uncovered": "uncovered_pct"}[col]].mean()
+            {"met": "met", "met_best": "met_best", "shortfall": "shortfall", "uncovered": "uncovered_pct"}[col]].mean()
         ax.scatter(np.full(len(values), i), values, color=INK, s=14, zorder=3)
         ax.annotate(fmt.format(table[col].iloc[i]), (i, max(table[col].iloc[i], values.max())), ha="center",
                     va="bottom", xytext=(0, 3), textcoords="offset points", fontsize=7.5, color=INK_2)
@@ -162,8 +162,12 @@ def plot_conditions(table, data, out):
     _bar_panel(axes[0, 0], table, data, "met", "Requirements met (of 9), worst case", "mean per grid", "{:.2f}")
     _bar_panel(axes[0, 1], table, data, "shortfall", "Shortfall below thresholds (lower is better)", "mean per grid",
                "{:.2f}")
-    _bar_panel(axes[1, 0], table, data, "solved", f"Grids solved (of {n_solvable} solvable)", "mean over seeds",
-               "{:.1f}")
+    solved = int(table.solved.sum())
+    _bar_panel(axes[1, 0], table, data, "met_best", "Requirements met, best case (uncovered states choose well)",
+               "mean per grid", "{:.2f}")
+    if not solved:
+        axes[1, 0].annotate(f"No condition solved any of the {n_solvable} solvable grids (worst case).",
+                            (0.01, 0.02), xycoords="axes fraction", fontsize=8.5, color=INK_2)
     ax = axes[1, 1]
     t = table[table.vs != ""].reset_index(drop=True)
     y = np.arange(len(t))[::-1]
@@ -240,6 +244,40 @@ def plot_budget(runs, out):
     return summary.pivot(index="condition", columns="k", values="met")
 
 
+def plot_uuv(root: Path, out: Path) -> bool:
+    """Per round, how far each UUV requirement is from its threshold (worst case), both scenarios."""
+    runs = [p for p in sorted((root / "U1").glob("seed_*")) if (p / SYMBOLIC_FILE).exists()]
+    if not runs:
+        return False
+    import sys
+    sys.path.insert(0, str(ROOT / "src"))
+    from core.domain import load_domain
+    domain = load_domain("uuv")
+    instances = domain.load_instances("uuv_paper.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4.4), facecolor=SURFACE, sharey=True)
+    for ax, inst in zip(axes, instances):
+        reqs = domain.spec(inst).requirements
+        for j, run_dir in enumerate(runs):
+            df = pd.read_parquet(run_dir / SYMBOLIC_FILE).reset_index()
+            g = df[df.sample_id == int(inst.id)].sort_values("iteration")
+            for i, r in enumerate(reqs):
+                margin = [(v - r.threshold) * (1 if r.maximize else -1) / abs(r.threshold) * 100
+                          for v in g[f"prob_worst_{r.name}"]]
+                ax.plot(g.iteration, margin, color=LINE_COLORS[i], lw=2, marker="o", ms=5,
+                        ls="-" if j == 0 else "--", label=f"{r.name} ({run_dir.name})")
+        ax.axhline(0, color=INK, lw=1)
+        style(ax, f"{inst.data['name'].replace('_', ' ').title()}", "margin to threshold, % (above 0 = met)")
+        ax.set_xticks(range(1, 6))
+        ax.set_xlabel("round", color=INK_2, fontsize=9)
+    axes[1].legend(frameon=False, fontsize=7.5, loc="lower right")
+    fig.suptitle("UUV (U1): worst-case margin of each requirement per round (solid seed 1, dashed seed 2)",
+                 x=0.01, ha="left", fontsize=13, fontweight="bold", color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+    return True
+
+
 def uuv_table(root: Path) -> str:
     rows = []
     for run_dir in sorted((root / "U1").glob("seed_*")):
@@ -288,7 +326,8 @@ def write_markdown(out_dir, table, budget, pending, uuv):
               for c in CONDITIONS if c in budget.index]
     lines.append("")
     if uuv:
-        lines += ["## UUV (U1: symbolic defaults on the paper's two scenarios, with the energy budget)", "", uuv, ""]
+        lines += ["## UUV (U1: symbolic defaults on the paper's two scenarios, with the energy budget)", "",
+                  "![uuv](uuv.png)", "", uuv, ""]
     (out_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -314,6 +353,7 @@ def main():
     plot_conditions(table, data, out_dir / "conditions.png")
     plot_mechanics(table, out_dir / "mechanics.png")
     budget = plot_budget(runs, out_dir / "budget.png")
+    plot_uuv(args.root, out_dir / "uuv.png")
     write_markdown(out_dir, table, budget, pending, uuv_table(args.root))
     print(out_dir / "SUMMARY.md")
 
