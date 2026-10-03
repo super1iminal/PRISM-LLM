@@ -1,7 +1,7 @@
 """Draw the planned ablation grids (conditions x factors) for docs/ablations.md.
 
 Usage (from PRISM-Guided-Learning/): python viz/plot_ablation_grid.py
-Writes docs/ablation_batch1.png and docs/ablation_batch2.png at the repo root.
+Writes docs/ablation_run.png and docs/ablation_not_run.png at the repo root.
 Edit the ROWS tables below when the plan changes.
 """
 from pathlib import Path
@@ -51,46 +51,43 @@ def leg(**changes):
 
 
 # Row: (id, name, family, values, question, seeds, gpu hours or None, is_reference)
-NOW = [
-    ("group", "1. Symbolic  (main method; reference for the sweep)"),
-    ("B2", "Symbolic (full)", "symbolic", SYMBOLIC_REF, "Main method; reference for the sweep", SEEDS,
+RUN = [
+    ("group", "Reference"),
+    ("B2", "Symbolic defaults", "symbolic", SYMBOLIC_REF, "Main method; reference for every row below", SEEDS,
      SEEDS * H_SYMBOLIC, True),
-    ("group", "2. Retry-policy sweep  (vs. B2; Marsha's suggestion)"),
-    ("R1", "Never retry", "symbolic", sym(retry="never"), "Is feedback alone enough?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("R2", "Retry after 1 stall", "symbolic", sym(retry="after 1 stall"), "Retry sooner when stuck?", SEEDS,
+    ("group", "Retry sweep  (vs. symbolic defaults; Marsha's suggestion)"),
+    ("R1", "Never restart", "symbolic", sym(retry="never"), "Is feedback alone enough?", SEEDS, SEEDS * H_SYMBOLIC,
+     False),
+    ("R2", "Restart after 1 stall", "symbolic", sym(retry="after 1 stall"), "Restart sooner when stuck?", SEEDS,
      SEEDS * H_SYMBOLIC, False),
-    ("R3", "Retry every 3rd round", "symbolic", sym(retry="every 3rd round"), "Scheduled restarts instead of stalls?",
+    ("R3", "Restart every 3rd round", "symbolic", sym(retry="every 3rd round"),
+     "Scheduled restarts instead of stalls?", SEEDS, SEEDS * H_SYMBOLIC, False),
+    ("R4", "Restart on small gain", "symbolic", sym(retry="gain < ε"), "Restart when progress is slow, not zero?",
      SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("R4", "Retry on small gain", "symbolic", sym(retry="gain < ε"), "Restart when progress is slow, not zero?",
-     SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("R5", "Retry every round", "symbolic", sym(feedback="none", retry="every round", blame="—"),
+    ("R5", "Always restart", "symbolic", sym(feedback="none", retry="every round", blame="—"),
      "Is feedback better than resampling at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("group", "3. Legacy  (after all symbolic runs)"),
-    ("B1", "Legacy", "legacy", LEGACY_REF, "Baseline for the paper's comparison", SEEDS,
-     SEEDS * H_LEGACY_VISIBLE, True),
+    ("group", "Feedback content  (vs. symbolic defaults)"),
+    ("S1", "Results table only", "symbolic", sym(feedback="probabilities +\nprevious rules", blame="—"),
+     "Does blame feedback help, beyond the table?", SEEDS, SEEDS * H_SYMBOLIC, False),
+    ("S4", "No examples", "symbolic", sym(examples="none"), "Prompt confound, symbolic side", SEEDS,
+     SEEDS * H_SYMBOLIC, False),
+    ("group", "Blame signal  (vs. symbolic defaults)"),
+    ("S5", "Regret blame", "symbolic", sym(blame="one-step regret"), "Does local blame beat mass?", SEEDS,
+     SEEDS * H_SYMBOLIC, False),
+    ("V1", "Random blame", "symbolic", sym(blame="random rules"), "Does blame need to point at the right rules?",
+     SEEDS, SEEDS * H_SYMBOLIC, False),
+    ("V2", "No blame section", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
+     "Does a blame hint help at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
     ("group", "Free  (from the runs above)"),
     ("F1", "Rounds budget 1–5", "both", ["—"] * 5, "Success vs budget (pass@k-style curves)", None, 0.0, False),
 ]
 
-DEFERRED = [
-    ("group", "References  (from the main comparison)"),
-    ("B1", "Legacy", "legacy", LEGACY_REF, "Reference for legacy ablations", None, None, True),
-    ("B2", "Symbolic (full)", "symbolic", SYMBOLIC_REF, "Reference for symbolic ablations", None, None, True),
-    ("group", "Symbolic ablations  (vs. B2)"),
-    ("S1", "Legacy-style feedback", "symbolic", sym(feedback="probabilities +\nprevious rules", blame="—"),
-     "Does blame feedback help, beyond the table?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("S4", "No examples", "symbolic", sym(examples="none"), "Prompt confound, symbolic side", SEEDS,
-     SEEDS * H_SYMBOLIC, False),
-    ("S5", "Regret blame", "symbolic", sym(blame="one-step regret"), "Does local blame beat mass?", SEEDS,
-     SEEDS * H_SYMBOLIC, False),
-    ("group", "Blame validation  (vs. B2 and S5)"),
-    ("V1", "Random blame", "symbolic", sym(blame="random rules"), "Does blame need to point at the right rules?",
-     SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("V2", "No blame", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
-     "Does a blame hint help at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("group", "Legacy ablations  (vs. B1)"),
-    ("L1", "Legacy + blind retry", "legacy", leg(retry="after 2 stalls"), "Does retry alone close the gap?", SEEDS,
-     SEEDS * H_LEGACY_VISIBLE, False),
+NOT_RUN = [
+    ("group", "Legacy  (stopped Oct 3: lower priority than the symbolic results)"),
+    ("B1", "Legacy baseline", "legacy", LEGACY_REF, "Main comparison vs. symbolic", SEEDS,
+     SEEDS * H_LEGACY_VISIBLE, True),
+    ("L1", "Legacy + blind restart", "legacy", leg(retry="after 2 stalls"), "Does restarting alone close the gap?",
+     SEEDS, SEEDS * H_LEGACY_VISIBLE, False),
     ("L2", "Legacy, no examples", "legacy", leg(examples="none"), "Prompt confound, legacy side", SEEDS,
      SEEDS * H_LEGACY_VISIBLE, False),
 ]
@@ -181,19 +178,16 @@ def main():
     DOCS.mkdir(exist_ok=True)
     common = (f"Each condition: 20 gridworlds × {SEEDS} seeds, 5 rounds, qwen3:14b, obstacle phase visible to rules. "
               "Shaded cells differ from the row's reference.")
-    draw(NOW, "Ablations, batch 1: main comparison and retry sweep", common, [
-        f"GPU hours per 20-grid run: symbolic {H_SYMBOLIC} h (measured); legacy {H_LEGACY_VISIBLE} h "
-        f"(estimate: {H_LEGACY} h measured with the obstacle hidden, × mean cycle length 3.9).",
-        "Symbolic rows include the joint best-case branch. R4's ε is the minimum drop in total worst-case "
-        "shortfall that counts as progress (0.05).",
-    ], DOCS / "ablation_batch1.png")
-    draw(DEFERRED, "Ablations, batch 2: factor ablations and blame validation", common, [
-        "Deferred at the Sept 24 meeting, run after batch 1 (all symbolic conditions first, then legacy). S4 drops "
-        "the example block, including the catch-all example rule (the instruction stays).",
-        "V1 keeps the prompt's shape but blames random rules; V2 drops the blame section. Also run: U1 (symbolic "
-        "defaults on UUV with the energy budget). Still deferred: a stronger model on a subset.",
-    ], DOCS / "ablation_batch2.png")
-
+    draw(RUN, "Ablations run (Oct 3)", common, [
+        f"GPU hours: about {H_SYMBOLIC} h per 20-grid symbolic run (measured). Symbolic rows include the joint best-case "
+        "branch. R4's ε is the minimum drop in total worst-case shortfall that counts as progress (0.05).",
+        "S4 drops the example block, including the catch-all example rule (the instruction stays). V1 keeps the prompt's "
+        "shape but blames random rules. Also run: U1, symbolic defaults on UUV with the energy budget.",
+    ], DOCS / "ablation_run.png")
+    draw(NOT_RUN, "Ablations not run", common, [
+        f"GPU hours per legacy run: {H_LEGACY_VISIBLE} h (estimate: {H_LEGACY} h measured with the obstacle hidden, "
+        "× mean cycle length 3.9). Also not run: a stronger model on a subset.",
+    ], DOCS / "ablation_not_run.png")
 
 if __name__ == "__main__":
     main()
