@@ -14,9 +14,9 @@ from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 SURFACE, INK, INK_2, INK_3, RULE = "#fcfcfb", "#0b0b0b", "#52514e", "#8a8984", "#e4e3df"
 # Badge colours by ablation family, the same as the results charts (viz/ablation_summary.py)
 FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback content": "#1baf7a",
-                 "Blame signal": "#eda100", "Legacy variants": "#4a3aa7"}
+                 "Blame signal": "#eda100", "Rounds budget": "#e87ba4", "Legacy variants": "#4a3aa7"}
 FAMILY_OF = {"B1": "Baselines", "B2": "Baselines", "R1": "Retry sweep", "R2": "Retry sweep", "R3": "Retry sweep",
-             "R4": "Retry sweep", "R5": "Retry sweep", "S1": "Feedback content", "S4": "Feedback content",
+             "R4": "Retry sweep", "R5": "Retry sweep", "D7": "Rounds budget", "S1": "Feedback content", "S4": "Feedback content",
              "S5": "Blame signal", "V1": "Blame signal", "V2": "Blame signal", "L1": "Legacy variants",
              "L2": "Legacy variants"}
 CHANGED_FILL, CHANGED_INK = "#fde7dc", "#9a3412"   # differs from the row's reference
@@ -78,6 +78,9 @@ RUN = [
      SEEDS, SEEDS * H_SYMBOLIC, False),
     ("V2", "No blame section", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
      "Does a blame hint help at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
+    ("group", "Rounds budget  (vs. restart on slow progress, the new default)"),
+    ("D7", "New default, 7 rounds", "symbolic", sym(retry="gain < ε"), "Do more rounds keep paying off?", SEEDS,
+     SEEDS * H_SYMBOLIC * 7 / 5, False),
     ("group", "Free  (from the runs above)"),
     ("F1", "Rounds budget 1–5", "both", ["—"] * 5, "Success vs budget (pass@k-style curves)", None, 0.0, False),
 ]

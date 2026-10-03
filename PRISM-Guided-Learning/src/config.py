@@ -37,7 +37,7 @@ class LLMConfig:
 class PlannerConfig:
     max_rounds: int = 5
     max_fixups: int = 2                       # extra calls per round when the answer has invalid rules
-    retry: str = "stall:2"                    # stall:k | never | every:k | gain:eps | always
+    retry: str = "gain:0.05"                  # stall:k | never | every:k | gain:eps | always
     branch: str = "joint"                     # joint | per_requirement
     feedback: str = "blame"                   # blame (REFINE/EXTEND with blame) | table (S1: results table only)
     max_rules: int = 64

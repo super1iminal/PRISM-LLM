@@ -149,3 +149,9 @@ What was built is in `docs/plan.md` (Phase A table; ceilings and budget curves u
 - **V1 (random blame)** is a placebo: same number of rules/states as B2, equal shares, and B2's wording. **V2** drops the blame section but keeps the framing.
 - **L1:** legacy's retry uses the same `stall:k` rule as symbolic; a blind-retry round regenerates every (goal, phase) from the initial prompt, then keep-best applies as usual.
 - **Run order:** batch 1 (B2, R1–R5) finished first; then the symbolic part of batch 2 (S1, S4, S5, V1, V2), U1, then all legacy runs (B1, L1, L2). Legacy B1 was moved behind the symbolic batch-2 runs, following "all symbolic first, then legacy".
+
+## Default retry policy changed (Oct 3)
+- **Default `planner.retry` is now `gain:0.05`** (restart when the last round cut total worst-case shortfall by less than 0.05, including no improvement). It won the retry sweep: 4.95 requirements met vs 4.45 for the old default `stall:2` (p = 0.055) and 4.72 for pure resampling (p = 0.31; better on 10 grids, worse on 6).
+- Every condition that ran with the old default now pins `retry: "stall:2"` in `configs/conditions.yaml`, so its name still means what was run (checked against each run's `config.json`).
+- **D7:** the new default with 7 rounds, 2 seeds, to see whether more rounds keep paying off (all budget curves were still rising at round 5).
+- Legacy runs were stopped on Oct 3 (lower priority than the symbolic results); `docs/ablation_not_run.png`.

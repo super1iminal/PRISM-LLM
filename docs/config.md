@@ -26,9 +26,9 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits | — |
 | `llm.seed` | `null` | run seed (set per seed by `run_ablation.py`); each call uses a seed derived from it and the call's index within the instance | seeds 1, 2 |
 | `llm.temperature` | `null` | `null` = the model's default | — |
-| `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free) |
+| `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free), D7 (7 rounds) |
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
-| `planner.retry` | `stall:2` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always` | R1–R5 |
+| `planner.retry` | `gain:0.05` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. Was `stall:2` until Oct 3 (the conditions that ran with it pin it) | R1–R5 |
 | `planner.branch` | `joint` | REFINE vs EXTEND: one completion must pass every requirement (`joint`), or each on its own (`per_requirement`, used by the old runs) | `pre_phase_a` |
 | `planner.feedback` | `blame` | `blame`: REFINE/EXTEND prompts with blame; `table`: results table and previous rules only, no branch | S1 |
 | `planner.max_rules` / `max_condition_chars` | 64 / 200 | schema caps (stop repetition loops) | — |

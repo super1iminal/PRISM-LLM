@@ -27,12 +27,13 @@ SYMBOLIC_FILE, LEGACY_FILE = "SYMBOLIC_results.parquet", "LEGACY_FEEDBACK_SIMPLI
 
 # condition -> (family, reference for paired tests, what changes)
 CONDITIONS = {
-    "B2": ("Baselines", None, "Symbolic defaults"),
+    "B2": ("Baselines", None, "Old defaults (restart after 2 stalls)"),
     "R1": ("Retry sweep", "B2", "Never restart"),
     "R2": ("Retry sweep", "B2", "Restart after 1 stall"),
     "R3": ("Retry sweep", "B2", "Restart every 3rd round"),
-    "R4": ("Retry sweep", "B2", "Restart when gain < 0.05"),
+    "R4": ("Retry sweep", "B2", "Restart on slow progress (new default)"),
     "R5": ("Retry sweep", "B2", "Always restart (no feedback)"),
+    "D7": ("Rounds budget", "R4", "New default, 7 rounds"),
     "S1": ("Feedback content", "B2", "Results table only"),
     "S4": ("Feedback content", "B2", "No examples in the prompt"),
     "S5": ("Blame signal", "B2", "Blame by one-step regret"),
@@ -43,8 +44,8 @@ CONDITIONS = {
     "L2": ("Legacy variants", "B1", "Legacy without worked examples"),
 }
 FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback content": "#1baf7a",
-                 "Blame signal": "#eda100", "Legacy variants": "#4a3aa7"}
-BUDGET_GROUPS = [("Retry sweep", ["B2", "R1", "R2", "R3", "R4", "R5", "B1"]),
+                 "Blame signal": "#eda100", "Rounds budget": "#e87ba4", "Legacy variants": "#4a3aa7"}
+BUDGET_GROUPS = [("Retry sweep and rounds", ["B2", "R1", "R2", "R3", "R4", "R5", "D7", "B1"]),
                  ("Feedback content and blame", ["B2", "S1", "S4", "S5", "V1", "V2"]),
                  ("Legacy", ["B1", "L1", "L2", "B2"])]
 LINE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -252,7 +253,9 @@ def plot_budget(runs, out):
     curves = []
     for condition, run_dir in runs:
         legacy = (run_dir / LEGACY_FILE).exists()
-        rows = legacy_curve(run_dir, 5, DATASET) if legacy else symbolic_curve(run_dir, 5)
+        cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+        rounds = cfg["legacy" if legacy else "planner"]["max_rounds"]   # curves stop at the run's own budget
+        rows = legacy_curve(run_dir, rounds, DATASET) if legacy else symbolic_curve(run_dir, rounds)
         curves.append(pd.DataFrame(rows).assign(condition=condition, seed=run_dir.name))
     data = pd.concat(curves)
     summary = data.groupby(["condition", "k"]).met.mean().reset_index()
@@ -266,7 +269,7 @@ def plot_budget(runs, out):
             ax.annotate(f"{d.met.iloc[-1]:.2f}", (d.k.iloc[-1], d.met.iloc[-1]), xytext=(5, 0),
                         textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
         style(ax, title, "requirements met (mean per grid)")
-        ax.set_xticks(range(1, 6))
+        ax.set_xticks(range(1, int(summary.k.max()) + 1))
         ax.set_xlabel("rounds budget k", color=INK_2, fontsize=9)
         ax.legend(frameon=False, fontsize=7.5, loc="lower right")
     fig.suptitle("Requirements met by the kept policy after k rounds (seeds pooled)", x=0.01, ha="left",
@@ -363,7 +366,7 @@ def write_markdown(out_dir, table, budget, pending, uuv):
     ks = list(budget.columns)
     lines += ["", "## Requirements met after k rounds", "", "| cond | " + " | ".join(f"k={k}" for k in ks) + " |",
               "|---|" + "---|" * len(ks)]
-    lines += [f"| {c} | " + " | ".join(f"{budget.loc[c, k]:.2f}" for k in ks) + " |"
+    lines += [f"| {c} | " + " | ".join("" if pd.isna(budget.loc[c, k]) else f"{budget.loc[c, k]:.2f}" for k in ks) + " |"
               for c in CONDITIONS if c in budget.index]
     lines.append("")
     if uuv:
