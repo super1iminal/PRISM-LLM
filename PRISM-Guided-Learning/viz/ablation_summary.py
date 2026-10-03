@@ -158,16 +158,11 @@ def _bar_panel(ax, table, data, col, title, ylabel, fmt):
 
 def plot_conditions(table, data, out):
     fig, axes = plt.subplots(2, 2, figsize=(14, 8.5), facecolor=SURFACE)
-    n_solvable = len(solvable_ids())
     _bar_panel(axes[0, 0], table, data, "met", "Requirements met (of 9), worst case", "mean per grid", "{:.2f}")
     _bar_panel(axes[0, 1], table, data, "shortfall", "Shortfall below thresholds (lower is better)", "mean per grid",
                "{:.2f}")
-    solved = int(table.solved.sum())
     _bar_panel(axes[1, 0], table, data, "met_best", "Requirements met, best case (uncovered states choose well)",
                "mean per grid", "{:.2f}")
-    if not solved:
-        fig.text(0.01, 0.01, f"No condition solved any of the {n_solvable} solvable grids in the worst case.",
-                 fontsize=9, color=INK_2)
     ax = axes[1, 1]
     t = table[table.vs != ""].reset_index(drop=True)
     y = np.arange(len(t))[::-1]
@@ -189,7 +184,7 @@ def plot_conditions(table, data, out):
                bbox_to_anchor=(0.5, 0.95))
     fig.suptitle("Ablations on 20 gridworlds (qwen3 14B, 5 rounds, obstacle visible), bars = mean over seeds",
                  x=0.01, ha="left", y=0.99, fontsize=13, fontweight="bold", color=INK)
-    fig.tight_layout(rect=(0, 0.03, 1, 0.92), h_pad=3)
+    fig.tight_layout(rect=(0, 0, 1, 0.92), h_pad=3)
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
 
