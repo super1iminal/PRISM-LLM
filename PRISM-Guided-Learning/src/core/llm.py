@@ -50,8 +50,10 @@ class OllamaLLM:
         self.model = config.model
         self.think = config.think
         self.options = {"num_ctx": config.num_ctx, "num_predict": config.num_predict}
-        if config.seed is not None:
-            self.options["seed"] = config.seed
+        # A fixed sampling seed would make every repeat of a prompt (blind retries, unchanged refine
+        # prompts) return the identical answer. Each call instead gets a seed derived from the run seed
+        # and its index within the current usage (one instance): reproducible, but distinct per call.
+        self.seed = config.seed
         if config.temperature is not None:
             self.options["temperature"] = config.temperature
         self._client = ollama.Client()
@@ -67,13 +69,16 @@ class OllamaLLM:
 
     def invoke_raw(self, prompt: str, schema: Optional[Type[T]] = None) -> str:
         schema = schema or self.schema
+        options = dict(self.options)
+        if self.seed is not None:
+            options["seed"] = self.seed * 1_000_003 + len(self.usage().calls)
         start = time.time()
         response = self._client.chat(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             format=schema.model_json_schema(),
             think=self.think,
-            options=self.options,
+            options=options,
         )
         content = response.message.content or ""
         self.usage().calls.append(LLMCall(

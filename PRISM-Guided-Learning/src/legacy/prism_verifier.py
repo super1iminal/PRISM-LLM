@@ -49,10 +49,18 @@ class PrismVerifier:
 
             # Run PRISM
             self.logger.debug(f"Running PRISM command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, 
-                                 stdout=subprocess.PIPE, 
-                                 stderr=subprocess.PIPE, 
+            result = subprocess.run(cmd,
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE,
                                  text=True)
+            # Phase-observing policies can make the chain periodic; if the iterative method does not
+            # converge, retry with other solvers rather than silently returning zeros below.
+            for fallback in ("-bgaussseidel", "-intervaliter"):
+                if "did not converge" not in result.stdout:
+                    break
+                self.logger.warning(f"PRISM did not converge with {self.method}; retrying with {fallback}")
+                retry_cmd = [fallback if part == self.method else part for part in cmd]
+                result = subprocess.run(retry_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             # Log PRISM output for debugging
             self.logger.debug("PRISM stdout:")

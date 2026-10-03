@@ -21,7 +21,7 @@ from config import Config
 from core.analysis import MassAnalyzer
 from core.domain import Domain, Instance, Requirement
 from core.llm import OllamaLLM
-from core.prism import PrismRunner
+from core.prism import PrismError, PrismRunner
 from core.retry import RetryPolicy
 from core.rules import RuleError, SymbolicPolicy
 from core.verifier import PolicyVerifier, Verification
@@ -134,7 +134,15 @@ class SymbolicPlanner:
             candidate = best[0].extended(new_rules) if mode == "extend" else new_rules
             log(f"Candidate policy ({len(candidate.rules)} rules):\n{candidate.listing()}")
 
-            v = verifier.verify(candidate)
+            try:
+                v = verifier.verify(candidate)
+            except PrismError as e:
+                # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
+                # Count the round as producing nothing (the empty policy) instead of losing the instance.
+                log(f"Verification failed ({str(e).splitlines()[0]}); scoring the round as an empty policy")
+                errors.append(f"verification failed: {str(e).splitlines()[0]}")
+                candidate = best[0] if mode == "extend" and best else verifier.empty_policy()
+                v = verifier.verify(candidate)
             score = _score(v, reqs)
             previous_shortfall = best[2][2] if best else None
             improved = best is None or score < best[2]

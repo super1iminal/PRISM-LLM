@@ -130,6 +130,7 @@ class PrismRunner:
         self.multi_engine = config.multi_engine
         self.multi_args = [f"-{config.multi_engine}"] + ([f"-{config.multi_method}"] if config.multi_method else [])
         self.method_args = [f"-{config.method}"] if config.method else []
+        self.fallback_args = [[f"-{m}"] for m in config.fallback_methods] if config.method else []
 
     def check(self, model: str, prop: str) -> Optional[bool]:
         """Decide one boolean property, e.g. a multi-objective achievability query `multi(...)`.
@@ -182,10 +183,13 @@ class PrismRunner:
                    "-maxiters", str(self.max_iters), "-exportstates", states_path, "-exportlabels", labels_path]
             if export_transitions:
                 cmd += ["-exporttrans", trans_path]
-            cmd += self.method_args + self.extra_args
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                  timeout=self.timeout)
-            stdout = proc.stdout
+            # Try the configured method, then the fallbacks, while PRISM reports non-convergence
+            for method_args in [self.method_args] + self.fallback_args:
+                proc = subprocess.run(cmd + method_args + self.extra_args, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, text=True, timeout=self.timeout)
+                stdout = proc.stdout
+                if "did not converge" not in stdout:
+                    break
             if "Error:" in stdout or not os.path.exists(states_path):
                 raise PrismError(_error_excerpt(stdout))
 

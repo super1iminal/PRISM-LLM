@@ -24,7 +24,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `llm.model` | `qwen3:14b-q4_K_M` | Ollama model | deferred (stronger model) |
 | `llm.think` | `false` | qwen3 thinking mode | — |
 | `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits | — |
-| `llm.seed` | `null` | sampling seed (set per seed by `run_ablation.py`) | seeds 1, 2 |
+| `llm.seed` | `null` | run seed (set per seed by `run_ablation.py`); each call uses a seed derived from it and the call's index within the instance | seeds 1, 2 |
 | `llm.temperature` | `null` | `null` = the model's default | — |
 | `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free) |
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
@@ -39,6 +39,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | done (catch-all ablation) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
 | `prism.method` | `gaussseidel` | PRISM solver; plain value iteration fails on periodic chains (rules that read `obs_idx`) | — |
+| `prism.fallback_methods` | `[modpoliter]` | tried in order when `method` does not converge (seen on a real qwen rule set) | — |
 | `prism.multi_engine` / `multi_method` | `sparse` / `lp` | joint queries (the explicit engine can't do them; LP is exact) | — |
 | `prism.java_max_mem` / `max_iters` / `timeout_s` | 4g / 1,000,000 / 900 | PRISM limits | — |
 | `rules.max_enumeration` | 200,000 | state-space size up to which first-match guards are simplified | — |

@@ -65,6 +65,7 @@ class PromptConfig:
 @dataclass
 class PrismConfig:
     method: str = "gaussseidel"               # iterative method; plain value iteration oscillates on periodic chains
+    fallback_methods: List[str] = field(default_factory=lambda: ["modpoliter"])   # tried when `method` does not converge
     java_max_mem: str = "4g"
     max_iters: int = 1_000_000
     timeout_s: float = 900
