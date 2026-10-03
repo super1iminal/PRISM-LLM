@@ -116,6 +116,10 @@ class Domain:
     def context(self, instance: Instance) -> Dict[str, Any]:
         return dict(instance.data)
 
+    def horizon(self, instance: Instance) -> Optional[int]:
+        """Optional occupancy horizon for the mass analysis (used when the config asks the domain)."""
+        return None
+
     # ---------------------------------------------------------------- template-backed defaults
 
     def render(self, template: str, instance: Optional[Instance] = None, **extra) -> str:

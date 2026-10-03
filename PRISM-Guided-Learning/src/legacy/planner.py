@@ -12,6 +12,7 @@ import traceback
 
 from time import time
 
+from core.retry import RetryPolicy
 from settings import get_prism_path
 from logging_utils import setup_logger, create_run_directory
 
@@ -39,7 +40,9 @@ def _evaluate_single_gridworld_feedback_simplified(args: Tuple) -> Dict:
         model=model,
         model_name=model_name,
         max_attempts=config.get('max_attempts', 3),
-        observe_obstacle=config.get('observe_obstacle', False)
+        observe_obstacle=config.get('observe_obstacle', False),
+        retry=config.get('retry', 'never'),
+        examples=config.get('examples', True),
     )
     observes = planner.observe_obstacle and bool(gridworld.moving_obstacle_positions)
 
@@ -78,6 +81,7 @@ def _evaluate_single_gridworld_feedback_simplified(args: Tuple) -> Dict:
         "Iteration_Mistakes": step_result["iteration_mistakes"],
         "Iteration_Costs": step_result["iteration_costs"],
         "Iteration_Policies": step_result["iteration_policies"],
+        "Iteration_Modes": step_result["iteration_modes"],
         "LLM_Calls": len(usage.calls),
         "LLM_Output_Tokens": usage.output_tokens,
         "LLM_Prompt_Tokens": usage.prompt_tokens,
@@ -100,7 +104,8 @@ class FeedbackSimplifiedLLMPlanner:
     build_prompt(is_feedback=True), producing a ~50% shorter, repair-focused prompt.
     """
 
-    def __init__(self, model, model_name: str, max_attempts: int = 3, observe_obstacle: bool = False):
+    def __init__(self, model, model_name: str, max_attempts: int = 3, observe_obstacle: bool = False,
+                 retry: str = "never", examples: bool = True):
         self.action_space = 4
         # With observe_obstacle, the policy also depends on the moving obstacle's phase: one LLM call
         # per (goal, phase) instead of per goal, each covering every cell for that phase.
@@ -110,6 +115,10 @@ class FeedbackSimplifiedLLMPlanner:
         self.max_attempts = max_attempts  # Total LLM attempts per goal (1 initial + N-1 feedback)
         self.model = model
         self.model_name = model_name
+        # Ablations: L1 restarts from the initial prompt after non-improving rounds (`retry`, as in
+        # core/retry.py); L2 drops the two worked examples from the initial prompt.
+        self.retry = retry
+        self.examples = examples
 
     def evaluate(self, dataloader, max_workers: Optional[int] = None, use_threads: bool = True, run_dir: Optional[str] = None):
         """
@@ -166,6 +175,8 @@ class FeedbackSimplifiedLLMPlanner:
         config = {
             'max_attempts': self.max_attempts,
             'observe_obstacle': self.observe_obstacle,
+            'retry': self.retry,
+            'examples': self.examples,
             'run_dir': log_dir,  # Pass shared directory to workers
             'model': self.model,
             'model_name': self.model_name
@@ -328,6 +339,19 @@ class FeedbackSimplifiedLLMPlanner:
                 return prompt.replace(marker, note + marker, 1)
         return prompt + "\n" + note
 
+    def _initial_prompt(self, goal: Tuple[int, int], future_goals: List[Tuple[int, int]], phase=None) -> str:
+        return self._with_phase_note(get_prompt(
+            self.size,
+            self.env.static_obstacles,
+            future_goals,
+            self.env.moving_obstacle_positions,
+            goal,
+            self.env.prob_forward,
+            self.env.prob_slip_left,
+            self.env.prob_slip_right,
+            examples=self.examples,
+        ), phase)
+
     def _get_feedback_prompt(self, goal_idx: int, goal: Tuple[int, int],
                               future_goals: List[Tuple[int, int]], phase=None) -> str:
         """Generate focused repair prompt for correction iteration"""
@@ -438,16 +462,7 @@ class FeedbackSimplifiedLLMPlanner:
 
             for phase in self.phases:
                 self.logger.info(f"Calling LLM for goal {goal_num} (obstacle phase {phase})...")
-                prompt_text = self._with_phase_note(get_prompt(
-                    self.size,
-                    self.env.static_obstacles,
-                    future_goals,
-                    self.env.moving_obstacle_positions,
-                    goal,
-                    self.env.prob_forward,
-                    self.env.prob_slip_left,
-                    self.env.prob_slip_right
-                ), phase)
+                prompt_text = self._initial_prompt(goal, future_goals, phase)
                 self.logger.info(f"=== PROMPT for goal {goal_num} (phase {phase}) ===\n{prompt_text}")
                 llm_start = time()
                 try:
@@ -490,11 +505,18 @@ class FeedbackSimplifiedLLMPlanner:
 
         # Feedback loop - attempt counts: 1 = initial, 2+ = feedback iterations
         attempt = 1  # We've completed attempt 1 (initial)
+        retry, stall = RetryPolicy.parse(self.retry), 0
+        iteration_modes = ["initial"]
         while attempt < self.max_attempts and not self._check_all_probabilities_meet_threshold():
             attempt += 1
             iteration_start = time()
             iter_llm_time = 0.0
-            self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} (feedback simplified - repair prompt) ===")
+            restart = retry.restart(attempt, stall, float("inf"))
+            if restart:
+                stall = 0
+            iteration_modes.append("initial" if restart else "repair")
+            self.logger.info(f"=== Attempt {attempt}/{self.max_attempts} "
+                             f"({'blind retry - initial prompt' if restart else 'feedback simplified - repair prompt'}) ===")
             self.logger.info(f"Current probabilities: {self.prism_probs}")
 
             for idx, goal_num in enumerate(goal_nums):
@@ -504,9 +526,8 @@ class FeedbackSimplifiedLLMPlanner:
                 for phase in self.phases:
                     self.logger.info(f"Re-planning goal {goal_num} (obstacle phase {phase}) with simplified repair prompt")
 
-                    feedback_prompt = self._get_feedback_prompt(
-                        idx, goal, future_goals, phase
-                    )
+                    feedback_prompt = (self._initial_prompt(goal, future_goals, phase) if restart
+                                       else self._get_feedback_prompt(idx, goal, future_goals, phase))
                     self.logger.info(f"=== PROMPT for goal {goal_num} (phase {phase}, feedback) ===\n{feedback_prompt}")
 
                     llm_start = time()
@@ -547,8 +568,10 @@ class FeedbackSimplifiedLLMPlanner:
                 best_ltl_score = ltl_score
                 best_q_table = self.q_table.copy()
                 best_prism_probs = self.prism_probs.copy()
+                stall = 0
                 self.logger.info(f"New best: {best_mistakes} mistakes, LTL={best_ltl_score:.4f}")
             else:
+                stall += 1
                 self.logger.info(f"{mistakes} mistakes / LTL={ltl_score:.4f} did not improve over best {best_mistakes} mistakes / LTL={best_ltl_score:.4f}, reverting policy")
                 self.q_table = best_q_table.copy()
                 self.prism_probs = best_prism_probs.copy()
@@ -576,5 +599,6 @@ class FeedbackSimplifiedLLMPlanner:
             "iteration_mistakes": iteration_mistakes,
             "iteration_costs": iteration_costs,
             "iteration_policies": iteration_policies,
+            "iteration_modes": iteration_modes,
             "success": success
         }

@@ -39,21 +39,28 @@ class PlannerConfig:
     max_fixups: int = 2                       # extra calls per round when the answer has invalid rules
     retry: str = "stall:2"                    # stall:k | never | every:k | gain:eps | always
     branch: str = "joint"                     # joint | per_requirement
-    feedback: str = "blame"                   # blame (other kinds: see docs/ablations.md, not implemented yet)
+    feedback: str = "blame"                   # blame (REFINE/EXTEND with blame) | table (S1: results table only)
     max_rules: int = 64
     max_condition_chars: int = 200
 
 
 @dataclass
 class FeedbackConfig:
-    blame: str = "mass"                       # mass (regret: deferred ablation S5)
+    blame: str = "mass"                       # mass | regret (S5) | random (V1) | none (V2)
     horizon: int = 100                        # steps for the occupancy in the mass analysis
-    horizon_by_domain: Dict[str, int] = field(default_factory=dict)
+    horizon_by_domain: Dict[str, Any] = field(default_factory=dict)   # steps, or "domain" (Domain.horizon)
     top_k: int = 10                           # hotspots / rules shown in feedback
     states_per_rule: int = 3
 
-    def horizon_for(self, domain: str) -> int:
-        return self.horizon_by_domain.get(domain, self.horizon)
+    def horizon_for(self, domain, instance=None) -> int:
+        """Occupancy horizon for `domain` (a Domain, or its name). The value "domain" asks the domain
+        (e.g. UUV's mission deadline), falling back to `horizon`."""
+        name = getattr(domain, "name", domain)
+        value = self.horizon_by_domain.get(name, self.horizon)
+        if value == "domain":
+            value = (domain.horizon(instance) if hasattr(domain, "horizon") and instance is not None else None)
+            return int(value) if value else self.horizon
+        return int(value)
 
 
 @dataclass
@@ -81,6 +88,8 @@ class RulesConfig:
 @dataclass
 class LegacyConfig:
     max_rounds: int = 5
+    retry: str = "never"                      # never | stall:k (L1: blind retry with the initial prompt)
+    examples: bool = True                     # the two worked examples in the initial prompt (L2: off)
 
 
 @dataclass
@@ -165,11 +174,12 @@ def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) 
 def validate(cfg: Config) -> None:
     from core.retry import RetryPolicy  # local import: core depends on config, not the reverse
     RetryPolicy.parse(cfg.planner.retry)
+    RetryPolicy.parse(cfg.legacy.retry)
     checks = {
         "approach": (cfg.approach, {"symbolic", "legacy"}),
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
-        "planner.feedback": (cfg.planner.feedback, {"blame"}),
-        "feedback.blame": (cfg.feedback.blame, {"mass"}),
+        "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
+        "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
     }
     for key, (value, allowed) in checks.items():
         if value not in allowed:

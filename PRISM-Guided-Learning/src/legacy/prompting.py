@@ -118,8 +118,10 @@ def format_probability_summary(prism_probs: Dict[str, float], relevant_keys: set
 def build_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]],
                  k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int],
                  prob_forward: float = 0.7, prob_slip_left: float = 0.15,
-                 prob_slip_right: float = 0.15) -> str:
+                 prob_slip_right: float = 0.15, examples: bool = True) -> str:
     """Generate the complete prompt with visual grid using the unified template.
+
+    `examples=False` drops the two worked examples (ablation L2).
 
     Args:
         size: Grid size
@@ -254,6 +256,8 @@ Policy:
 (5,0)=0  (5,1)=3  (5,2)=1  (5,3)=0  (5,4)=0  (5,5)=0
 """
     )
+    if not examples:
+        examples_block = ""
     stochastic_example = f"\nExample: If you choose DOWN, there's a {prob_forward_pct}% chance of going DOWN, {prob_slip_left_pct}% chance of going LEFT, and {prob_slip_right_pct}% chance of going RIGHT.\n"
     moving_note = ", which could be anywhere along their patrol path" if k_obstacles else ""
 
@@ -501,7 +505,7 @@ def build_repair_prompt(size: int, s_obstacles: List[Tuple[int, int]],
 def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tuple[int, int]],
                k_obstacles: List[Tuple[int, int]], goal: Tuple[int, int],
                prob_forward: float = 0.7, prob_slip_left: float = 0.15,
-               prob_slip_right: float = 0.15) -> str:
+               prob_slip_right: float = 0.15, examples: bool = True) -> str:
     """Generate the initial prompt (backward-compatible wrapper around build_prompt)"""
     return build_prompt(
         size=size,
@@ -512,6 +516,7 @@ def get_prompt(size: int, s_obstacles: List[Tuple[int, int]], f_goals: List[Tupl
         prob_forward=prob_forward,
         prob_slip_left=prob_slip_left,
         prob_slip_right=prob_slip_right,
+        examples=examples,
     )
 
 

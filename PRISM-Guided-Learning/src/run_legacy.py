@@ -61,7 +61,8 @@ def run(cfg: Config, run_dir: str) -> str:
     model = OllamaLLM(ActionPolicy, cfg.llm)
     planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=cfg.llm.model.replace(":", "_"),
                                            max_attempts=cfg.legacy.max_rounds,
-                                           observe_obstacle="obs_idx" in cfg.domain.visible_extra)
+                                           observe_obstacle="obs_idx" in cfg.domain.visible_extra,
+                                           retry=cfg.legacy.retry, examples=cfg.legacy.examples)
     start_time = time()
     results = planner.evaluate(dataloader, max_workers=cfg.run.workers, run_dir=run_dir)
     logger.info(f"{APPROACH_NAME} finished in {time() - start_time:.2f} seconds")
@@ -137,6 +138,7 @@ def save_outputs(results: List[Dict], run_dir: str) -> None:
             "error": result.get("error"),
             "final_prism_probs": result.get("Prism_Probabilities", {}),  # of the kept (best) policy
             "iteration_prism_probs": result.get("Iteration_Prism_Probs", []),
+            "iteration_modes": result.get("Iteration_Modes", []),   # initial | repair (blind retry: initial)
             # Each policy is a list of [state, action] with state = [x, y, g1, ..., gN]
             "iteration_policies": [
                 [[list(state), action] for state, action in policy.items()]

@@ -10,8 +10,10 @@ Each round, for the best rule set so far (keep-best, as in the legacy loop):
 "Can any completion meet them" is PRISM's multi-objective query (`planner.branch: joint`) or, as in
 the runs before Phase A, each requirement's best case on its own (`per_requirement`). The retry
 policy (`planner.retry`, see core/retry.py) decides when to drop feedback and start from the initial
-prompt instead. Semantics: docs/semantics.md.
+prompt instead. With `planner.feedback: table` (ablation S1) there is no branch: every round after a
+failure shows the results table and asks for a complete new rule list. Semantics: docs/semantics.md.
 """
+import zlib
 from time import time
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -104,8 +106,10 @@ class SymbolicPlanner:
         log = logger.info
         cfg = self.config
         verifier = PolicyVerifier(self.domain, instance, self.runner, cfg.rules.max_enumeration)
-        analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain.name), cfg.feedback.top_k,
-                                cfg.feedback.states_per_rule)
+        analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
+                                cfg.feedback.states_per_rule, method=cfg.feedback.blame,
+                                seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
+        show_blame = cfg.feedback.blame != "none"
         spec = verifier.spec
         reqs = spec.requirements
         schema = rule_schema(list(spec.actions), cfg.planner.max_rules, cfg.planner.max_condition_chars)
@@ -195,6 +199,10 @@ class SymbolicPlanner:
                 if self.retry.restart(attempt + 1, stall, gain):
                     mode, stall = "initial", 0
                     prompt = self.domain.render("initial.md.j2", instance, **base_ctx)
+                elif cfg.planner.feedback == "table":
+                    mode = "table"
+                    prompt = self.domain.render("table.md.j2", instance, **base_ctx,
+                                                **self._results_context(best_policy, best_v, reqs))
                 else:
                     joint_conflict = False
                     if not failing_best and cfg.planner.branch == "joint":
@@ -211,7 +219,7 @@ class SymbolicPlanner:
                     if failing_best or joint_conflict:
                         mode = "refine"
                         blamed = failing_best or failing_worst
-                        blame = analyzer.rule_blame(best_v, blamed)
+                        blame = analyzer.rule_blame(best_v, blamed) if show_blame else []
                         blame_ctx = [{
                             "rule": b.rule, "mass": b.mass,
                             "text": (f"{best_policy.rules[b.rule].condition} (action {best_policy.rules[b.rule].action})"
@@ -221,14 +229,15 @@ class SymbolicPlanner:
                         prompt = self.domain.render("refine.md.j2", instance, **base_ctx, **results_ctx,
                                                     failing=[r.name for r in blamed], blame=blame_ctx,
                                                     with_cost=any(r.reward is not None for r in blamed),
-                                                    joint_conflict=joint_conflict)
+                                                    joint_conflict=joint_conflict, show_blame=show_blame, blame_kind=cfg.feedback.blame)
                     else:
                         mode = "extend"
-                        hotspots = analyzer.uncovered_hotspots(best_v, failing_worst)
+                        hotspots = analyzer.uncovered_hotspots(best_v, failing_worst) if show_blame else []
                         hot_ctx = [{"mass": h.mass, "state": self.domain.format_state(h.valuation)} for h in hotspots]
                         prompt = self.domain.render("extend.md.j2", instance, **base_ctx, **results_ctx,
                                                     failing=[r.name for r in failing_worst], hotspots=hot_ctx,
-                                                    with_cost=any(r.reward is not None for r in failing_worst))
+                                                    with_cost=any(r.reward is not None for r in failing_worst),
+                                                    show_blame=show_blame, blame_kind=cfg.feedback.blame)
             record["iteration_time"] = time() - iter_start
 
         best_policy, best_v, _ = best

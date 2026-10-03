@@ -14,7 +14,15 @@ through states) that purely local, one-step measures miss.
 
 Forced states (every choice has the same successor distribution) are never ranked: no rule can
 change what happens there. This is a ranking heuristic, and masses are reported as shares of the total.
+
+Alternative blame signals (config `feedback.blame`, for the ablations):
+* regret (S5): no occupancy. Refine charges each rule the one-step regret of its states on the
+  best-case values, max_a Q(s, a) - Q(s, rule's action), with Q computed on the bare MDP (successors
+  the policy never reaches take their optimum value). Extend ranks uncovered states by their local
+  gap best(s) - worst(s).
+* random (V1): the same number of rules / states, picked uniformly, with equal shares.
 """
+import random as _random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -95,11 +103,63 @@ def _normalize(items, total: float) -> None:
 
 
 class MassAnalyzer:
-    def __init__(self, verifier: PolicyVerifier, horizon: int = 100, top_k: int = 10, states_per_rule: int = 3):
+    def __init__(self, verifier: PolicyVerifier, horizon: int = 100, top_k: int = 10, states_per_rule: int = 3,
+                 method: str = "mass", seed: int = 0):
         self.verifier = verifier
         self.horizon = horizon
         self.top_k = top_k
         self.states_per_rule = states_per_rule
+        self.method = method                  # mass | regret | random
+        self.rng = _random.Random(seed)
+
+    def _local_masses(self, v: Verification, values: np.ndarray, gap: np.ndarray) -> np.ndarray:
+        """Per-state stakes without occupancy (regret blame): the gap itself, on decision states."""
+        gap = np.nan_to_num(np.asarray(gap, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+        return np.clip(gap, 0.0, None)
+
+    def _regret(self, v: Verification, req: Requirement) -> np.ndarray:
+        """One-step regret per reachable state of the policy's model, on its best-case values."""
+        _, opt_vectors, opt_result = self.verifier.optimum()
+        opt_index = opt_result.index_of()
+        values = _signed(req, opt_vectors[req.name]).copy()   # unreached successors: optimum value
+        best = _signed(req, v.best_vectors[req.name])
+        for s, state in enumerate(v.result.states):
+            values[opt_index[state]] = best[s]
+        values = np.nan_to_num(values, nan=0.0, posinf=1e12, neginf=-1e12)
+        regret = np.zeros(len(v.result.states))
+        for s, state in enumerate(v.result.states):
+            if not v.decisions[s] or v.state_rules[s] is None:
+                continue
+            choices = opt_result.choices[opt_index[state]]
+            q = np.array([sum(p * values[t] for t, p in c.successors) for c in choices])
+            allowed = {c.action for c in v.result.choices[s]}
+            chosen = [q[i] for i, c in enumerate(choices) if c.action in allowed]
+            if len(q) and chosen:
+                regret[s] = max(0.0, float(q.max() - max(chosen)))
+        return regret * _stake_scale(req)
+
+    def _random_hotspots(self, v: Verification) -> List[Hotspot]:
+        keys: Dict[Tuple, Dict] = {}
+        for s in range(len(v.result.states)):
+            if v.decisions[s] and v.state_rules[s] is None:
+                valuation = self.verifier.policy_valuation(v.result, s)
+                keys.setdefault(tuple(valuation.values()), valuation)
+        picked = self.rng.sample(sorted(keys), min(self.top_k, len(keys)))
+        return [Hotspot(keys[k], 1.0 / len(picked)) for k in picked]
+
+    def _random_blame(self, v: Verification) -> List[RuleBlame]:
+        states: Dict[Optional[int], Dict[Tuple, Dict]] = defaultdict(dict)
+        for s in range(len(v.result.states)):
+            if v.decisions[s]:
+                valuation = self.verifier.policy_valuation(v.result, s)
+                states[v.state_rules[s]].setdefault(tuple(valuation.values()), valuation)
+        rules = self.rng.sample(sorted(states, key=lambda r: -1 if r is None else r), min(self.top_k, len(states)))
+        blames = []
+        for rule in rules:
+            keys = self.rng.sample(sorted(states[rule]), min(self.states_per_rule, len(states[rule])))
+            share = 1.0 / len(rules)
+            blames.append(RuleBlame(rule, share, hotspots=[Hotspot(states[rule][k], share / len(keys)) for k in keys]))
+        return blames
 
     def _state_masses(self, v: Verification, strategy_values: np.ndarray, gap: np.ndarray,
                       maximize_strategy: bool) -> np.ndarray:
@@ -114,10 +174,15 @@ class MassAnalyzer:
 
     def uncovered_hotspots(self, v: Verification, failing: List[Requirement]) -> List[Hotspot]:
         """Extend mode: uncovered situations ranked by the worst-case probability lost there."""
+        if self.method == "random":
+            return self._random_hotspots(v)
         by_valuation: Dict[Tuple, Hotspot] = {}
         for req in failing:
             worst, best = _signed(req, v.worst_vectors[req.name]), _signed(req, v.best_vectors[req.name])
-            masses = self._state_masses(v, worst, best - worst, maximize_strategy=False) * _stake_scale(req)
+            if self.method == "regret":
+                masses = self._local_masses(v, worst, best - worst) * _stake_scale(req)
+            else:
+                masses = self._state_masses(v, worst, best - worst, maximize_strategy=False) * _stake_scale(req)
             for s in np.nonzero(masses > 0)[0]:
                 if v.state_rules[s] is not None or not v.decisions[s]:
                     continue
@@ -133,6 +198,8 @@ class MassAnalyzer:
 
     def rule_blame(self, v: Verification, failing: List[Requirement]) -> List[RuleBlame]:
         """Refine mode: probability lost versus the unconstrained optimum, charged to rules."""
+        if self.method == "random":
+            return self._random_blame(v)
         _, opt_vectors, opt_result = self.verifier.optimum()
         if opt_result.variables != v.result.variables:
             raise ValueError("policy module must not add state variables")
@@ -143,7 +210,10 @@ class MassAnalyzer:
             opt = _signed(req, opt_vectors[req.name])
             optimum = np.array([opt[opt_index[state]] for state in v.result.states])
             best = _signed(req, v.best_vectors[req.name])
-            masses = self._state_masses(v, best, optimum - best, maximize_strategy=True) * _stake_scale(req)
+            if self.method == "regret":
+                masses = self._regret(v, req)
+            else:
+                masses = self._state_masses(v, best, optimum - best, maximize_strategy=True) * _stake_scale(req)
             for s in np.nonzero(masses > 0)[0]:
                 if not v.decisions[s]:
                     continue
