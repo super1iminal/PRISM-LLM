@@ -1,6 +1,13 @@
-# Decisions log (symbolic-policies branch)
+# Decisions log
 
 Decisions made while generalizing, to review together. Each entry has the decision and why. Items marked **[REVIEW]** are the ones I'm least sure about.
+
+## 📌 OPEN: the story. Why an LLM, if PRISM can already synthesize the policy?
+Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha with the ceilings and the experiment designs). Nothing in the current runs settles it. The ceilings make the question sharper: PRISM's optimum is 1.0 on almost every gridworld requirement.
+- **Expressiveness gaps (Aren).** Find a problem whose requirements or structure PRISM can't express, or can only express approximately or through a very complicated encoding (his example: unrolling recursion into a finite model). Marsha added data structures, time, and other language features. The challenge is a problem that needs the LLM's expressiveness *and* benefits from PRISM's guarantees. Right now our spec is one-to-one with PRISM. Candidate: the UUV paper's full three-phase mission (we model one phase). Keeps the current pipeline (the LLM writes policies) but needs a new problem.
+- **Model engineering (Marsha).** Start from the problem description, not a PRISM model (Aren: our inputs are "designed to fit PRISM"). The LLM builds the model, PRISM's counterexamples drive revisions, and the result should be analyzable *and* reasonable, not "correct but abstracted into uselessness". The chain of revisions doubles as a justification of the model. This changes what the LLM produces (models, not policies).
+- A third candidate from our notes: **restricted observation** (memoryless policies over what the agent can see are hard to synthesize; PRISM's POMDP engine rejected our obstacle requirements).
+- Inputs and notes: `docs/plan.md`, "Why an LLM?".
 
 ## Setup / answers from kickoff
 - New approach: **one LLM call over the whole state space** (no per-goal decomposition). Rules may refer to progress variables such as `g1`.
@@ -23,7 +30,7 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - **MDP fully user-specified in PRISM** (`model.prism.j2`). Policy actions are the *action labels* of the commands. The planner never generates dynamics, only a `policy` module that synchronizes on those labels.
 - **Requirements** are user-specified as PRISM path formulas with a bound (`>=`/`<=`) and a threshold, plus English text for the prompt. Best and worst case are `Pmax`/`Pmin` (swapped for `<=`).
 - **English description** (`description.md.j2`) and **visual** (`visual.txt.j2`) are separate user templates injected into generic core prompts. A domain can override any core prompt template by dropping a file with the same name in its directory.
-- **Policy-visible variables** are declared in the spec (ranges read from the model). For gridworld these are `x, y, g1..gN`. The obstacle phase `obs_idx` is hidden, matching the legacy per-cell policies.
+- **Policy-visible variables** are declared in the spec (ranges read from the model). For gridworld these are `x, y, g1..gN`. Config `domain.visible_extra` adds more; since Phase A the obstacle phase `obs_idx` is visible to rules and legacy alike (`pre_phase_a` hides it, as in the runs before Phase A).
 - The gridworld MDP was rewritten as a symbolic PRISM template (formulas for move/slip/bounce) rather than enumerating cells. `tests/test_gridworld_equivalence.py` and `src/regression.py` confirm it is equivalent to the legacy DTMC (5e-10 across 100 policies under interval iteration).
 
 ## Generalization: symbolic policies
@@ -38,10 +45,11 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - Success means **every requirement holds in the worst case**. The best-case pass rate is reported separately.
 - The switch follows the slides. If best case fails anything → **refine** (the LLM returns a complete new rule list). If only worst case fails → **extend** (the LLM returns *only new rules*, **appended** after existing ones). Appending means existing decisions are unchanged, so worst case can only go up. Best case can go down, which then triggers refine.
 - **Keep-best** like legacy: score = (#worst-case failures, #best-case failures, total worst shortfall, total best shortfall). Feedback is always built from the best policy so far.
-- `max_attempts=5` generation rounds, the same number as legacy. Legacy makes one call per goal per round (3 per round). Symbolic makes one per round, plus re-asks for invalid answers.
+- `max_attempts=5` generation rounds, the same number as legacy. Legacy makes one call per goal per round (3 per round; since Phase A, one per goal and obstacle phase). Symbolic makes one per round, plus re-asks for invalid answers.
 - Per instance, one extra PRISM run computes the unconstrained optimum of each requirement on the bare MDP. It is used for refine-mode blame and reported as an upper bound on what is achievable.
 
-## Feedback: probability mass **[REVIEW]**
+## Feedback: probability mass
+(Kept after the Sept 24 meeting, including V^opt. One-step regret is a deferred ablation, S5.)
 - I first tried a performance-difference decomposition (visits × local advantage). It gives ~0 mass when the adversary *stalls* the agent in loops through uncovered states, and those loops were the main failure mode in testing. Without discounting or absorbing targets, the lemma's residual term doesn't vanish.
 - Used instead: **mass(s) = expected visits to s within H=100 steps × probability still at stake at s**, reported as a share of the total.
   - extend: strategy = greedy worst-case completion, stake = best(s) − worst(s), counted only on uncovered states and aggregated by policy-visible valuation (top 10 shown).
@@ -62,7 +70,7 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 ## Comparison
 - Same model, same 20 grids, `max_attempts=5`, 2 concurrent workers for both runs, run one after the other (not concurrently) so they don't contend for the GPU.
 - LLM time is client-side wall time for both, so it includes queueing behind the other worker. Tokens are contention-free and the fairer cost measure.
-- The prompts differ in content by design. Legacy has two long worked examples with reasoning. Symbolic has a short rule-syntax example block. I did not port the worked examples. **[REVIEW]**
+- The prompts differ in content by design. Legacy has two long worked examples with reasoning. Symbolic has a short rule-syntax example block. I did not port the worked examples. Examples are an ablation instead (S4 symbolic, L2 legacy; `docs/ablations.md`, deferred).
 - The legacy "final" probabilities are those of its kept-best policy (reconstructed with its own keep-best rule for runs that predate the `final_prism_probs` field).
 
 ## UUV case study (`domains/uuv/`)
@@ -70,7 +78,7 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - **No core changes.** ProFeat features become state variables (`follow`, `alt`). The policy is the paper's feature controller: the actions `low`/`med`/`high` pick the next altitude in search-phase states. Forced transitions use a `[step]` label, which the policy module doesn't synchronize on.
 - Visibility limits are modelled by **clamping**: requesting a higher altitude than allowed gives the highest allowed one. So every action is enabled everywhere (no deadlocks), and each state's set of distinct choices is exactly the paper's. Check: the bare MDP reproduces all reported numbers for both scenarios (Pmin F done = 1; Table 2 energy/time min/max; Pmin G safe = 0.65 / 0.32). The paper's `time`/`energy` reward structures are kept in the model for this check. The planner doesn't use them.
 - Policy-visible: `s`, `alt`, `water_visib` (what the paper's controller monitors). Hidden: `follow`, `d_insp`, `t_failed`. `t_failed` is always 0 while searching.
-- Requirements (probabilistic only, since core has no reward requirements): `no_thruster_failure` = `G !"thruster_failure"` (the paper's `G "safe"`), and `done_in_time` = `F<=T "done"` (the paper's time reward turned into a deadline). **[REVIEW]** Energy isn't a requirement. Adding it would need reward-bounded requirements in core (`R{..}<=c`), which I didn't add without asking.
+- Requirements: `no_thruster_failure` = `G !"thruster_failure"` (the paper's `G "safe"`), and `done_in_time` = `F<=T "done"` (the paper's time reward turned into a deadline). An energy budget (reward requirement) was added later in A3, on branch `energy`, to be merged after the gridworld batch.
 - **[REVIEW] Thresholds are tight by design.** In this model the controller has little leverage. Over all controllers, safety ranges over [0.654, 0.674] (North Sea) and [0.321, 0.355] (Caribbean). Done-in-time ranges over [0.52, 0.82] (T=30) and [0.06, 0.87] (T=70), and the low end is the adversary switching altitude back and forth. Thresholds (North Sea 0.670 / 0.80, Caribbean 0.345 / 0.862) are set so that "hold your altitude, go highest when a search starts" passes. Always-low, always-high (and, in the Caribbean, always-med) each fail at least one requirement. The best rule policy found by local search clears both by only ~0.003 / 0.002. Reproduce with `domains/uuv/data/calibrate.py`. Looser thresholds would make any sensible complete policy pass, so the case study would then mostly test coverage.
 - PRISM's multi-objective query (`multi(Pmax [F<=T], P>=p [G ..])`) gave a value below a concrete policy's (0.795 vs 0.807), so it wasn't used for calibration.
 - `done_in_time` is step-bounded, so the per-state vectors used by the mass analysis assume the full T steps remain from every state. The ranking is a heuristic there, as for LTL.
@@ -99,18 +107,17 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 
 ## Sept 24 meeting (Marsha, Aren) and follow-ups
 - Plan of record: `docs/plan.md`. Semantics: `docs/semantics.md`. Ablations: `docs/ablations.md`.
-- **Story still open.** Generalization and readability are "a nice bonus", not the reason. The reason should be something the LLM adds beyond PRISM: expressiveness gaps (Aren) or model engineering from the problem description (Marsha). Asher writes this.
+- **Story still open** (pinned at the top). Generalization and readability are "a nice bonus", not the reason.
 - **Target SEAMS** (Oct 23), with ICAPS (Dec 7 abstract) as the fallback. Write first, then finish.
 - **Obstacle phase becomes visible to rules, for legacy and symbolic alike** (Marsha called the leak "just a bug"). This replaces the old TODO. The hidden setting stays available, so the old runs remain reproducible.
 - **Joint best case:** approved. **V^opt stays in the loop** (regret is an ablation, S5, not a replacement).
 - **Ceilings** (per-instance optimum + joint feasibility) are "foundational". Asher promised them promptly.
-- **Ablations, seeds and "which difference drives the gain" are deferred**, except the retry-policy sweep Marsha suggested (R1–R5, `docs/ablations.md`). Rule transfer (5×5 → 8×8) is dropped.
+- **Ablations and "which difference drives the gain" are deferred**, except the retry-policy sweep Marsha suggested (R1–R5). Planned vs deferred: `docs/ablations.md`. Rule transfer (5×5 → 8×8) is dropped.
 - **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV).
-- **Energy budget for UUV** (`docs/plan.md` A3). It's expressible in PRISM, so it closes a gap in our core, not in PRISM.
+- **Energy budget for UUV** (`docs/plan.md` A3), calibrated like the other thresholds. It's expressible in PRISM, so it closes a gap in our core, not in PRISM. Done on branch `energy`.
 - Legacy with the obstacle visible: one call per (goal, obstacle phase), accepted for now. **All symbolic runs come first; legacy runs come after.**
 - Retry sweep settings accepted: R3 restarts every 3rd round; R4 counts progress as a drop of at least 0.05 in total worst-case shortfall.
 - **2 seeds per condition**, and every seed's outputs are kept.
-- **Energy requirement (A3) on hold:** it's a big core change. When it's done, calibrate the threshold like the others.
 - **All settings go in one config** (`docs/config.md`, plan item A0): defaults plus named conditions, with the resolved config saved per run.
 - **[REVIEW]** Mass horizon H for UUV (the deadline?) is still open. Gridworld stays at 100.
 
@@ -121,19 +128,18 @@ Decisions made while generalizing, to review together. Each entry has the decisi
 - The two are roughly tied on 4x4 grids.
 - Loop usage: refine 63 attempts (35% improved the best so far), blind retry 10 (60%), extend 4 (100%). qwen nearly always wrote a catch-all rule, so policies were almost complete and extend rarely ran.
 - These results were produced with the catch-all instruction and example in the prompt, which is the current prompt again (both were removed for the ablation below, then restored).
-- Caveats: a single seed; the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case.
-- Suggested ablations: the same examples in both prompts; symbolic loop restricted to atomic rules; multiple seeds.
+- Caveats: a single seed; the obstacle phase hidden from both; the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case. These runs predate Phase A; the 2-seed Phase A runs replace them as the main comparison.
 
 ## Catch-all ablation (qwen3:14b, grid_20_balanced, same settings)
 - Three symbolic runs: catch-all instruction and example (`symbolic_grid20_capped`); instruction removed, example kept (`symbolic_grid20_nocatchall`); both removed (`symbolic_grid20_noexample`).
 - The instruction alone barely mattered: rounds ending in a catch-all went from 77% to 72%, because qwen copied the example rule. Removing the example too halved it (37%; 10 of 20 final policies vs 18).
 - With no catch-all at all: uncovered situations 26% of reachable (vs 9%), requirements met in worst case 4.50 (vs 5.25), shortfall 2.62 (vs 2.11). Best case 5.25, so the best-to-worst gap grew to 0.75 requirements. Still ahead of legacy (4.30, 3.16). Extend ran 11 times but improved only 2; refine success fell to 23%.
-- Reading: with this model, partial policies are a liability under the conservative worst case, and extend feedback doesn't yet fill coverage well. The TODO to expose `obs_idx` to rules would shrink the worst-case penalty for partial policies. Worth revisiting with a stronger model.
+- Reading: with this model, partial policies are a liability under the conservative worst case, and extend feedback doesn't yet fill coverage well. Exposing `obs_idx` (done in Phase A) should shrink the worst-case penalty for partial policies. Worth revisiting with a stronger model.
 - Figures: `viz/figures/catchall_ablation.png` (instruction only) and `viz/figures/catchall_ablation_full.png` (instruction and example).
 - After the ablation, the catch-all instruction and example were **restored**, since they give qwen better results. Re-run without them when studying extend, or with a stronger model.
 
 ## Phase A (branch `phase-a`)
-- Implemented per `docs/plan.md`: central config, joint best-case branch, obstacle phase visible (symbolic and legacy), retry policies, seeds, ablation runner, configurable horizon, ceilings, budget curves, ceiling-aware report. A3 (energy) is on hold.
+- Implemented per `docs/plan.md`: central config, joint best-case branch, obstacle phase visible (symbolic and legacy), retry policies, seeds, ablation runner, configurable horizon, ceilings, budget curves, ceiling-aware report. A3 (energy) is on branch `energy`.
 - **PRISM solver changed to Gauss-Seidel** (`prism.method`). With `obs_idx` readable, a rule set can make the induced chain periodic. PRISM's default value iteration then fails to converge, which would crash an instance mid-run. Found with a three-rule test policy. Gauss-Seidel and policy iteration agree on those models. Checks that reproduce old numbers pin PRISM's defaults: the UUV paper's numbers (Gauss-Seidel gives 4726.0 for the Caribbean max energy, vs the reported 4723.29) and the regression's stored-values check.
 - **Joint queries use exact LP** (`prism.multi_method: lp`); value iteration has the same convergence problem there. LP can't handle step-bounded objectives (UUV's deadline). There, PRISM's value-iteration fallback wrongly says "not jointly feasible" even though the `stay` policy passes both scenarios. So the joint query returns *undecided*, and the loop falls back to the per-requirement branch. **[REVIEW]** This means the joint fix applies to gridworld but not UUV.
 - **Legacy with the obstacle visible:** one call per (goal, obstacle phase); a short note in the prompt says which phase the per-cell policy is for. The legacy DTMC is solved with Gauss-Seidel when phases are observed (power method otherwise, as before). **[REVIEW]** Prompt wording of that note.
