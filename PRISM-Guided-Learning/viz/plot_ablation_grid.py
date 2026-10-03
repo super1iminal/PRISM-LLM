@@ -1,7 +1,7 @@
 """Draw the planned ablation grids (conditions x factors) for docs/ablations.md.
 
 Usage (from PRISM-Guided-Learning/): python viz/plot_ablation_grid.py
-Writes docs/ablation_now.png and docs/ablation_deferred.png at the repo root.
+Writes docs/ablation_batch1.png and docs/ablation_batch2.png at the repo root.
 Edit the ROWS tables below when the plan changes.
 """
 from pathlib import Path
@@ -18,7 +18,8 @@ REF_FILL = "#f1f0ec"
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 
 SEEDS = 2
-H_LEGACY, H_SYMBOLIC = 1.15, 0.5   # measured GPU hours per 20-grid run (2 workers), obstacle hidden
+H_LEGACY, H_SYMBOLIC = 1.15, 1.0  # GPU hours per 20-grid run (2 workers): legacy measured with the obstacle
+                                   # hidden; symbolic measured with it visible (B2, R1, R2)
 H_LEGACY_VISIBLE = 4.5             # estimate: legacy writes one action per (cell, obstacle phase); mean cycle 3.9
 
 FACTORS = ["Policy form", "Feedback", "Retry trigger", "Prompt examples", "Blame signal"]
@@ -76,6 +77,11 @@ DEFERRED = [
      SEEDS * H_SYMBOLIC, False),
     ("S5", "Regret blame", "symbolic", sym(blame="one-step regret"), "Does local blame beat mass?", SEEDS,
      SEEDS * H_SYMBOLIC, False),
+    ("group", "Blame validation  (vs. B2 and S5)"),
+    ("V1", "Random blame", "symbolic", sym(blame="random rules"), "Does blame need to point at the right rules?",
+     SEEDS, SEEDS * H_SYMBOLIC, False),
+    ("V2", "No blame", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
+     "Does a blame hint help at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
     ("group", "Legacy ablations  (vs. B1)"),
     ("L1", "Legacy + blind retry", "legacy", leg(retry="after 2 stalls"), "Does retry alone close the gap?", SEEDS,
      SEEDS * H_LEGACY_VISIBLE, False),
@@ -169,18 +175,18 @@ def main():
     DOCS.mkdir(exist_ok=True)
     common = (f"Each condition: 20 gridworlds × {SEEDS} seeds, 5 rounds, qwen3:14b, obstacle phase visible to rules. "
               "Shaded cells differ from the row's reference.")
-    draw(NOW, "Ablations: now", common, [
+    draw(NOW, "Ablations, batch 1: main comparison and retry sweep", common, [
         f"GPU hours per 20-grid run: symbolic {H_SYMBOLIC} h (measured); legacy {H_LEGACY_VISIBLE} h "
         f"(estimate: {H_LEGACY} h measured with the obstacle hidden, × mean cycle length 3.9).",
-        "Run in group order (symbolic first). Symbolic rows include the joint best-case branch. R4's ε is the minimum drop in total worst-case "
-        "shortfall that counts as progress (proposed 0.05).",
-    ], DOCS / "ablation_now.png")
-    draw(DEFERRED, "Ablations: deferred", common, [
-        "Deferred at the Sept 24 meeting until the story is settled. S4 drops the example block, including the "
-        "catch-all example rule (the instruction stays).",
-        "Also deferred: blame validation (top-k blamed vs random vs no hint, a separate one-round protocol) and "
-        "a stronger model on a subset.",
-    ], DOCS / "ablation_deferred.png")
+        "Symbolic rows include the joint best-case branch. R4's ε is the minimum drop in total worst-case "
+        "shortfall that counts as progress (0.05).",
+    ], DOCS / "ablation_batch1.png")
+    draw(DEFERRED, "Ablations, batch 2: factor ablations and blame validation", common, [
+        "Deferred at the Sept 24 meeting, run after batch 1 (all symbolic conditions first, then legacy). S4 drops "
+        "the example block, including the catch-all example rule (the instruction stays).",
+        "V1 keeps the prompt's shape but blames random rules; V2 drops the blame section. Also run: U1 (symbolic "
+        "defaults on UUV with the energy budget). Still deferred: a stronger model on a subset.",
+    ], DOCS / "ablation_batch2.png")
 
 
 if __name__ == "__main__":

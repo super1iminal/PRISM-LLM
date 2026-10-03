@@ -14,6 +14,8 @@ python viz/plot_comparison.py --legacy out/results/legacy_grid20 --symbolic out/
 python viz/plot_runs.py --legacy out/results/legacy_grid20 --symbolic "catch-all asked=out/results/symbolic_grid20_capped" --symbolic "no catch-all=out/results/symbolic_grid20_nocatchall" --out viz/figures/catchall_ablation.png
 ```
 
-- `plot_ablation_grid.py`: draws the planned ablation grids into `docs/` (`ablation_now.png`, `ablation_deferred.png`). Edit its tables when the plan changes.
+- `plot_ablation_grid.py`: draws the ablation grids into `docs/` (`ablation_batch1.png`, `ablation_batch2.png`). Edit its tables when the plan changes.
+
+- `ablation_summary.py`: every finished run under `out/results/ablations/` on one page (`summary/SUMMARY.md` + figures, paired tests vs each reference). Rerun after each run.
 
 - `plot_budget.py`: success / requirements met / shortfall vs rounds budget k (ablation F1), replaying keep-best on the first k rounds of existing runs; pools `seed_*` dirs.

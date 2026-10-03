@@ -6,7 +6,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - `plan.md`: the current work plan. Code changes (Phase A) all land before any run.
 - `semantics.md`: the formal semantics of rule sets, the induced MDP and the loop branch. **Update it whenever the inputs, the rule language or the REFINE/EXTEND branch change.**
 - `config.md`: every run setting, its default, where it lives and whether it is ablated. Keep it in sync with `configs/`.
-- `ablations.md` + `ablation_now.png` / `ablation_deferred.png`: planned ablations. Regenerate the PNGs with `viz/plot_ablation_grid.py` after editing its tables.
+- `ablations.md` + `ablation_batch1.png` / `ablation_batch2.png`: the ablation conditions. Regenerate the PNGs with `viz/plot_ablation_grid.py` after editing its tables. Results: `PRISM-Guided-Learning/out/results/ablations/summary/SUMMARY.md` (`viz/ablation_summary.py`).
 
 ## Where things live
 - `PRISM-Guided-Learning/src/core/`: the domain-agnostic approach (rules, PRISM runner, verifier, mass analysis, planner, prompt templates in `core/templates/`). **No domain-specific code here.** If a domain truly needs a core change, make it generic and log it in `DECISIONS.md`.

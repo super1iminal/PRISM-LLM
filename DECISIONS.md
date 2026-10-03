@@ -140,3 +140,12 @@ What was built is in `docs/plan.md` (Phase A table; ceilings and budget curves u
 - Gridworld prompts render byte-identically to before (checked), so the gridworld runs are unaffected. The prompt wording for blame/hotspots mentions cost only when a reward requirement is failing.
 - **[REVIEW]** Energy thresholds and the description of the energy costs.
 - The mass horizon for UUV is still open.
+
+## Batch 2 settings (deferred ablations, implemented Oct 3)
+- **UUV mass horizon = the mission deadline** (Asher, Oct 3): `feedback.horizon_by_domain: {uuv: domain}` asks `Domain.horizon(instance)`, so North Sea uses 30 and Caribbean 70.
+- **Story:** A (expressiveness) for now, maybe B later. Nothing story-specific is implemented until there's a domain.
+- **S1 (table feedback):** after a failure, every round shows the results table and the previous rules and asks for a complete new list. No blame, no REFINE/EXTEND framing, no appending. Retry policy unchanged.
+- **S5 (regret blame):** one-step regret of the rule's action on the best-case values, with Q from the bare MDP. Successors the policy never reaches take their optimum value, which slightly favours deviating (a heuristic). Extend ranks uncovered states by the local gap best − worst, without occupancy. The prompt wording describes the signal it shows. **[REVIEW]**
+- **V1 (random blame)** is a placebo: same number of rules/states as B2, equal shares, and B2's wording. **V2** drops the blame section but keeps the framing.
+- **L1:** legacy's retry uses the same `stall:k` rule as symbolic; a blind-retry round regenerates every (goal, phase) from the initial prompt, then keep-best applies as usual.
+- **Run order:** batch 1 (B2, R1–R5) finished first; then the symbolic part of batch 2 (S1, S4, S5, V1, V2), U1, then all legacy runs (B1, L1, L2). Legacy B1 was moved behind the symbolic batch-2 runs, following "all symbolic first, then legacy".

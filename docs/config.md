@@ -2,7 +2,7 @@
 
 Every setting that affects a run lives in `PRISM-Guided-Learning/configs/`:
 - `default.yaml`: every key below with its default.
-- `conditions.yaml`: named conditions (B1, B2, R1–R5, S4, `pre_phase_a`), each a small override of the default.
+- `conditions.yaml`: named conditions (B1, B2, R1–R5, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default.
 - Schema and validation: `src/config.py`. Unknown keys and unsupported values are errors.
 - Every run writes its resolved config to `<run>/config.json`.
 
@@ -30,11 +30,11 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
 | `planner.retry` | `stall:2` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always` | R1–R5 |
 | `planner.branch` | `joint` | REFINE vs EXTEND: one completion must pass every requirement (`joint`), or each on its own (`per_requirement`, used by the old runs) | `pre_phase_a` |
-| `planner.feedback` | `blame` | feedback content (`table`, S1, not implemented yet) | S1 (deferred) |
+| `planner.feedback` | `blame` | `blame`: REFINE/EXTEND prompts with blame; `table`: results table and previous rules only, no branch | S1 |
 | `planner.max_rules` / `max_condition_chars` | 64 / 200 | schema caps (stop repetition loops) | — |
-| `feedback.blame` | `mass` | blame signal (`regret`, S5, not implemented yet) | S5 (deferred) |
+| `feedback.blame` | `mass` | blame signal: `mass`, `regret` (one-step regret, no occupancy), `random` (placebo), `none` (no blame section) | S5, V1, V2 |
 | `feedback.horizon` | 100 | mass-analysis occupancy horizon (steps) | — |
-| `feedback.horizon_by_domain` | `{}` | per-domain horizon (UUV value still open) | — |
+| `feedback.horizon_by_domain` | `{uuv: domain}` | per-domain horizon in steps, or `domain` to ask the domain (UUV: the mission deadline, 30 / 70) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | done (catch-all ablation) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
@@ -44,8 +44,9 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `prism.java_max_mem` / `max_iters` / `timeout_s` | 4g / 1,000,000 / 900 | PRISM limits | — |
 | `rules.max_enumeration` | 200,000 | state-space size up to which first-match guards are simplified | — |
 | `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
+| `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
+| `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |
 | `run.workers` / `run.limit` | 2 / `null` | parallel instances / first N instances only | — |
 
-**Deferred legacy ablations** (L1 retry, L2 no examples) need legacy settings that don't exist yet; they'll be added to `LegacyConfig` when those runs are scheduled.
 
 **Domain constants (not run settings):** gridworld dynamics 0.7/0.15/0.15 and thresholds (goals 0.8, ordering 0.8, avoid 0.7) in `domains/gridworld/domain.py`; UUV thresholds per scenario in `domains/uuv/data/uuv_paper.csv`.
