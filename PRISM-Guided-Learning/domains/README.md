@@ -5,7 +5,7 @@ particular domain. Everything domain-specific lives in these files:
 
 | file | purpose |
 |---|---|
-| `domain.py` | exactly one subclass of `core.domain.Domain`. It implements `load_instances(dataset)` (dataset → list of `Instance`) and `context(instance)`, the variables that every template below is rendered with. |
+| `domain.py` | exactly one subclass of `core.domain.Domain`. It implements `load_instances(dataset)` (dataset → list of `Instance`) and `context(instance)`, the variables that every template below is rendered with. Optionally `horizon(instance)`: the domain's own mass-analysis horizon in steps, used when the run config sets `feedback.horizon: domain` (UUV: the mission deadline). |
 | `model.prism.j2` | **The MDP, fully specified in PRISM** (`mdp` model type): state variables, initial state, commands, transition probabilities and labels. Every policy action must be the action label of the commands it enables (`[up] guard -> 0.7 : ... + 0.3 : ...;`). The planner adds a `policy` module that synchronizes on these labels. Exactly one initial state. |
 | `spec.yaml.j2` | `actions` (label → English), `variables` (the **policy-visible** state variables, with a description. Types and ranges are read from the model unless given as `type`/`low`/`high`), `optional_variables` (descriptions for variables a config may make visible via `domain.visible_extra`), and `requirements` (`name`, PRISM path `formula`, `bound` `>=` or `<=`, `threshold`, English `description`; add `reward: <structure>` for an expected-reward bound such as UUV's `energy_budget`). |
 | `description.md.j2` | English description of the MDP for the prompt: states, dynamics, transition probabilities. |
@@ -37,7 +37,9 @@ domains/<name>/
   data/...           # datasets, loaded by your load_instances
 ```
 
-Then run `python src/run_symbolic.py --domain <name> --data <dataset>`.
+Then run `python src/run_symbolic.py --domain <name> --data <dataset>`. For runs you will repeat or
+compare, give them a run config of their own in `configs/run/conditions/<condition>.yaml` (as U1 does
+for UUV) and use `--condition <condition>`.
 
 Tips:
 - Choose the policy-visible variables deliberately. Hidden variables (such as the gridworld
