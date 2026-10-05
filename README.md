@@ -49,6 +49,11 @@ python src/run_symbolic.py --domain uuv --data uuv_paper.csv --out out/results/s
 ```
 
 ```bash
+# lockstep: one LLM batch per step (one task per active instance), logged to <run>/llm_tasks.jsonl
+python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=lockstep --out out/results/symbolic_grid20_lockstep
+```
+
+```bash
 python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2 --dry-run
 ```
 

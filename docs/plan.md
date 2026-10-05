@@ -36,6 +36,14 @@ Target: **SEAMS 2027** (research track Oct 23; check the official site), with IC
 4. B1 legacy with the obstacle visible, 2 seeds (estimated ~9 h): `python src/run_ablation.py B1`.
 5. Later: UUV with the energy requirement (after A3), and the deferred ablations once the story is settled.
 
+## Harness: LLM tasks and batching (branch `harness`, no GPU)
+| # | Change | Status |
+|---|---|---|
+| H1 | **LLM tasks** (`src/core/tasks.py`): the planner yields `LLMTask`s and receives `LLMResult`s instead of calling Ollama. | Done. Replays of saved D7/B2/R1/S1 runs are byte-identical. |
+| H2 | **Backend interface** (`src/core/backends/`, `llm.backend`): `execute_batch(tasks) -> results`. Ollama and a fake backend for tests. | Done. Other engines (e.g. vLLM, OpenAI-compatible servers) to add once chosen. |
+| H3 | **Lockstep scheduler** (`src/core/scheduler.py`, `run.scheduler: lockstep`): one batch per step, one task per active instance, `run.workers` slots, tasks logged to `llm_tasks.jsonl`. `threads` stays the default. | Done (symbolic only; legacy unchanged). |
+| H4 | Smoke run of the Ollama backend with a live model, threads and lockstep (`--limit 1`). | **Needs a go.** |
+
 ## "Why an LLM?" (Asher to write; inputs)
 The meeting asked for a reason the LLM goes *beyond* PRISM: ~3 paragraphs plus early evidence. Candidates:
 - **Expressiveness gaps.** Requirements or structure PRISM can't express, or only through awkward or approximate encodings (Aren). Example: the UUV paper's three-phase mission structure, of which we model one phase.
