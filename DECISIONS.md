@@ -88,6 +88,7 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
   - On the paper's Table 2 measures, our North Sea policy needs 26.04 energy and 23.93 time to finish, against the paper's best possible 24.78 and 23.66.
   - Size: 25 rules vs ≥1,620 (North Sea) and ≥8,850 (Caribbean) states that an optimal PRISM strategy must decide (reachable states with more than one distinct choice). For the step-bounded deadline, the optimal strategy also depends on the step count.
   - Transfer: the North Sea rules reused unchanged on the Caribbean keep safety (0.347) but not the deadline (0.824).
+- Figures regenerated Oct 5 with the energy requirement, which this run predates (`uuv.png` shows no energy dot for it; `uuv_summary.md` re-verifies its rules against every requirement). Our North Sea policy is within budget (26.04 ≤ 26.5); the Caribbean one is not (62.99 > 62.5). `stay` still passes everything in both scenarios (26.43, 62.17).
 
 ## UUV optimization (branch `optimization`, archived on GitHub, not merged)
 - Sep 24, before the energy requirement and Phase A, so its numbers don't match the current setup. Target: match `stay` (passes both scenarios). **Not reached.** North Sea passed reliably; Caribbean failed in all 12 runs by ~0.002. Figure and runs (`out/results/opt/e*/r*`, 1–2 repeats each) live on the branch.

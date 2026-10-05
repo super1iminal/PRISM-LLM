@@ -29,4 +29,4 @@ Bare MDP, full state observed. Optimum per requirement on its own; joint = one c
 | 18 | True | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
 | 19 | True | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
 
-✗ = the optimum is below the threshold.
+✗ = the optimum misses the threshold: no controller meets that requirement.

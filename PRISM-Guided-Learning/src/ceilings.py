@@ -71,7 +71,7 @@ def main():
     for _, row in df.iterrows():
         cells = [f"{row[f'optimum_{r}']:.3f}{'' if row[f'achievable_{r}'] else ' ✗'}" for r in reqs]
         lines.append(f"| {row['instance']} | {row['jointly_feasible']} | " + " | ".join(cells) + " |")
-    lines += ["", "✗ = the optimum is below the threshold."]
+    lines += ["", "✗ = the optimum misses the threshold: no controller meets that requirement."]
     stem.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines[:8]))
     print(stem.with_suffix(".md"))
