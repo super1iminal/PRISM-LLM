@@ -18,6 +18,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -35,10 +36,10 @@ def plot_config(schema: type, script: str, argv=None):
     parser.add_argument("config", type=Path, help="Plot config file, e.g. configs/plot/<figure>.yaml")
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     args = parser.parse_args(argv)
-    cfg = load_file(args.config, schema, args.set)
-    if cfg.script != script:
-        raise SystemExit(f"{args.config} is a config for {cfg.script}.py, not {script}.py")
-    return cfg
+    named = (yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}).get("script")
+    if named != script:
+        raise SystemExit(f"{args.config} is a config for {named}.py, not {script}.py")
+    return load_file(args.config, schema, args.set)
 
 
 def short_model(model: str) -> str:

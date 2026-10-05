@@ -1,7 +1,8 @@
 """UUV: our symbolic policy vs the paper's controller, on probability, policy size and the paper's costs.
 
 Usage (from PRISM-Guided-Learning/):
-    python viz/plot_uuv_summary.py --symbolic out/results/symbolic_uuv --out viz/figures/uuv_summary.png
+    python viz/plot_uuv_summary.py configs/plot/uuv_summary.yaml
+Settings: the plot config (PlotConfig below). PRISM settings: the run config.
 
 Left: verified probability of our final policy against the paper's controller at its best case
 (PRISM's maximum per requirement; each is maximized separately, so no single controller reaches
@@ -9,9 +10,9 @@ both). Right: policy size, rules vs the number of states where an optimal PRISM 
 Also writes a markdown table with the paper's Table 2 measures (expected energy and time to
 finish) for each policy, and our North Sea rules transferred unchanged to the Caribbean.
 """
-import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -23,11 +24,22 @@ from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
+from loaders import plot_config, short_model  # noqa: E402
+from results_io import run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"
 COSTS = ['R{"energy"}min=? [ F "done" ]', 'R{"energy"}max=? [ F "done" ]',
          'R{"time"}min=? [ F "done" ]', 'R{"time"}max=? [ F "done" ]']
+
+
+@dataclass
+class PlotConfig:
+    """A configs/plot/*.yaml file for this script (configs/plot/uuv_summary.yaml documents each key)."""
+    script: str
+    symbolic: str
+    dataset: str
+    out: str
 
 
 def evaluate(verifier, rules):
@@ -40,16 +52,14 @@ def evaluate(verifier, rules):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--symbolic", type=Path, required=True)
-    parser.add_argument("--data", default="uuv_paper.csv")
-    parser.add_argument("--out", type=Path, default=Path("viz/figures/uuv_summary.png"))
-    args = parser.parse_args()
+    cfg = plot_config(PlotConfig, "plot_uuv_summary")
+    symbolic, out = Path(cfg.symbolic), Path(cfg.out)
+    model = short_model(run_facts(symbolic).model)
 
     domain = load_domain("uuv")
-    instances = domain.load_instances(args.data)
+    instances = domain.load_instances(cfg.dataset)
     ours = [[(r["condition"], r["action"]) for r in json.loads(p.read_text(encoding="utf-8"))["final_rules"]]
-            for p in sorted((args.symbolic / "outputs").glob("sample_*.json"))]
+            for p in sorted((symbolic / "outputs").glob("sample_*.json"))]
 
     fig = plt.figure(figsize=(13, 4.8), facecolor=SURFACE)
     grid = fig.add_gridspec(1, 3, width_ratios=[1.2, 1.2, 1])
@@ -80,7 +90,7 @@ def main():
         sizes.append((name, len(ours[i]), decision_states))
         rows.append((name, "paper controller (range)", f"{bare[0]:.3f}..{bare[1]:.3f}", f"{bare[2]:.3f}..{bare[3]:.3f}",
                      f"{bare[4]:.2f}..{bare[5]:.2f}", f"{bare[6]:.2f}..{bare[7]:.2f}", f">= {decision_states} states"))
-        rows.append((name, "ours (qwen3:14b)", f"{v_ours.worst[reqs[0].name]:.3f}", f"{v_ours.worst[reqs[1].name]:.3f}",
+        rows.append((name, f"ours ({model})", f"{v_ours.worst[reqs[0].name]:.3f}", f"{v_ours.worst[reqs[1].name]:.3f}",
                      f"{c_ours[0]:.2f}", f"{c_ours[2]:.2f}", f"{len(ours[i])} rules"))
         if i == 1:
             v_tr, c_tr = evaluate(verifier, ours[0])
@@ -106,8 +116,8 @@ def main():
     fig.suptitle("UUV pipeline inspection: ours vs paper", x=0.01, ha="left", fontsize=12, color=INK,
                  fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.9))
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.out, dpi=150, facecolor=SURFACE)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
 
     header = ("scenario", "policy", "P(no thruster failure)", "P(done in time)", "E[energy] to done",
               "E[time] to done", "size")
@@ -115,8 +125,8 @@ def main():
     lines += ["| " + " | ".join(r) + " |" for r in rows]
     note = ("\nPaper controller rows give its min..max over all resolutions (energy/time = the paper's Table 2). "
             "Policy rows are exact (fully covering policies: best = worst).\n")
-    args.out.with_suffix(".md").write_text("\n".join(lines) + "\n" + note, encoding="utf-8")
-    print(args.out)
+    out.with_suffix(".md").write_text("\n".join(lines) + "\n" + note, encoding="utf-8")
+    print(out)
 
 
 if __name__ == "__main__":

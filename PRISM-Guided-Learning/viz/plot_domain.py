@@ -1,18 +1,19 @@
 """Symbolic runs on any domain vs non-LLM references, per instance and requirement.
 
 Usage (from PRISM-Guided-Learning/):
-    python viz/plot_domain.py --domain uuv --data uuv_paper.csv \
-        --symbolic "qwen=out/results/symbolic_uuv" --out viz/figures/uuv.png
+    python viz/plot_domain.py configs/plot/uuv.yaml
+Settings: the plot config (PlotConfig below). PRISM settings for the reference policies: the run config.
 
 Each panel is one instance x requirement. The grey band is what any controller can achieve on
 the bare MDP (min..max), the dashed line is the threshold. Dots are worst-case values (black
 ticks: best case) of each symbolic run's final policy and of the domain's reference policies
 (`domains/<domain>/data/reference_policies.json`, if present). Also writes a markdown table.
 """
-import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -25,12 +26,24 @@ from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
-from results_io import SYMBOLIC_RESULTS  # noqa: E402
+from loaders import plot_config  # noqa: E402
+from results_io import SYMBOLIC_RESULTS, run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 # Reference categorical palette, slots 1-3 (validated all-pairs in light and dark)
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
 BAND = "#eeede9"
+
+
+@dataclass
+class PlotConfig:
+    """A configs/plot/*.yaml file for this script (configs/plot/uuv.yaml documents each key)."""
+    script: str
+    domain: str
+    dataset: str
+    symbolic: Dict[str, str]
+    title: Optional[str]
+    out: str
 
 
 def final_results(run_dir: Path) -> dict:
@@ -45,17 +58,16 @@ def final_results(run_dir: Path) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--domain", required=True)
-    parser.add_argument("--data", required=True)
-    parser.add_argument("--symbolic", action="append", default=[], help="label=path, repeatable (max 3)")
-    parser.add_argument("--title", default=None)
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args()
+    cfg = plot_config(PlotConfig, "plot_domain")
+    out = Path(cfg.out)
+    for label, path in cfg.symbolic.items():
+        facts = run_facts(Path(path))
+        if facts.recorded and (facts.domain, facts.dataset) != (cfg.domain, cfg.dataset):
+            raise SystemExit(f"{label} ({path}) ran {facts.domain} / {facts.dataset}, not {cfg.domain} / {cfg.dataset}")
 
-    domain = load_domain(args.domain)
-    instances = domain.load_instances(args.data)
-    runs = [(label, final_results(Path(path))) for label, path in (s.split("=", 1) for s in args.symbolic)]
+    domain = load_domain(cfg.domain)
+    instances = domain.load_instances(cfg.dataset)
+    runs = [(label, final_results(Path(path))) for label, path in cfg.symbolic.items()]
     ref_path = domain.root / "data" / "reference_policies.json"
     references = json.loads(ref_path.read_text(encoding="utf-8")) if ref_path.exists() else {}
 
@@ -109,17 +121,17 @@ def main():
                 ax.spines[side].set_visible(False)
             ax.spines["bottom"].set_color(GRID)
             ax.tick_params(colors=INK_2, labelsize=9, length=0)
-    fig.suptitle((args.title or f"{args.domain}: worst-case probability of each final policy") +
+    fig.suptitle((cfg.title or f"{cfg.domain}: worst-case probability of each final policy") +
                  "\ngrey band = what any controller achieves, dashed = threshold, black tick = best case, "
                  "✓ = all requirements met", x=0.01, ha="left", fontsize=10, color=INK)
     fig.tight_layout()
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.out, dpi=150, facecolor=SURFACE)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
     cols = list(table[0])
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     lines += ["| " + " | ".join(str(row[c]) for c in cols) + " |" for row in table]
-    args.out.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(args.out)
+    out.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(out)
 
 
 if __name__ == "__main__":
