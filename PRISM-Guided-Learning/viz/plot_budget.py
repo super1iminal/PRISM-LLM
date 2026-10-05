@@ -119,6 +119,7 @@ def main():
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         ax.tick_params(colors=INK_2, labelsize=9)
+    axes[0].set_ylim(0, max(0.1, summary.success.max() * 1.15))   # a share: never below 0, readable when all 0
     axes[0].yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
     axes[0].legend(frameon=False, fontsize=9)
     fig.suptitle("Result vs rounds budget (keep-best policy after k rounds)", x=0.01, ha="left",
