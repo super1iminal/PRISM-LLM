@@ -9,9 +9,9 @@ Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run 
 | `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
 | `plot/` | `viz/` scripts, `compare.py` | one file per figure or report (no default): `script:` names the script it is for, then its runs, labels, title and output. Run `python viz/<script>.py configs/plot/<figure>.yaml` |
 
-- `run/conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. Conditions that ran before Oct 3 pin `planner.retry: "stall:2"`, the default then, so each name still means what was run.
+- `run/conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. B2 and the conditions compared with it set `planner.retry: "stall:2"`.
 - Each folder's `default.yaml` is the only place its defaults live: the schemas (`src/config.py` for the run, a dataclass in each tool) have none, so a missing key is an error, as are unknown keys and unsupported values. Tools take `--config FILE` and `--set key=value`.
-- Every run writes its resolved config to `<run>/config.json`. Reports and figures read a run's dataset, model and round budget from there (`src/results_io.py`), so plot configs never repeat them. Runs from before config.json existed read as a fixed record of what they used (gridworld, `grid_20_balanced.csv`, 5 rounds, qwen3:14b).
+- Every run writes its resolved config to `<run>/config.json`. Reports and figures read a run's dataset, model and round budget from there (`src/results_io.py`), so plot configs never repeat them. Runs without a `config.json` (the single-seed runs) read as a fixed record of their settings (gridworld, `grid_20_balanced.csv`, 5 rounds, qwen3:14b).
 
 ```bash
 python src/run_symbolic.py --condition R2 --set run.limit=1 --set llm.seed=1
@@ -28,21 +28,21 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `approach` | `symbolic` | `symbolic` or `legacy` planner | B1 |
 | `domain.name` / `domain.dataset` | `gridworld` / `grid_20_balanced.csv` | case study and instances | — |
 | `domain.visible_extra` | `[obs_idx]` | extra state variables rules (and legacy) may read, if the model has them | `pre_phase_a` (hidden) |
-| `llm.model` | `qwen3:14b-q4_K_M` | Ollama model | deferred (stronger model) |
+| `llm.model` | `qwen3:14b-q4_K_M` | Ollama model | not run (a stronger model) |
 | `llm.think` | `false` | qwen3 thinking mode | — |
 | `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits | — |
 | `llm.seed` | `null` | run seed (set per seed by `run_ablation.py`); each call uses a seed derived from it and the call's index within the instance | seeds 1, 2 |
 | `llm.temperature` | `null` | `null` = the model's default | — |
 | `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free), D7 (7 rounds) |
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
-| `planner.retry` | `gain:0.05` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. Was `stall:2` until Oct 3 (the conditions that ran with it pin it) | R1–R5 |
-| `planner.branch` | `joint` | REFINE vs EXTEND: one completion must pass every requirement (`joint`), or each on its own (`per_requirement`, used by the old runs) | `pre_phase_a` |
+| `planner.retry` | `gain:0.05` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. The default is R4's, which won the retry sweep; B2 and its comparisons use `stall:2` | R1–R5 |
+| `planner.branch` | `joint` | REFINE vs EXTEND: one completion must pass every requirement (`joint`), or each on its own (`per_requirement`) | `pre_phase_a` |
 | `planner.feedback` | `blame` | `blame`: REFINE/EXTEND prompts with blame; `table`: results table and previous rules only, no branch | S1 |
 | `planner.max_rules` / `max_condition_chars` | 64 / 200 | schema caps (stop repetition loops) | — |
 | `feedback.blame` | `mass` | blame signal: `mass`, `regret` (one-step regret, no occupancy), `random` (placebo), `none` (no blame section) | S5, V1, V2 |
 | `feedback.horizon` | 100 | mass-analysis occupancy horizon in steps, or `domain` for the domain's own (UUV: the mission deadline, 30 / 70; U1 sets it) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
-| `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | done (catch-all ablation) |
+| `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | catch-all ablation (single-seed runs) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
 | `prism.method` | `gaussseidel` | PRISM solver; plain value iteration fails on periodic chains (rules that read `obs_idx`) | — |
 | `prism.fallback_methods` | `[modpoliter]` | tried in order when `method` does not converge (seen on a real qwen rule set) | — |

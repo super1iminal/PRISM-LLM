@@ -63,9 +63,9 @@ def run_rows(seeds: int, hours: Dict[str, float], rounds: int, d7_rounds: int) -
     (id, name, family, values, question, seeds, GPU hours or None, is_reference)."""
     return [
         ("group", "Reference"),
-        ("B2", "Symbolic defaults", "symbolic", SYMBOLIC_REF, "Main method; reference for every row below", seeds,
+        ("B2", "Symbolic reference", "symbolic", SYMBOLIC_REF, "Main method; reference for every row below", seeds,
          seeds * hours["symbolic"], True),
-        ("group", "Retry sweep  (vs. symbolic defaults; Marsha's suggestion)"),
+        ("group", "Retry sweep  (vs. the symbolic reference; Marsha's suggestion)"),
         ("R1", "Never restart", "symbolic", sym(retry="never"), "Is feedback alone enough?", seeds, seeds * hours["symbolic"],
          False),
         ("R2", "Restart after 1 stall", "symbolic", sym(retry="after 1 stall"), "Restart sooner when stuck?", seeds,
@@ -76,20 +76,20 @@ def run_rows(seeds: int, hours: Dict[str, float], rounds: int, d7_rounds: int) -
          seeds, seeds * hours["symbolic"], False),
         ("R5", "Always restart", "symbolic", sym(feedback="none", retry="every round", blame="—"),
          "Is feedback better than resampling at all?", seeds, seeds * hours["symbolic"], False),
-        ("group", "Feedback content  (vs. symbolic defaults)"),
+        ("group", "Feedback content  (vs. the symbolic reference)"),
         ("S1", "Results table only", "symbolic", sym(feedback="probabilities +\nprevious rules", blame="—"),
          "Does blame feedback help, beyond the table?", seeds, seeds * hours["symbolic"], False),
         ("S4", "No examples", "symbolic", sym(examples="none"), "Prompt confound, symbolic side", seeds,
          seeds * hours["symbolic"], False),
-        ("group", "Blame signal  (vs. symbolic defaults)"),
+        ("group", "Blame signal  (vs. the symbolic reference)"),
         ("S5", "Regret blame", "symbolic", sym(blame="one-step regret"), "Does local blame beat mass?", seeds,
          seeds * hours["symbolic"], False),
         ("V1", "Random blame", "symbolic", sym(blame="random rules"), "Does blame need to point at the right rules?",
          seeds, seeds * hours["symbolic"], False),
         ("V2", "No blame section", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
          "Does a blame hint help at all?", seeds, seeds * hours["symbolic"], False),
-        ("group", "Rounds budget  (vs. restart on slow progress, the new default)"),
-        ("D7", "New default, 7 rounds", "symbolic", sym(retry="gain < ε"), "Do more rounds keep paying off?", seeds,
+        ("group", "Rounds budget  (vs. R4: restart on slow progress, the default retry)"),
+        ("D7", "Default retry, 7 rounds", "symbolic", sym(retry="gain < ε"), "Do more rounds keep paying off?", seeds,
          seeds * hours["symbolic"] * d7_rounds / rounds, False),
         ("group", "Free  (from the runs above)"),
         ("F1", f"Rounds budget 1–{rounds}", "both", ["—"] * 5, "Success vs budget (pass@k-style curves)", None, 0.0, False),
@@ -99,7 +99,7 @@ def run_rows(seeds: int, hours: Dict[str, float], rounds: int, d7_rounds: int) -
 def not_run_rows(seeds: int, hours: Dict[str, float]) -> list:
     """Rows of the grid of conditions that did not run (same shape as run_rows)."""
     return [
-        ("group", "Legacy  (stopped Oct 3: lower priority than the symbolic results)"),
+        ("group", "Legacy  (not run: lower priority than the symbolic results)"),
         ("B1", "Legacy baseline", "legacy", LEGACY_REF, "Main comparison vs. symbolic", seeds,
          seeds * hours["legacy_visible"], True),
         ("L1", "Legacy + blind restart", "legacy", leg(retry="after 2 stalls"), "Does restarting alone close the gap?",
@@ -206,12 +206,12 @@ def main():
 
     common = (f"Each condition: {grids} gridworlds × {seeds} seeds, {rounds} rounds, {short_model(run.llm.model)}, "
               "obstacle phase visible to rules. Shaded cells differ from the row's reference.")
-    draw(run_rows(seeds, hours, rounds, d7_rounds), "Ablations run (Oct 3)", common, [
+    draw(run_rows(seeds, hours, rounds, d7_rounds), "Ablations run", common, [
         f"GPU hours: about {hours['symbolic']} h per {grids}-grid symbolic run (measured). Symbolic rows include the "
         f"joint best-case branch. R4's ε is the minimum drop in total worst-case shortfall that counts as progress "
         f"({gain:g}).",
         "S4 drops the example block, including the catch-all example rule (the instruction stays). V1 keeps the prompt's "
-        "shape but blames random rules. Also run: U1, symbolic defaults on UUV with the energy budget.",
+        "shape but blames random rules. Also run: U1, the symbolic reference on UUV with the energy budget.",
     ], out_run, families)
     draw(not_run_rows(seeds, hours), "Ablations not run", common, [
         f"GPU hours per legacy run: {hours['legacy_visible']} h (estimate: {hours['legacy']} h measured with the "

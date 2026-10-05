@@ -6,7 +6,7 @@ PRISM checks it in the best and worst case over all completions of the policy, a
 tells the LLM whether to *refine* existing rules or *extend* coverage, and where.
 
 Predecessor paper: [LLM-Based Grid-World Path Planning With Probabilistic Model Checking](https://doi.org/10.1145/3803437.3806714).
-Its per-state approach survives as the `legacy` baseline.
+Its per-state approach is the `legacy` baseline.
 
 ## Requirements
 
@@ -20,8 +20,8 @@ Its per-state approach survives as the `legacy` baseline.
 PRISM-Guided-Learning/
   src/
     core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts
-    legacy/          previous per-state approach (gridworld only), kept as a baseline
-    run_symbolic.py  new approach on any domain
+    legacy/          the predecessor's per-state approach (gridworld only), the baseline
+    run_symbolic.py  symbolic approach on any domain
     run_legacy.py    legacy approach on gridworld
     run_ablation.py  named conditions x seeds
     ceilings.py      what any controller can achieve per instance

@@ -3,7 +3,7 @@
 LLM-based planning with probabilistic verification. An LLM writes a **symbolic, possibly partial policy** (ordered `condition -> action` rules, first match wins) for a user-specified MDP. PRISM checks it in the best and worst case over all completions, and the loop refines or extends the rules. See `README.md` for layout and `DECISIONS.md` for design choices, results and open TODOs. **Read `DECISIONS.md` and `docs/plan.md` before changing the approach.**
 
 ## Docs (`docs/`)
-- `plan.md`: the current work plan. Code changes (Phase A) all land before any run.
+- `plan.md`: the work plan. Code changes (Phase A) all land before any run.
 - `semantics.md`: the formal semantics of rule sets, the induced MDP and the loop branch. **Update it whenever the inputs, the rule language or the REFINE/EXTEND branch change.**
 - `config.md`: every run setting, its default, where it lives and whether it is ablated. Keep it in sync with `configs/`.
 - `ablations.md` + `ablation_run.png` / `ablation_not_run.png`: the ablation conditions, run and not run. Regenerate the PNGs with `viz/plot_ablation_grid.py configs/plot/ablation_grid.yaml` after editing its tables. Results: `PRISM-Guided-Learning/out/results/ablations/summary/SUMMARY.md` (`viz/ablation_summary.py configs/plot/ablation_summary.yaml`).
@@ -11,7 +11,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 ## Where things live
 - `PRISM-Guided-Learning/src/core/`: the domain-agnostic approach (rules, PRISM runner, verifier, mass analysis, planner, prompt templates in `core/templates/`). **No domain-specific code here.** If a domain truly needs a core change, make it generic and log it in `DECISIONS.md`.
 - `PRISM-Guided-Learning/domains/<name>/`: one directory per case study. `domains/README.md` describes the contract; `domains/gridworld/` is the reference implementation. `domains/uuv/` is the second case study (the pipeline-inspection AUV from arXiv:2308.14663); its bare MDP must keep reproducing the paper's numbers (`tests/test_uuv.py`), and `domains/uuv/data/calibrate.py` shows what its thresholds are calibrated against.
-- `PRISM-Guided-Learning/src/legacy/`: the old per-state gridworld planner, kept only as a baseline. Only change it to keep the comparison fair (e.g. the obstacle-visibility switch in `docs/plan.md` A1).
+- `PRISM-Guided-Learning/src/legacy/`: the per-state gridworld planner of the predecessor paper, kept only as a baseline. Only change it to keep the comparison fair (e.g. the obstacle-visibility switch in `docs/plan.md` A1).
 - `PRISM-Guided-Learning/viz/`: plotting (`plot_comparison.py`: legacy vs one symbolic run; `plot_runs.py`: legacy vs up to two symbolic runs, e.g. ablations; styling in `theme.py`). Every figure has a config in `configs/plot/`; facts about a run (dataset, model, rounds) come from its `config.json` via `src/results_io.py`.
 - `PRISM-Guided-Learning/out/results/<run>/`: run outputs (parquet + per-sample JSON in `outputs/`).
 
@@ -23,9 +23,9 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 
 ## Commands
 - Tests (~3 min, need PRISM, no LLM): `../.venv/Scripts/python -m pytest -q tests`. The planner and run tests use a scripted stand-in for Ollama and a 4x4 grid (`tests/fakes.py`).
-- New approach: `src/run_symbolic.py --domain <name> --data <dataset> [--limit N] --workers 2 --out out/results/<name>`
+- Symbolic approach: `src/run_symbolic.py --domain <name> --data <dataset> [--limit N] --workers 2 --out out/results/<name>`
 - Legacy baseline (gridworld only): `src/run_legacy.py`
-- Regression (legacy policies reproduced in the new pipeline): `src/regression.py` (settings: `configs/regression/default.yaml`)
+- Regression (legacy policies reproduced in the symbolic pipeline): `src/regression.py` (settings: `configs/regression/default.yaml`)
 - Conditions × seeds: `src/run_ablation.py B2 R1 [--seeds 1 2] [--dry-run] [--set key=value]` (seeds: `configs/ablation/default.yaml`; run settings: `configs/run/`, `docs/config.md`)
 - Ceilings: `src/ceilings.py [--condition U1]` (domain and dataset from the run config)
 - Comparison report: `src/compare.py configs/plot/compare_grid20.yaml`; figures: `viz/<script>.py configs/plot/<figure>.yaml` (e.g. `viz/plot_runs.py configs/plot/catchall_ablation.yaml`)
@@ -34,11 +34,11 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - **Ask before starting any LLM run.** A 20-grid run takes 30–60 min of GPU time. Use `--limit 1` for smoke tests.
 - Run experiments **one after another**, never concurrently, so timings stay comparable. Keep `--workers 2` and `--max-attempts 5` unless deliberately changing them.
 - If a run fails partway (OOM, loops), stop it and delete its output directory rather than keeping bad results.
-- After a run: build the figure/table, add a short entry to `DECISIONS.md` (what changed, key numbers, reading), and commit.
-- Results must name what differed between runs (prompt, caps, settings). The prompt currently includes the catch-all instruction and example; see the ablation in `DECISIONS.md`.
+- After a run: build the figure/table, add a short entry to `DECISIONS.md` (what the run varied, key numbers, reading), and commit.
+- Results must name what differed between runs (prompt, caps, settings). The default prompt includes the catch-all instruction and example (`prompt.*`); see the catch-all ablation in `DECISIONS.md`.
 
 ## Gotchas
-- **Editing code:** prefer the Edit tool. Python heredocs doing `str.replace` break on `\n` escapes in this shell (it happened several times), and a silent no-op edit is easy to miss.
+- **Editing code:** prefer the Edit tool. Python heredocs doing `str.replace` break on `\n` escapes in this shell, and a silent no-op edit is easy to miss.
 - **Windows directory locks:** don't `cd` into an output directory from a shell. It locks the directory and blocks later `mv`/`rm`.
 - Run logs (`out/**/*.log`) are gitignored. Commit parquet, `outputs/` JSON, reports and figures. Force-add logs only when they're a run's only record.
 - PRISM value iteration stops early on nested-until (LTL) properties at default settings. Use `-intervaliter` (with a `-gaussseidel -epsilon 1e-12` fallback) when exact values matter.

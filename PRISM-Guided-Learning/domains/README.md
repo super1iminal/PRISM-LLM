@@ -50,7 +50,7 @@ Tips:
 
 ## gridworld
 
-The existing case study: sequential goals, static obstacles, one moving obstacle, 0.7/0.15/0.15
+The reference case study: sequential goals, static obstacles, one moving obstacle, 0.7/0.15/0.15
 slip dynamics. It mirrors the legacy DTMC exactly (verified by `src/regression.py` and
 `tests/test_gridworld_equivalence.py`). `legacy_translate.py` converts legacy per-cell policies
 into atomic rules.
