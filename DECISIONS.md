@@ -174,3 +174,12 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
 - B2, S1, S4, S5, V1, V2, U1 and `pre_phase_a` set `retry: "stall:2"` in their condition files, matching each run's `config.json`.
 - **D7:** the default retry with 7 rounds, 2 seeds, to see whether more rounds keep paying off (every budget curve rises through round 5).
 - The legacy conditions (B1, L1, L2) are not run: lower priority than the symbolic results (`docs/ablation_not_run.png`).
+
+## Default run (qwen3:14b, grid_20_balanced, `configs/run/default.yaml`, no seed)
+- `out/results/symbolic_grid20_default`: the default config unchanged, as an end-to-end check of the pipeline. Report `out/results/comparison_grid20_default/report.md`; figures `viz/figures/grid20_default.png` and `viz/figures/budget_grid20_default.png` (with the R4 seeds, which have the same settings).
+- Requirements met 5.10 (worst case) vs 4.30 legacy; R4's seeds 4.95 (4.80 to 5.10). Per grid, +0.15 ± 0.88 against R4's seed mean, while R4's two seeds differ by ± 1.6: consistent with R4. Solved 0/20. Shortfall 1.86 vs 3.16. Output tokens 5.8k vs 12.2k. Wall time 186 s vs 415 s per grid.
+- Every kept policy covers every reachable situation (best = worst). No invalid answers, errors or solver fallbacks.
+- **Solver accuracy [REVIEW]:** the final policies re-verified with interval iteration (epsilon 1e-9; Gauss-Seidel at 1e-12 for grid 19, where interval iteration does not converge in 1e8 iterations) change no met/not-met verdict. The largest difference is 0.017 (grid 4, `avoid_moving_seg1`: 0.723 stored, 0.706 exact, threshold 0.70).
+  - Gauss-Seidel stops when an iteration changes little, which is not an error bound. Value iteration approaches from below, so values PRISM computes directly (`goal*`, reachability) err low, the safe side for a worst case. Values it computes as 1 − another probability err high: the avoid requirements (`G`, both cases) and the worst case of the sequence requirements (LTL: 1 − Pmax of the negation).
+  - On chains that leak probability slowly, the error is large. In R4 seed 1, grid 18's kept policy (fully covering, so best = worst exactly) has `seq_2_before_3` stored as best 0.0044, worst 0.272; interval iteration gives 0.0061 (about 10M iterations). The verdict is the same there (threshold 0.8).
+  - Options: re-verify the final policy exactly at the end of each run (cheap; reported worst cases become guarantees), interval iteration throughout (slow on such chains), or leave the loop as is.
