@@ -6,6 +6,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - `plan.md`: the current work plan. Code changes (Phase A) all land before any run.
 - `semantics.md`: the formal semantics of rule sets, the induced MDP and the loop branch. **Update it whenever the inputs, the rule language or the REFINE/EXTEND branch change.**
 - `config.md`: every run setting, its default, where it lives and whether it is ablated. Keep it in sync with `configs/`.
+- `testing_harness.md`: how the LLM task / backend / lockstep change was tested (replays of saved runs, scheduler tests, mutation checks, what is not covered).
 - `ablations.md` + `ablation_run.png` / `ablation_not_run.png`: the ablation conditions, run and not run. Regenerate the PNGs with `viz/plot_ablation_grid.py` after editing its tables. Results: `PRISM-Guided-Learning/out/results/ablations/summary/SUMMARY.md` (`viz/ablation_summary.py`).
 
 ## Where things live
