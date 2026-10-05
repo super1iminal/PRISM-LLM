@@ -20,6 +20,7 @@ import pandas as pd  # noqa: E402
 
 from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names  # noqa: E402
 from legacy.requirements import get_threshold_for_key  # noqa: E402
+from results_io import SYMBOLIC_RESULTS  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 # Reference categorical palette, slots 1-3 (validated all-pairs in light and dark)
@@ -52,7 +53,7 @@ def grouped_bars(ax, labels, series, fmt, ticks=None, colors=None):
 
 def symbolic_rounds(run_dir: Path) -> pd.DataFrame:
     """Per-round rows with mode, coverage and whether the round improved the kept policy."""
-    df = pd.read_parquet(run_dir / "SYMBOLIC_results.parquet").reset_index().sort_values(["sample_id", "iteration"])
+    df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index().sort_values(["sample_id", "iteration"])
     reqs = [c[len("prob_worst_"):] for c in df.columns if c.startswith("prob_worst_")]
     thr = {r: get_threshold_for_key(r) for r in reqs}
     df["key"] = list(zip(
@@ -76,14 +77,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--legacy", required=True, type=Path)
     parser.add_argument("--symbolic", action="append", required=True, help="label=path, repeatable (max 2)")
-    parser.add_argument("--data", default="grid_20_balanced.csv")
     parser.add_argument("--title", default=None)
     parser.add_argument("--out", type=Path, default=Path("viz/figures/runs.png"))
     args = parser.parse_args()
     if len(args.symbolic) > 2:
         raise SystemExit("at most two symbolic runs (three series stay distinguishable)")
 
-    legacy = load_legacy(args.legacy, args.data)
+    legacy = load_legacy(args.legacy)
     runs = []
     for spec in args.symbolic:
         label, _, path = spec.partition("=")

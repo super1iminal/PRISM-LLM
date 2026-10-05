@@ -8,6 +8,7 @@ import pytest
 import run_symbolic
 from config import load_config
 from fakes import ScriptedLLM, answer
+from results_io import SYMBOLIC_RESULTS
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
 
@@ -19,7 +20,7 @@ def test_run_writes_results_and_releases_its_logs(tmp_path, tiny_grid, monkeypat
     run_dir = tmp_path / "run"
     run_symbolic.run(cfg, str(run_dir))
 
-    df = pd.read_parquet(run_dir / "SYMBOLIC_results.parquet").reset_index()
+    df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index()
     assert len(df) == 1 and df.success.tolist() == [True] and df.llm_calls.tolist() == [1]
     record = json.loads((run_dir / "outputs" / "sample_000.json").read_text(encoding="utf-8"))
     assert record["final_rules"] == [{"condition": "true", "action": "right"}]

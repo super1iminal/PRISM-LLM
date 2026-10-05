@@ -25,6 +25,7 @@ from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
+from results_io import SYMBOLIC_RESULTS  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 # Reference categorical palette, slots 1-3 (validated all-pairs in light and dark)
@@ -34,7 +35,7 @@ BAND = "#eeede9"
 
 def final_results(run_dir: Path) -> dict:
     """sample_id -> (final worst, final best, success) from a symbolic run's parquet."""
-    df = pd.read_parquet(run_dir / "SYMBOLIC_results.parquet").reset_index()
+    df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index()
     out = {}
     for sid, f in df[df.is_final].set_index("sample_id").iterrows():
         reqs = [c[len("final_worst_"):] for c in f.index if c.startswith("final_worst_")]

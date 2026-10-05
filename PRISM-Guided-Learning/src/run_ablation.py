@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import List
 
 from config import CONFIG_DIR, load_config, load_file
+from results_io import RESULT_FILES
 from settings import RESULTS_PATH
 
 ABLATIONS_PATH = RESULTS_PATH / "ablations"
-RESULT_FILES = {"symbolic": "SYMBOLIC_results.parquet", "legacy": "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet"}
 DEFAULT_CONFIG = CONFIG_DIR / "ablation" / "default.yaml"
 
 

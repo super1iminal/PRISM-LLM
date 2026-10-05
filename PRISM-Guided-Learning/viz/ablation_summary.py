@@ -19,11 +19,11 @@ import pandas as pd  # noqa: E402
 
 from loaders import add_summary_metrics, load_legacy, load_symbolic  # noqa: E402
 from plot_budget import legacy_curve, symbolic_curve  # noqa: E402
+from results_io import LEGACY_RESULTS as LEGACY_FILE, SYMBOLIC_RESULTS as SYMBOLIC_FILE  # noqa: E402
 from theme import INK, INK_2, GRID, SURFACE, style  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DATASET = "grid_20_balanced.csv"
-SYMBOLIC_FILE, LEGACY_FILE = "SYMBOLIC_results.parquet", "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet"
 
 # condition -> (family, reference for paired tests, what changes)
 CONDITIONS = {
@@ -82,7 +82,7 @@ def mode_stats(run_dir: Path) -> dict:
 
 def load_run(condition: str, run_dir: Path, solvable: set) -> pd.DataFrame:
     legacy = (run_dir / LEGACY_FILE).exists()
-    df = add_summary_metrics(load_legacy(run_dir, DATASET) if legacy else load_symbolic(run_dir))
+    df = add_summary_metrics(load_legacy(run_dir) if legacy else load_symbolic(run_dir))
     raw = pd.read_parquet(run_dir / (LEGACY_FILE if legacy else SYMBOLIC_FILE)).reset_index()
     per = raw.groupby("sample_id")
     df["input_tokens"] = per.llm_prompt_tokens.first()
@@ -255,7 +255,7 @@ def plot_budget(runs, out):
         legacy = (run_dir / LEGACY_FILE).exists()
         cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
         rounds = cfg["legacy" if legacy else "planner"]["max_rounds"]   # curves stop at the run's own budget
-        rows = legacy_curve(run_dir, rounds, DATASET) if legacy else symbolic_curve(run_dir, rounds)
+        rows = legacy_curve(run_dir, rounds) if legacy else symbolic_curve(run_dir, rounds)
         curves.append(pd.DataFrame(rows).assign(condition=condition, seed=run_dir.name))
     data = pd.concat(curves)
     summary = data.groupby(["condition", "k"]).met.mean().reset_index()

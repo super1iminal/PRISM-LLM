@@ -20,6 +20,7 @@ from legacy.data_loader import DataLoader
 from legacy.planner import FeedbackSimplifiedLLMPlanner
 from legacy.prompting import ActionPolicy
 from logging_utils import close_logger, setup_logger
+from results_io import LEGACY_RESULTS
 from settings import DOMAINS_PATH, RESULTS_PATH
 
 APPROACH_NAME = "LEGACY_FEEDBACK_SIMPLIFIED"
@@ -69,7 +70,7 @@ def run(cfg: Config, run_dir: str) -> str:
     for idx, result in enumerate(results):
         logger.info(f"  Gridworld {idx+1}: LTL Score = {result['LTL_Score']:.4f}, success = {result['Success']}")
 
-    save_results(results, dataloader, APPROACH_NAME, run_dir)
+    save_results(results, dataloader, run_dir)
     save_outputs(results, run_dir)
     logger.info(f"Results saved to: {run_dir}")
     close_logger(logger)
@@ -122,9 +123,9 @@ def results_to_multiindex_df(results: List[Dict], dataloader: DataLoader) -> pd.
     return df
 
 
-def save_results(results: List[Dict], dataloader: DataLoader, name: str, run_dir: str) -> pd.DataFrame:
+def save_results(results: List[Dict], dataloader: DataLoader, run_dir: str) -> pd.DataFrame:
     df = results_to_multiindex_df(results, dataloader)
-    df.to_parquet(os.path.join(run_dir, f"{name}_results.parquet"))
+    df.to_parquet(os.path.join(run_dir, LEGACY_RESULTS))
     return df
 
 

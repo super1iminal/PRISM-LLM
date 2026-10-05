@@ -17,7 +17,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import _legacy_kept, get_threshold_for_key, load_domain  # noqa: E402
+from loaders import get_threshold_for_key, load_domain  # noqa: E402
+from results_io import LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -36,7 +37,7 @@ def _metrics(probs: dict) -> dict:
 
 
 def symbolic_curve(run_dir: Path, max_k: int) -> list:
-    df = pd.read_parquet(run_dir / "SYMBOLIC_results.parquet").reset_index().sort_values(["sample_id", "iteration"])
+    df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index().sort_values(["sample_id", "iteration"])
     reqs = [c[len("prob_worst_"):] for c in df.columns if c.startswith("prob_worst_")]
     rows = []
     for sid, g in df.groupby("sample_id"):
@@ -56,15 +57,15 @@ def symbolic_curve(run_dir: Path, max_k: int) -> list:
     return rows
 
 
-def legacy_curve(run_dir: Path, max_k: int, dataset: str) -> list:
-    instances = load_domain("gridworld").load_instances(dataset)
+def legacy_curve(run_dir: Path, max_k: int) -> list:
+    instances = load_domain("gridworld").load_instances(run_facts(run_dir).dataset)
     rows = []
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
         rec = json.loads(path.read_text(encoding="utf-8"))
         probs = rec.get("iteration_prism_probs", [])
         for k in range(1, max_k + 1):
             prefix = {"iteration_prism_probs": probs[:k]}   # no final_prism_probs: replay keep-best on k rounds
-            rows.append({"sample_id": rec["sample_id"], "k": k, **_metrics(_legacy_kept(prefix, instances[rec["sample_id"]]))})
+            rows.append({"sample_id": rec["sample_id"], "k": k, **_metrics(legacy_kept(prefix, instances[rec["sample_id"]]))})
     return rows
 
 
@@ -72,7 +73,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("runs", nargs="+", help="label=path (a run dir, or a condition dir with seed_* runs)")
     parser.add_argument("--max-k", type=int, default=5)
-    parser.add_argument("--data", default="grid_20_balanced.csv")
     parser.add_argument("--out", type=Path, default=Path("viz/figures/budget.png"))
     args = parser.parse_args()
 
@@ -80,8 +80,8 @@ def main():
     for spec in args.runs:
         label, _, path = spec.partition("=")
         for seed, run_dir in run_dirs(Path(path)):
-            legacy = (run_dir / "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet").exists()
-            rows = legacy_curve(run_dir, args.max_k, args.data) if legacy else symbolic_curve(run_dir, args.max_k)
+            legacy = (run_dir / LEGACY_RESULTS).exists()
+            rows = legacy_curve(run_dir, args.max_k) if legacy else symbolic_curve(run_dir, args.max_k)
             frames.append(pd.DataFrame(rows).assign(run=label, seed=seed))
     data = pd.concat(frames)
     summary = data.groupby(["run", "k"]).agg(success=("success", "mean"), met=("met", "mean"),

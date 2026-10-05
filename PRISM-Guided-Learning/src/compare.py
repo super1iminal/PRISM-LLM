@@ -9,39 +9,36 @@ solved-of-solvable and the shortfall below what is actually achievable (min(thre
 """
 import argparse
 import json
-import logging
 import os
 from pathlib import Path
 
 import pandas as pd
 
 from core.domain import load_domain
+from legacy.requirements import get_threshold_for_key
+from results_io import LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, run_facts
 from settings import RESULTS_PATH
-from legacy.gridworld import GridWorld as LegacyGridWorld
-from legacy.requirements import SimplifiedVerifier, get_threshold_for_key
-
-_quiet = logging.getLogger("compare")
-_quiet.addHandler(logging.NullHandler())
-_quiet.propagate = False
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--legacy", required=True)
     parser.add_argument("--symbolic", required=True)
-    parser.add_argument("--data", default="grid_20_balanced.csv", help="Gridworld dataset both runs used")
     parser.add_argument("--ceilings", default=None, help="Ceilings CSV (default: out/results/ceilings/gridworld_<data>.csv)")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
-    ceilings_path = Path(args.ceilings) if args.ceilings else         RESULTS_PATH / "ceilings" / f"gridworld_{Path(args.data).stem}.csv"
-    ceilings = pd.read_csv(ceilings_path, index_col="sample_id") if ceilings_path.exists() else None
-    instances = load_domain("gridworld").load_instances(args.data)
     legacy_dir, symbolic_dir = Path(args.legacy), Path(args.symbolic)
+    dataset = run_facts(symbolic_dir).dataset
+    if run_facts(legacy_dir).dataset != dataset:
+        raise SystemExit(f"the runs used different datasets ({run_facts(legacy_dir).dataset} vs {dataset})")
+    ceilings_path = Path(args.ceilings) if args.ceilings else RESULTS_PATH / "ceilings" / f"gridworld_{Path(dataset).stem}.csv"
+    ceilings = pd.read_csv(ceilings_path, index_col="sample_id") if ceilings_path.exists() else None
+    instances = load_domain("gridworld").load_instances(dataset)
     out_dir = Path(args.out) if args.out else symbolic_dir.parent / "comparison"
     os.makedirs(out_dir, exist_ok=True)
 
-    leg_all = pd.read_parquet(legacy_dir / "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet").reset_index()
-    sym_all = pd.read_parquet(symbolic_dir / "SYMBOLIC_results.parquet").reset_index()
+    leg_all = pd.read_parquet(legacy_dir / LEGACY_RESULTS).reset_index()
+    sym_all = pd.read_parquet(symbolic_dir / SYMBOLIC_RESULTS).reset_index()
     leg = leg_all[leg_all.is_final].set_index("sample_id")
     sym = sym_all[sym_all.is_final].set_index("sample_id")
 
@@ -49,7 +46,7 @@ def main():
     leg_final_probs = {}
     for path in sorted((legacy_dir / "outputs").glob("sample_*.json")):
         rec = json.loads(path.read_text(encoding="utf-8"))
-        leg_final_probs[rec["sample_id"]] = _legacy_kept(rec, instances[rec["sample_id"]])
+        leg_final_probs[rec["sample_id"]] = legacy_kept(rec, instances[rec["sample_id"]])
 
     requirements = sorted({c[len("final_worst_"):] for c in sym.columns if c.startswith("final_worst_")})
     samples = sorted(set(leg.index) | set(sym.index))
@@ -184,28 +181,6 @@ def main():
     report = "\n".join(lines) + "\n"
     (out_dir / "report.md").write_text(report, encoding="utf-8")
     print(report)
-
-
-def _legacy_kept(record, instance) -> dict:
-    """Probabilities of the policy the legacy keep-best loop ended with.
-
-    Newer legacy runs store them directly. Otherwise, replay the rule: fewest failed
-    requirements, ties broken by the higher weighted score, earliest iteration first.
-    """
-    if record.get("final_prism_probs"):
-        return record["final_prism_probs"]
-    iterations = record.get("iteration_prism_probs", [])
-    if not iterations:
-        return {}
-    d = instance.data
-    verifier = SimplifiedVerifier(None, LegacyGridWorld(d["n"], d["goals"], d["static"], d["moving"]), _quiet)
-    best, best_key = iterations[0], None
-    for probs in iterations:
-        mistakes = sum(1 for k, p in probs.items() if p < get_threshold_for_key(k))
-        key = (mistakes, -verifier._calculate_score(list(probs.values())))
-        if best_key is None or key < best_key:
-            best, best_key = probs, key
-    return best
 
 
 if __name__ == "__main__":

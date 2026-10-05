@@ -20,10 +20,8 @@ from core.domain import Instance, load_domain
 from core.llm import OllamaLLM
 from core.planner import SymbolicPlanner
 from logging_utils import close_logger, setup_logger
+from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
-
-APPROACH_NAME = "SYMBOLIC"
-
 
 def cli_overrides(args) -> List[str]:
     """Map the old shortcut flags onto config overrides."""
@@ -151,7 +149,7 @@ def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> p
 
 
 def save_results(results: List[Dict[str, Any]], instances: List[Instance], run_dir: str) -> None:
-    results_to_df(results, instances).to_parquet(os.path.join(run_dir, f"{APPROACH_NAME}_results.parquet"))
+    results_to_df(results, instances).to_parquet(os.path.join(run_dir, SYMBOLIC_RESULTS))
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
     for idx, result in enumerate(results):

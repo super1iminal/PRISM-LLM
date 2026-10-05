@@ -19,24 +19,24 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from compare import _legacy_kept  # noqa: E402  (exact legacy keep-best rule)
 from core.domain import load_domain  # noqa: E402
 from legacy.requirements import get_threshold_for_key  # noqa: E402
+from results_io import LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, run_facts  # noqa: E402
 
 _RESULTS = re.compile(r"(\w+): best=([\d.]+) worst=([\d.]+)")
 _TIMESTAMP = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d+)")
 _INSTANCE = re.compile(r"Instance (\d+): success=(\w+) iterations=(\d+) time=([\d.]+)s")
 
 
-def load_legacy(run_dir: Path, dataset: str = "grid_20_balanced.csv") -> pd.DataFrame:
-    instances = load_domain("gridworld").load_instances(dataset)
-    df = pd.read_parquet(run_dir / "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet").reset_index()
+def load_legacy(run_dir: Path) -> pd.DataFrame:
+    instances = load_domain("gridworld").load_instances(run_facts(run_dir).dataset)
+    df = pd.read_parquet(run_dir / LEGACY_RESULTS).reset_index()
     final = df[df.is_final].set_index("sample_id")
     rows = {}
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
         rec = json.loads(path.read_text(encoding="utf-8"))
         sid = rec["sample_id"]
-        probs = _legacy_kept(rec, instances[sid])
+        probs = legacy_kept(rec, instances[sid])
         f = final.loc[sid]
         rows[sid] = {"approach": "legacy", "size": int(f["size"]), "complete": True,
                      "attempts": int(df[df.sample_id == sid].iteration.max()), "time_s": f["total_time"],
@@ -45,7 +45,7 @@ def load_legacy(run_dir: Path, dataset: str = "grid_20_balanced.csv") -> pd.Data
 
 
 def load_symbolic(run_dir: Path, sizes: Optional[dict] = None, include_partial: bool = False) -> pd.DataFrame:
-    parquet = run_dir / "SYMBOLIC_results.parquet"
+    parquet = run_dir / SYMBOLIC_RESULTS
     if parquet.exists():
         df = pd.read_parquet(parquet).reset_index()
         final = df[df.is_final].set_index("sample_id")
