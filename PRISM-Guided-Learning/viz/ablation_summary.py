@@ -1,15 +1,17 @@
 """One page with every ablation result so far: tables, paired tests and figures.
 
-Reads every finished run under out/results/ablations/<condition>/seed_<k>/ and rewrites
-out/results/ablations/summary/ (SUMMARY.md + PNGs). Safe to rerun at any time; unfinished runs
-are listed as pending.
+Reads every finished run under <root>/<condition>/seed_<k>/ and rewrites <root>/summary/ (SUMMARY.md +
+PNGs). Safe to rerun at any time; unfinished runs are listed as pending.
 
-Usage (from PRISM-Guided-Learning/): python viz/ablation_summary.py [--root out/results/ablations]
+Usage (from PRISM-Guided-Learning/): python viz/ablation_summary.py configs/plot/ablation_summary.yaml
+Settings: the plot config (PlotConfig below): which conditions, their families and references, the
+budget groups, the UUV section and the text. Grid counts, model and round budgets come from the runs.
 """
-import argparse
 import datetime
-import json
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List, Optional, Set
 
 import matplotlib
 matplotlib.use("Agg")
@@ -17,46 +19,61 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import add_summary_metrics, load_legacy, load_symbolic  # noqa: E402
+from loaders import add_summary_metrics, load_legacy, load_symbolic, plot_config, short_model  # noqa: E402
+from core.domain import load_domain  # noqa: E402
 from plot_budget import legacy_curve, symbolic_curve  # noqa: E402
-from results_io import LEGACY_RESULTS as LEGACY_FILE, SYMBOLIC_RESULTS as SYMBOLIC_FILE  # noqa: E402
-from theme import INK, INK_2, GRID, SURFACE, style  # noqa: E402
+from results_io import LEGACY_RESULTS as LEGACY_FILE, SYMBOLIC_RESULTS as SYMBOLIC_FILE, run_facts  # noqa: E402
+from settings import RESULTS_PATH  # noqa: E402
+from theme import FAMILY_COLORS, INK, INK_2, GRID, SURFACE, style  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-DATASET = "grid_20_balanced.csv"
-
-# condition -> (family, reference for paired tests, what changes)
-CONDITIONS = {
-    "B2": ("Baselines", None, "Old defaults (restart after 2 stalls)"),
-    "R1": ("Retry sweep", "B2", "Never restart"),
-    "R2": ("Retry sweep", "B2", "Restart after 1 stall"),
-    "R3": ("Retry sweep", "B2", "Restart every 3rd round"),
-    "R4": ("Retry sweep", "B2", "Restart on slow progress (new default)"),
-    "R5": ("Retry sweep", "B2", "Always restart (no feedback)"),
-    "D7": ("Rounds budget", "R4", "New default, 7 rounds"),
-    "S1": ("Feedback content", "B2", "Results table only"),
-    "S4": ("Feedback content", "B2", "No examples in the prompt"),
-    "S5": ("Blame signal", "B2", "Blame by one-step regret"),
-    "V1": ("Blame signal", "B2", "Blame on random rules/states"),
-    "V2": ("Blame signal", "B2", "No blame section"),
-    "B1": ("Baselines", "B2", "Legacy per-state"),
-    "L1": ("Legacy variants", "B1", "Legacy + restart after 2 stalls"),
-    "L2": ("Legacy variants", "B1", "Legacy without worked examples"),
-}
-FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback content": "#1baf7a",
-                 "Blame signal": "#eda100", "Rounds budget": "#e87ba4", "Legacy variants": "#4a3aa7"}
-BUDGET_GROUPS = [("Retry sweep and rounds", ["B2", "R1", "R2", "R3", "R4", "R5", "D7", "B1"]),
-                 ("Feedback content and blame", ["B2", "S1", "S4", "S5", "V1", "V2"]),
-                 ("Legacy", ["B1", "L1", "L2", "B2"])]
 LINE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 
 
-def solvable_ids() -> set:
-    path = ROOT / "out" / "results" / "ceilings" / f"gridworld_{Path(DATASET).stem}.csv"
-    if not path.exists():
-        return set(range(20))
-    df = pd.read_csv(path)
-    return {int(i) for i, ok in zip(df["sample_id"], df["jointly_feasible"]) if str(ok) == "True"}
+@dataclass
+class PlotConfig:
+    """configs/plot/ablation_summary.yaml documents each key."""
+    script: str
+    root: str
+    conditions: Dict[str, Dict[str, Optional[str]]]
+    reference_lines: Dict[str, str]
+    budget_groups: Dict[str, List[str]]
+    uuv: Optional[Dict[str, str]]
+    title: str
+    intro: str
+
+
+@dataclass
+class Batch:
+    """What the finished runs have in common, for the text: filled into `title` and `intro`."""
+    domain: str
+    dataset: str
+    grids: int
+    solvable: Set[int]
+    model: str
+    rounds: int        # the most common round budget
+    seeds: int         # the most seeds any condition has
+
+    def text(self, template: str) -> str:
+        return template.format(grids=self.grids, solvable=len(self.solvable), model=self.model, rounds=self.rounds,
+                               seeds=self.seeds)
+
+
+def describe(runs) -> Batch:
+    facts = [run_facts(run_dir) for _, run_dir in runs]
+    datasets = {(f.domain, f.dataset) for f in facts}
+    if len(datasets) != 1:
+        raise SystemExit(f"the runs use different domains or datasets: {sorted(datasets)}")
+    (domain, dataset), = datasets
+    grids = len(load_domain(domain).load_instances(dataset))
+    path = RESULTS_PATH / "ceilings" / f"{domain}_{Path(dataset).stem}.csv"
+    if path.exists():
+        df = pd.read_csv(path)
+        solvable = {int(i) for i, ok in zip(df["sample_id"], df["jointly_feasible"]) if str(ok) == "True"}
+    else:
+        solvable = set(range(grids))
+    return Batch(domain, dataset, grids, solvable, " / ".join(dict.fromkeys(short_model(f.model) for f in facts)),
+                 Counter(f.max_rounds for f in facts).most_common(1)[0][0],
+                 max(Counter(condition for condition, _ in runs).values()))
 
 
 def kept_coverage(run_dir: Path) -> pd.Series:
@@ -98,9 +115,9 @@ def load_run(condition: str, run_dir: Path, solvable: set) -> pd.DataFrame:
     return df.reset_index()
 
 
-def finished_runs(root: Path):
+def finished_runs(root: Path, conditions):
     runs, pending = [], []
-    for condition in CONDITIONS:
+    for condition in conditions:
         for run_dir in sorted((root / condition).glob("seed_*")):
             if (run_dir / SYMBOLIC_FILE).exists() or (run_dir / LEGACY_FILE).exists():
                 runs.append((condition, run_dir))
@@ -124,12 +141,13 @@ def paired(data: pd.DataFrame, condition: str, reference: str, col: str = "met",
             "p": p, "n": len(d)}
 
 
-def condition_table(data: pd.DataFrame, extra: dict) -> pd.DataFrame:
+def condition_table(data: pd.DataFrame, extra: dict, conditions) -> pd.DataFrame:
     rows = []
-    for condition in [c for c in CONDITIONS if c in set(data.condition)]:
+    for condition in [c for c in conditions if c in set(data.condition)]:
         d = data[data.condition == condition]
         per_seed = d.groupby("seed")
-        family, reference, what = CONDITIONS[condition]
+        meta = conditions[condition]
+        family, reference, what = meta["family"], meta["reference"], meta["change"]
         test = paired(data, condition, reference) if reference in set(data.condition) else None
         rows.append({
             "condition": condition, "family": family, "change": what, "seeds": d.seed.nunique(),
@@ -148,7 +166,7 @@ def condition_table(data: pd.DataFrame, extra: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _bar_panel(ax, table, data, col, title, ylabel, fmt):
+def _bar_panel(ax, table, data, col, title, ylabel, fmt, reference_lines):
     x = np.arange(len(table))
     colors = [FAMILY_COLORS[f] for f in table.family]
     ax.bar(x, table[col], 0.65, color=colors)
@@ -159,20 +177,21 @@ def _bar_panel(ax, table, data, col, title, ylabel, fmt):
         ax.scatter(np.full(len(values), i), values, color=INK, s=14, zorder=3)
         ax.annotate(fmt.format(table[col].iloc[i]), (i, max(table[col].iloc[i], values.max())), ha="center",
                     va="bottom", xytext=(0, 3), textcoords="offset points", fontsize=7.5, color=INK_2)
-    for ref, ls in (("B2", "--"), ("B1", ":")):
+    for ref, ls in reference_lines.items():
         if ref in set(table.condition):
             ax.axhline(table[table.condition == ref][col].iloc[0], color=INK_2, lw=0.9, ls=ls, zorder=0)
     ax.set_xticks(x, table.condition)
     style(ax, title, ylabel)
 
 
-def plot_conditions(table, data, out):
+def plot_conditions(table, data, out, title, num_reqs, reference_lines):
     fig, axes = plt.subplots(2, 2, figsize=(14, 8.5), facecolor=SURFACE)
-    _bar_panel(axes[0, 0], table, data, "met", "Requirements met (of 9), worst case", "mean per grid", "{:.2f}")
+    _bar_panel(axes[0, 0], table, data, "met", f"Requirements met (of {num_reqs}), worst case", "mean per grid",
+               "{:.2f}", reference_lines)
     _bar_panel(axes[0, 1], table, data, "shortfall", "Shortfall below thresholds (lower is better)", "mean per grid",
-               "{:.2f}")
+               "{:.2f}", reference_lines)
     _bar_panel(axes[1, 0], table, data, "met_best", "Requirements met, best case (uncovered states choose well)",
-               "mean per grid", "{:.2f}")
+               "mean per grid", "{:.2f}", reference_lines)
     ax = axes[1, 1]
     t = table[table.vs != ""].reset_index(drop=True)
     y = np.arange(len(t))[::-1]
@@ -192,15 +211,15 @@ def plot_conditions(table, data, out):
     fig.legend(handles + [plt.Line2D([], [], marker="o", ls="", color=INK, ms=4)],
                families + ["one sample (seed)"], loc="upper center", ncol=6, frameon=False, fontsize=9,
                bbox_to_anchor=(0.5, 0.95))
-    fig.suptitle("Ablations on 20 gridworlds (qwen3 14B, 5 rounds, obstacle visible), bars = mean over seeds",
-                 x=0.01, ha="left", y=0.99, fontsize=13, fontweight="bold", color=INK)
+    fig.suptitle(title, x=0.01, ha="left", y=0.99, fontsize=13, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.92), h_pad=3)
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
 
 
-def plot_mechanics(table, out):
-    t = table[~table.condition.isin(["B1", "L1", "L2"])].reset_index(drop=True)
+def plot_mechanics(table, data, out):
+    legacy = set(data[data.approach == "legacy"].condition)
+    t = table[~table.condition.isin(legacy)].reset_index(drop=True)
     panels = [("uncovered", "Rule coverage: uncovered situations, kept policy", "% of reachable", "{:.0f}%"),
               ("feedback_improved", "Feedback rounds that improved the policy", "share", "{:.0%}")]
     fig, axes = plt.subplots(1, 2, figsize=(14, 3.8), facecolor=SURFACE)
@@ -219,10 +238,10 @@ def plot_mechanics(table, out):
     plt.close(fig)
 
 
-def plot_costs(table, data, out):
+def plot_costs(table, data, out, num_reqs):
     """Per-grid cost and outcome distributions: median bars with interquartile whiskers."""
     t = table.reset_index(drop=True)
-    panels = [("met", "Requirements met (of 9), worst case", "per grid", 1, "{:.1f}"),
+    panels = [("met", f"Requirements met (of {num_reqs}), worst case", "per grid", 1, "{:.1f}"),
               ("shortfall", "Shortfall below thresholds", "per grid", 1, "{:.2f}"),
               ("input_tokens", "LLM input tokens", "thousand per grid", 1e-3, "{:.1f}k"),
               ("output_tokens", "LLM output tokens", "thousand per grid", 1e-3, "{:.1f}k"),
@@ -249,23 +268,23 @@ def plot_costs(table, data, out):
     plt.close(fig)
 
 
-def plot_budget(runs, out):
+def plot_budget(runs, out, cfg: PlotConfig):
     curves = []
     for condition, run_dir in runs:
         legacy = (run_dir / LEGACY_FILE).exists()
-        cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
-        rounds = cfg["legacy" if legacy else "planner"]["max_rounds"]   # curves stop at the run's own budget
+        rounds = run_facts(run_dir).max_rounds   # curves stop at the run's own budget
         rows = legacy_curve(run_dir, rounds) if legacy else symbolic_curve(run_dir, rounds)
         curves.append(pd.DataFrame(rows).assign(condition=condition, seed=run_dir.name))
     data = pd.concat(curves)
     summary = data.groupby(["condition", "k"]).met.mean().reset_index()
-    fig, axes = plt.subplots(1, len(BUDGET_GROUPS), figsize=(16, 4.4), facecolor=SURFACE, sharey=True)
-    for ax, (title, members) in zip(axes, BUDGET_GROUPS):
+    groups = list(cfg.budget_groups.items())
+    fig, axes = plt.subplots(1, len(groups), figsize=(16, 4.4), facecolor=SURFACE, sharey=True)
+    for ax, (title, members) in zip(axes, groups):
         for i, condition in enumerate([m for m in members if m in set(summary.condition)]):
             d = summary[summary.condition == condition]
-            ls = "--" if condition in ("B2", "B1") and members[0] != condition else "-"
+            ls = "--" if condition in cfg.reference_lines and members[0] != condition else "-"
             ax.plot(d.k, d.met, color=LINE_COLORS[i % len(LINE_COLORS)], lw=2, marker="o", ms=5, ls=ls,
-                    label=f"{condition} {CONDITIONS[condition][2].lower()}")
+                    label=f"{condition} {cfg.conditions[condition]['change'].lower()}")
             ax.annotate(f"{d.met.iloc[-1]:.2f}", (d.k.iloc[-1], d.met.iloc[-1]), xytext=(5, 0),
                         textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
         style(ax, title, "requirements met (mean per grid)")
@@ -280,17 +299,27 @@ def plot_budget(runs, out):
     return summary.pivot(index="condition", columns="k", values="met")
 
 
-def plot_uuv(root: Path, out: Path) -> bool:
-    """Per round, how far each UUV requirement is from its threshold (worst case), both scenarios."""
-    runs = [p for p in sorted((root / "U1").glob("seed_*")) if (p / SYMBOLIC_FILE).exists()]
+def _uuv_runs(root: Path, condition: str) -> List[Path]:
+    return [p for p in sorted((root / condition).glob("seed_*")) if (p / SYMBOLIC_FILE).exists()]
+
+
+def _instances(run_dir: Path):
+    facts = run_facts(run_dir)
+    domain = load_domain(facts.domain)
+    return domain, domain.load_instances(facts.dataset)
+
+
+def _scenario(instance) -> str:
+    return instance.data.get("name", instance.id).replace("_", " ").title()
+
+
+def plot_uuv(root: Path, condition: str, out: Path) -> bool:
+    """Per round, how far each UUV requirement is from its threshold (worst case), every scenario."""
+    runs = _uuv_runs(root, condition)
     if not runs:
         return False
-    import sys
-    sys.path.insert(0, str(ROOT / "src"))
-    from core.domain import load_domain
-    domain = load_domain("uuv")
-    instances = domain.load_instances("uuv_paper.csv")
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4.4), facecolor=SURFACE, sharey=True)
+    domain, instances = _instances(runs[0])
+    fig, axes = plt.subplots(1, len(instances), figsize=(14, 4.4), facecolor=SURFACE, sharey=True)
     for ax, inst in zip(axes, instances):
         reqs = domain.spec(inst).requirements
         for j, run_dir in enumerate(runs):
@@ -302,11 +331,12 @@ def plot_uuv(root: Path, out: Path) -> bool:
                 ax.plot(g.iteration, margin, color=LINE_COLORS[i], lw=2, marker="o", ms=5,
                         ls="-" if j == 0 else "--", label=f"{r.name} ({run_dir.name})")
         ax.axhline(0, color=INK, lw=1)
-        style(ax, f"{inst.data['name'].replace('_', ' ').title()}", "margin to threshold, % (above 0 = met)")
-        ax.set_xticks(range(1, 6))
+        style(ax, _scenario(inst), "margin to threshold, % (above 0 = met)")
+        ax.set_xticks(range(1, run_facts(runs[0]).max_rounds + 1))
         ax.set_xlabel("round", color=INK_2, fontsize=9)
-    axes[1].legend(frameon=False, fontsize=7.5, loc="lower right")
-    fig.suptitle("UUV (U1): worst-case margin of each requirement per round (solid seed 1, dashed seed 2)",
+    axes[-1].legend(frameon=False, fontsize=7.5, loc="lower right")
+    seeds = ", ".join(f"{'solid' if j == 0 else 'dashed'} {r.name.replace('_', ' ')}" for j, r in enumerate(runs[:2]))
+    fig.suptitle(f"UUV ({condition}): worst-case margin of each requirement per round ({seeds})",
                  x=0.01, ha="left", fontsize=13, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(out, dpi=150, facecolor=SURFACE)
@@ -314,19 +344,16 @@ def plot_uuv(root: Path, out: Path) -> bool:
     return True
 
 
-def uuv_table(root: Path) -> str:
+def uuv_table(root: Path, condition: str) -> str:
     rows = []
-    for run_dir in sorted((root / "U1").glob("seed_*")):
-        path = run_dir / SYMBOLIC_FILE
-        if not path.exists():
-            continue
-        df = pd.read_parquet(path).reset_index()
+    for run_dir in _uuv_runs(root, condition):
+        _, instances = _instances(run_dir)
+        df = pd.read_parquet(run_dir / SYMBOLIC_FILE).reset_index()
         final = df[df.is_final]
         reqs = [c[len("final_worst_"):] for c in final.columns if c.startswith("final_worst_")]
-        cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
         for _, f in final.iterrows():
             values = ", ".join(f"{r} {f[f'final_worst_{r}']:.3f}" for r in reqs)
-            rows.append(f"| {run_dir.name} | {['North Sea', 'Caribbean'][int(f.sample_id)]} | {bool(f.success)} | "
+            rows.append(f"| {run_dir.name} | {_scenario(instances[int(f.sample_id)])} | {bool(f.success)} | "
                         f"{int(df[df.sample_id == f.sample_id].iteration.max())} | {int(f.final_num_rules)} | "
                         f"{f.llm_prompt_tokens / 1000:.1f}k / {f.llm_output_tokens / 1000:.1f}k | {values} |")
     if not rows:
@@ -335,13 +362,10 @@ def uuv_table(root: Path) -> str:
             "|---|---|---|---|---|---|---|\n" + "\n".join(rows))
 
 
-def write_markdown(out_dir, table, budget, pending, uuv):
+def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch: Batch):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# Ablation results (auto-generated {now})", "",
-             "Gridworld, 20 grids (19 solvable), qwen3 14B, 5 rounds, obstacle phase visible to rules and legacy. "
-             "Symbolic numbers are worst case. Paired tests compare per-grid means (seeds averaged) against the "
-             "reference with a sign-flip permutation test; with 20 grids and 2 seeds, treat p > 0.05 as noise.", "",
-             "Regenerate: `python viz/ablation_summary.py`.", ""]
+    lines = [f"# Ablation results (auto-generated {now})", "", batch.text(cfg.intro), "",
+             "Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.", ""]
     if pending:
         lines += ["**Pending runs:** " + ", ".join(pending), ""]
     lines += ["## Overview", "", "![conditions](conditions.png)", "",
@@ -367,39 +391,41 @@ def write_markdown(out_dir, table, budget, pending, uuv):
     lines += ["", "## Requirements met after k rounds", "", "| cond | " + " | ".join(f"k={k}" for k in ks) + " |",
               "|---|" + "---|" * len(ks)]
     lines += [f"| {c} | " + " | ".join("" if pd.isna(budget.loc[c, k]) else f"{budget.loc[c, k]:.2f}" for k in ks) + " |"
-              for c in CONDITIONS if c in budget.index]
+              for c in cfg.conditions if c in budget.index]
     lines.append("")
     if uuv:
-        lines += ["## UUV (U1: symbolic defaults on the paper's two scenarios, with the energy budget)", "",
-                  "![uuv](uuv.png)", "", uuv, ""]
+        lines += [f"## UUV ({cfg.uuv['condition']}: {cfg.uuv['change']})", "", "![uuv](uuv.png)", "", uuv, ""]
     (out_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=ROOT / "out" / "results" / "ablations")
-    args = parser.parse_args()
-    out_dir = args.root / "summary"
+    cfg = plot_config(PlotConfig, "ablation_summary")
+    root = Path(cfg.root)
+    out_dir = root / "summary"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    solvable = solvable_ids()
-    runs, pending = finished_runs(args.root)
-    data = pd.concat([load_run(c, d, solvable) for c, d in runs], ignore_index=True)
+    runs, pending = finished_runs(root, cfg.conditions)
+    batch = describe(runs)
+    data = pd.concat([load_run(c, d, batch.solvable) for c, d in runs], ignore_index=True)
+    num_reqs = len([c for c in data.columns if c.startswith("p_") and not c.startswith("p_best_")])
     extra = {}
     for condition, run_dir in runs:
         if (run_dir / SYMBOLIC_FILE).exists():
             extra.setdefault(condition, []).append(mode_stats(run_dir))
     extra = {c: pd.DataFrame(v).mean(numeric_only=True).to_dict() for c, v in extra.items()}
-    table = condition_table(data, extra)
+    table = condition_table(data, extra, cfg.conditions)
     table.to_csv(out_dir / "conditions.csv", index=False)
     data.to_csv(out_dir / "per_grid.csv", index=False)
 
-    plot_conditions(table, data, out_dir / "conditions.png")
-    plot_mechanics(table, out_dir / "mechanics.png")
-    plot_costs(table, data, out_dir / "costs.png")
-    budget = plot_budget(runs, out_dir / "budget.png")
-    plot_uuv(args.root, out_dir / "uuv.png")
-    write_markdown(out_dir, table, budget, pending, uuv_table(args.root))
+    plot_conditions(table, data, out_dir / "conditions.png", batch.text(cfg.title), num_reqs, cfg.reference_lines)
+    plot_mechanics(table, data, out_dir / "mechanics.png")
+    plot_costs(table, data, out_dir / "costs.png", num_reqs)
+    budget = plot_budget(runs, out_dir / "budget.png", cfg)
+    uuv = ""
+    if cfg.uuv:
+        plot_uuv(root, cfg.uuv["condition"], out_dir / "uuv.png")
+        uuv = uuv_table(root, cfg.uuv["condition"])
+    write_markdown(out_dir, table, budget, pending, uuv, cfg, batch)
     print(out_dir / "SUMMARY.md")
 
 
