@@ -13,10 +13,11 @@ needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on
 
 @needs_prism
 def test_gridworld_ceilings(tiny_grid):
-    df = ceilings("gridworld", str(tiny_grid))
+    cfg = load_config(overrides=[f"domain.dataset={tiny_grid.as_posix()}"])
+    df = ceilings(cfg)
     row = df.loc[0]
     domain = load_domain("gridworld")
-    optimum = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0], load_config()).optimum()[0]
+    optimum = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0], cfg).optimum()[0]
     for name, value in optimum.items():
         assert row[f"optimum_{name}"] == pytest.approx(value, abs=1e-9)
         assert row[f"achievable_{name}"] == (value >= row[f"threshold_{name}"])
@@ -25,6 +26,6 @@ def test_gridworld_ceilings(tiny_grid):
 
 @needs_prism
 def test_undecided_joint_query_is_reported_not_raised():
-    df = ceilings("uuv", "uuv_paper.csv")   # step-bounded deadline: PRISM's LP method cannot decide
+    df = ceilings(load_config("U1"))   # UUV's step-bounded deadline: PRISM's LP method cannot decide
     assert len(df) == 2 and df.jointly_feasible.isna().all()
     assert {"optimum_no_thruster_failure", "achievable_done_in_time"} <= set(df.columns)

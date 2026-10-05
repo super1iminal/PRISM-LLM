@@ -4,8 +4,11 @@ configs/run/conditions/<name>.yaml.
     cfg = load_config("R2", overrides=["llm.seed=1", "run.limit=1"])
 
 A condition file is a partial override of the default; CLI overrides (`section.key=value`, value parsed
-as YAML) apply last. Unknown sections or keys are errors, so a typo cannot silently fall back to
+as YAML) apply last. Unknown or missing keys are errors, so a typo cannot silently fall back to
 a default. `docs/config.md` documents every key.
+
+The other tools keep their settings in their own folders (configs/regression/, configs/ablation/,
+configs/plot/) with their own schemas, loaded the same way by `load_file`.
 """
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
@@ -161,6 +164,14 @@ def _parse_override(text: str) -> Dict[str, Any]:
 def _read_yaml(path) -> Dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def load_file(path, schema: type, overrides: Sequence[str] = ()):
+    """A tool's config file as dataclass `schema`, then `key=value` overrides (same rules as the run config)."""
+    data = _read_yaml(path)
+    for text in overrides:
+        data = _merge(data, _parse_override(text))
+    return _build(schema, data)
 
 
 def conditions() -> Dict[str, Dict[str, Any]]:

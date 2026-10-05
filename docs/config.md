@@ -1,9 +1,16 @@
 # Configuration
 
-Every setting that affects a run lives in `PRISM-Guided-Learning/configs/`:
-- `default.yaml`: every key below with its default.
-- `conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. Conditions that ran before Oct 3 pin `planner.retry: "stall:2"`, the default then, so each name still means what was run.
-- Schema and validation: `src/config.py`. Unknown keys and unsupported values are errors.
+Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run config says what a run does (domain, dataset, model, planner); the domains themselves are defined in `domains/<name>/`, not here.
+
+| Folder | Used by | Contents |
+|---|---|---|
+| `run/` | `run_symbolic.py`, `run_legacy.py`, `run_ablation.py`, `ceilings.py` | `default.yaml` (every key in the table below) and `conditions/<name>.yaml` |
+| `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides) |
+| `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
+| `plot/` | `viz/` scripts, `compare.py` | one file per figure or report |
+
+- `run/conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. Conditions that ran before Oct 3 pin `planner.retry: "stall:2"`, the default then, so each name still means what was run.
+- Each folder's `default.yaml` is the only place its defaults live: the schemas (`src/config.py` for the run, a dataclass in each tool) have none, so a missing key is an error, as are unknown keys and unsupported values. Tools take `--config FILE` and `--set key=value`.
 - Every run writes its resolved config to `<run>/config.json`.
 
 ```bash
@@ -11,10 +18,10 @@ python src/run_symbolic.py --condition R2 --set run.limit=1 --set llm.seed=1
 ```
 
 ```bash
-python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
+python src/run_ablation.py B2 R1 R2 R3 R4 R5
 ```
 
-**Keep this table in sync with `default.yaml`.** Domain constants that define the problem (thresholds, dynamics) stay in the domain's own files and are listed at the end for reference.
+**Keep this table in sync with `run/default.yaml`.** Domain constants that define the problem (thresholds, dynamics) stay in the domain's own files and are listed at the end for reference.
 
 | Key | Default | What it does | Ablated by |
 |---|---|---|---|

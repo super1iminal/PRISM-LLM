@@ -25,9 +25,9 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - Tests (~2 min, need PRISM, no LLM): `../.venv/Scripts/python -m pytest -q tests`. The planner and run tests use a scripted stand-in for Ollama and a 4x4 grid (`tests/fakes.py`).
 - New approach: `src/run_symbolic.py --domain <name> --data <dataset> [--limit N] --workers 2 --out out/results/<name>`
 - Legacy baseline (gridworld only): `src/run_legacy.py`
-- Regression (legacy policies reproduced in the new pipeline): `src/regression.py --legacy-run out/results/legacy_grid20`
-- Conditions × seeds: `src/run_ablation.py B2 R1 --seeds 1 2 [--dry-run] [--set key=value]` (settings: `configs/`, `docs/config.md`)
-- Ceilings: `src/ceilings.py --domain gridworld --data grid_20_balanced.csv`
+- Regression (legacy policies reproduced in the new pipeline): `src/regression.py` (settings: `configs/regression/default.yaml`)
+- Conditions × seeds: `src/run_ablation.py B2 R1 [--seeds 1 2] [--dry-run] [--set key=value]` (seeds: `configs/ablation/default.yaml`; run settings: `configs/run/`, `docs/config.md`)
+- Ceilings: `src/ceilings.py [--condition U1]` (domain and dataset from the run config)
 - Comparison report: `src/compare.py`; figures: `viz/plot_comparison.py`, `viz/plot_runs.py`, `viz/plot_budget.py`
 
 ## Experiment etiquette

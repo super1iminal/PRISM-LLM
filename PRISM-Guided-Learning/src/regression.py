@@ -11,7 +11,10 @@ rules, compose it with the gridworld domain's MDP, and check with PRISM:
               tolerance;
   3. coverage: best == worst and no uncovered situations (the translation is a complete policy).
 
-Usage: python src/regression.py --legacy-run out/results/legacy_grid20 [--data grid_20_balanced.csv]
+Settings: configs/regression/default.yaml (which legacy run, tolerances, epsilons, workers). The
+dataset and PRISM limits come from the run config (configs/run/default.yaml).
+
+Usage: python src/regression.py [--config FILE] [--set key=value ...]
 """
 import argparse
 import json
@@ -19,12 +22,12 @@ import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
 
-from config import load_config
+from config import CONFIG_DIR, load_config, load_file
 from core.domain import load_domain
 from core.prism import PrismError, PrismRunner
 from core.rules import SymbolicPolicy
@@ -41,6 +44,19 @@ _quiet = logging.getLogger("regression")
 _quiet.addHandler(logging.NullHandler())
 _quiet.propagate = False
 
+DEFAULT_CONFIG = CONFIG_DIR / "regression" / "default.yaml"
+
+
+@dataclass
+class RegressionConfig:
+    """configs/regression/default.yaml documents each key."""
+    legacy_run: str
+    workers: int
+    epsilon: str
+    fallback_epsilon: str
+    tol_stored: float
+    tol_exact: float
+
 
 def legacy_dtmc_values(instance, legacy_policy, runner: PrismRunner):
     """Recompute the legacy DTMC's requirement values for a policy with `runner`'s settings."""
@@ -54,19 +70,15 @@ def legacy_dtmc_values(instance, legacy_policy, runner: PrismRunner):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--legacy-run", required=True)
-    parser.add_argument("--data", default="grid_20_balanced.csv")
-    parser.add_argument("--epsilon", default="1e-9", help="Interval-iteration epsilon for the exact check")
-    parser.add_argument("--tol-stored", type=float, default=1e-9,
-                        help="Same solver and settings as the legacy run, so values should match to rounding")
-    parser.add_argument("--tol-exact", type=float, default=1e-7)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Regression config file")
+    parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     args = parser.parse_args()
+    reg = load_file(args.config, RegressionConfig, args.set)
 
-    run_dir = Path(args.legacy_run)
-    domain = load_domain("gridworld")
-    instances = domain.load_instances(args.data)
+    run_dir = Path(reg.legacy_run)
     cfg = load_config()
+    domain = load_domain("gridworld")
+    instances = domain.load_instances(cfg.domain.dataset)
     default_runner = PrismRunner(replace(cfg.prism, method=""))   # PRISM defaults, as in the legacy run
 
     jobs = []
@@ -93,8 +105,8 @@ def main():
         names = [r.name for r in verifier.spec.requirements]
         # Interval iteration can fail to converge (policies with non-progressing loops); then fall
         # back to Gauss-Seidel at a very tight epsilon
-        solvers = [("interval iteration", ["-intervaliter", "-epsilon", args.epsilon]),
-                   ("Gauss-Seidel 1e-12", ["-gaussseidel", "-epsilon", "1e-12"])]
+        solvers = [("interval iteration", ["-intervaliter", "-epsilon", reg.epsilon]),
+                   (f"Gauss-Seidel {reg.fallback_epsilon}", ["-gaussseidel", "-epsilon", reg.fallback_epsilon])]
         for solver, solver_args in solvers:
             runner = PrismRunner(replace(cfg.prism, method=""), extra_args=solver_args)
             try:
@@ -119,7 +131,7 @@ def main():
             })
         return rows
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with ThreadPoolExecutor(max_workers=reg.workers) as pool:
         rows = [row for rows in pool.map(check, jobs) for row in rows]
 
     df = pd.DataFrame(rows)
@@ -129,8 +141,8 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     df.to_csv(out_dir / "regression.csv", index=False)
 
-    stored_fail = df[df.diff_stored > args.tol_stored]
-    exact_fail = df[df.diff_exact > args.tol_exact]
+    stored_fail = df[df.diff_stored > reg.tol_stored]
+    exact_fail = df[df.diff_exact > reg.tol_exact]
     uncovered = int(df.uncovered_situations.max())
     passed = len(stored_fail) == 0 and len(exact_fail) == 0 and uncovered == 0 and len(errors) == 0
     summary = "\n".join([
@@ -141,9 +153,9 @@ def main():
         f"requirement values: {len(df)}",
         f"- Uncovered situations in translated policies (max): {uncovered}",
         f"- **Stored check** (best case at default PRISM settings vs the legacy run's reported values): "
-        f"max diff {df.diff_stored.max():.2e}, {len(stored_fail)} above {args.tol_stored}",
-        f"- **Exact check** (legacy DTMC vs new MDP best and worst; interval iteration, epsilon {args.epsilon}): "
-        f"max diff {df.diff_exact.max():.2e}, {len(exact_fail)} above {args.tol_exact}",
+        f"max diff {df.diff_stored.max():.2e}, {len(stored_fail)} above {reg.tol_stored}",
+        f"- **Exact check** (legacy DTMC vs new MDP best and worst; interval iteration, epsilon {reg.epsilon}): "
+        f"max diff {df.diff_exact.max():.2e}, {len(exact_fail)} above {reg.tol_exact}",
         f"- Max |best - worst| (interval iteration): {df.best_minus_worst_exact.max():.2e}",
         "- Policies solved with the Gauss-Seidel fallback (interval iteration did not converge): "
         + (", ".join(f"sample {r.sample_id} iteration {r.iteration}"
