@@ -121,8 +121,8 @@ class PolicyVerifier:
         return self._forced
 
     def policy_valuation(self, result: PrismResult, state_index: int) -> Dict[str, Value]:
-        state = result.states[state_index]
-        pos = {name: i for i, name in enumerate(result.variables)}
+        """The policy-visible variables of one reachable state, in spec order."""
+        state, pos = result.states[state_index], result.positions
         return {var.name: state[pos[var.name]] for var in self.spec.variables}
 
     def _assign_rules(self, v: Verification, policy: SymbolicPolicy) -> None:

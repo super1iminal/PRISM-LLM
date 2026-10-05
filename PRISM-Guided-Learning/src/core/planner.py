@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 
 from config import Config
 from core.analysis import MassAnalyzer
-from core.domain import Domain, Instance, Requirement
+from core.domain import Domain, Instance, Requirement, failing
 from core.llm import OllamaLLM
 from core.prism import PrismError, PrismRunner
 from core.retry import RetryPolicy
@@ -43,8 +43,8 @@ def rule_schema(actions: List[str], max_rules: int = 64, max_condition_chars: in
 
 def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
     """Lower is better: worst-case failures, best-case failures, then total shortfalls."""
-    return (sum(not r.satisfied(v.worst[r.name]) for r in reqs),
-            sum(not r.satisfied(v.best[r.name]) for r in reqs),
+    return (len(failing(reqs, v.worst)),
+            len(failing(reqs, v.best)),
             sum(r.shortfall(v.worst[r.name]) for r in reqs),
             sum(r.shortfall(v.best[r.name]) for r in reqs))
 
@@ -167,8 +167,8 @@ class SymbolicPlanner:
                 "worst": dict(v.worst),
                 "reachable_situations": v.reachable_situations,
                 "uncovered_situations": v.uncovered_situations,
-                "best_case_success": all(r.satisfied(v.best[r.name]) for r in reqs),
-                "worst_case_success": all(r.satisfied(v.worst[r.name]) for r in reqs),
+                "best_case_success": not failing(reqs, v.best),
+                "worst_case_success": not failing(reqs, v.worst),
                 "improved": improved,
                 "shortfall_gain": gain,
                 "invalid_answers": errors,
@@ -187,8 +187,8 @@ class SymbolicPlanner:
             iterations.append(record)
 
             best_policy, best_v, _ = best
-            failing_best = [r for r in reqs if not r.satisfied(best_v.best[r.name])]
-            failing_worst = [r for r in reqs if not r.satisfied(best_v.worst[r.name])]
+            failing_best = failing(reqs, best_v.best)
+            failing_worst = failing(reqs, best_v.worst)
             if not failing_worst:
                 log(f"Success after {attempt} attempts")
                 record["iteration_time"] = time() - iter_start
@@ -242,8 +242,8 @@ class SymbolicPlanner:
 
         best_policy, best_v, _ = best
         return {
-            "success": all(r.satisfied(best_v.worst[r.name]) for r in reqs),
-            "best_case_success": all(r.satisfied(best_v.best[r.name]) for r in reqs),
+            "success": not failing(reqs, best_v.worst),
+            "best_case_success": not failing(reqs, best_v.best),
             "final_best": dict(best_v.best),
             "final_worst": dict(best_v.worst),
             "final_rules": best_policy.to_dicts(),

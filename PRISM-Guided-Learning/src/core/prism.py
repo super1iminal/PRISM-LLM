@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import PrismConfig
@@ -34,6 +35,11 @@ class PrismResult:
 
     def index_of(self) -> Dict[StateKey, int]:
         return {s: i for i, s in enumerate(self.states)}
+
+    @cached_property
+    def positions(self) -> Dict[str, int]:
+        """Variable name -> its position in every state tuple."""
+        return {name: i for i, name in enumerate(self.variables)}
 
 
 def _parse_value(text: str):

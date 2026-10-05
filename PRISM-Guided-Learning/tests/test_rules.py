@@ -22,6 +22,23 @@ def test_precedence_and_arithmetic():
     assert evaluate(expr, {"x": 3, "y": 3, "g1": True})
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("x - y = 1", lambda x, y, g1: x - y == 1),
+    ("x != y", lambda x, y, g1: x != y),
+    ("x <= y", lambda x, y, g1: x <= y),
+    ("x > y", lambda x, y, g1: x > y),
+    ("x >= y + 1", lambda x, y, g1: x >= y + 1),
+    ("-x + y < 0", lambda x, y, g1: -x + y < 0),
+    ("g1 => x > 1", lambda x, y, g1: (not g1) or x > 1),
+    ("g1 = (x = y)", lambda x, y, g1: g1 == (x == y)),
+    ("g1 != false | !(x < 2)", lambda x, y, g1: g1 or not x < 2),
+])
+def test_every_operator_evaluates_like_python(text, expected):
+    expr = parse_condition(text, VAR_MAP)
+    for x, y, g1 in itertools.product(range(4), range(4), [False, True]):
+        assert evaluate(expr, {"x": x, "y": y, "g1": g1}) == expected(x, y, g1), (x, y, g1)
+
+
 @pytest.mark.parametrize("bad", ["z > 1", "x + g1 > 0", "x <", "g1 < 2", "x", ""])
 def test_invalid_conditions(bad):
     with pytest.raises(RuleError):

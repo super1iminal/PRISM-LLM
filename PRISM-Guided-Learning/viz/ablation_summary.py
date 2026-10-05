@@ -19,7 +19,7 @@ import pandas as pd  # noqa: E402
 
 from loaders import add_summary_metrics, load_legacy, load_symbolic  # noqa: E402
 from plot_budget import legacy_curve, symbolic_curve  # noqa: E402
-from plot_comparison import INK, INK_2, GRID, SURFACE, style  # noqa: E402
+from theme import INK, INK_2, GRID, SURFACE, style  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DATASET = "grid_20_balanced.csv"

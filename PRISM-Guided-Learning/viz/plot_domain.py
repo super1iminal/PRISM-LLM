@@ -24,10 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
+from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 # Reference categorical palette, slots 1-3 (validated all-pairs in light and dark)
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
-SURFACE, INK, INK_2, GRID, BAND = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df", "#eeede9"
+BAND = "#eeede9"
 
 
 def final_results(run_dir: Path) -> dict:

@@ -19,7 +19,7 @@ from config import Config, load_config
 from core.domain import Instance, load_domain
 from core.llm import OllamaLLM
 from core.planner import SymbolicPlanner
-from logging_utils import setup_logger
+from logging_utils import close_logger, setup_logger
 from settings import RESULTS_PATH
 
 APPROACH_NAME = "SYMBOLIC"
@@ -77,6 +77,8 @@ def run(cfg: Config, run_dir: str) -> str:
         except Exception as e:
             logger.error(traceback.format_exc())
             result = {"success": False, "error": f"{type(e).__name__}: {e}", "iterations": []}
+        finally:
+            close_logger(logger)
         result["total_time"] = time() - start
         result["instance"] = instance.id
         return result
@@ -94,6 +96,7 @@ def run(cfg: Config, run_dir: str) -> str:
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")
+    close_logger(main_logger)
     return run_dir
 
 

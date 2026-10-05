@@ -19,7 +19,7 @@ from core.llm import OllamaLLM
 from legacy.data_loader import DataLoader
 from legacy.planner import FeedbackSimplifiedLLMPlanner
 from legacy.prompting import ActionPolicy
-from logging_utils import setup_logger
+from logging_utils import close_logger, setup_logger
 from settings import DOMAINS_PATH, RESULTS_PATH
 
 APPROACH_NAME = "LEGACY_FEEDBACK_SIMPLIFIED"
@@ -72,6 +72,7 @@ def run(cfg: Config, run_dir: str) -> str:
     save_results(results, dataloader, APPROACH_NAME, run_dir)
     save_outputs(results, run_dir)
     logger.info(f"Results saved to: {run_dir}")
+    close_logger(logger)
     return run_dir
 
 

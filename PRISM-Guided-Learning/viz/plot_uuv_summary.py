@@ -22,22 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
+from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"
-SURFACE, INK, INK_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 COSTS = ['R{"energy"}min=? [ F "done" ]', 'R{"energy"}max=? [ F "done" ]',
          'R{"time"}min=? [ F "done" ]', 'R{"time"}max=? [ F "done" ]']
-
-
-def style(ax, title):
-    ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold")
-    ax.set_facecolor(SURFACE)
-    ax.grid(axis="y", color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.tick_params(colors=INK_2, labelsize=9, length=0)
 
 
 def evaluate(verifier, rules):
@@ -82,7 +71,7 @@ def main():
         ax.set_xticks(range(len(reqs)))
         ax.set_xticklabels(["no thruster failure", f"done within {inst.data['deadline']} steps"])
         ax.set_ylim(0, 1)
-        style(ax, name)
+        style(ax, name, pad=None)
         if i == 0:
             ax.set_ylabel("probability", color=INK_2, fontsize=9)
 
@@ -106,7 +95,7 @@ def main():
     ax.set_ylim(1, 10 ** 5)
     ax.set_xticks(range(len(sizes)))
     ax.set_xticklabels([s[0] for s in sizes])
-    style(ax, "Policy size")
+    style(ax, "Policy size", pad=None)
     ax.set_ylabel("rules / strategy states (log)", color=INK_2, fontsize=9)
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (ORANGE, BLUE)]

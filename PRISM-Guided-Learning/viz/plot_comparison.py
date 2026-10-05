@@ -17,10 +17,10 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names  # noqa: E402
+from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 # Reference categorical palette, slots 1-2 (validated all-pairs)
 LEGACY, SYMBOLIC = "#2a78d6", "#eb6834"
-SURFACE, INK, INK_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 BAR_W = 0.36
 
 
@@ -32,18 +32,6 @@ def parse_samples(text):
         lo, _, hi = part.partition("-")
         ids.update(range(int(lo), int(hi or lo) + 1))
     return sorted(ids)
-
-
-def style(ax, title, ylabel):
-    ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=10)
-    ax.set_ylabel(ylabel, color=INK_2, fontsize=9)
-    ax.set_facecolor(SURFACE)
-    ax.grid(axis="y", color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.tick_params(colors=INK_2, labelsize=9, length=0)
 
 
 def paired_bars(ax, labels, legacy, symbolic, fmt, symbolic_best=None):

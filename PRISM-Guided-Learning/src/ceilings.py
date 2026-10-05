@@ -17,7 +17,7 @@ import pandas as pd
 
 from config import load_config
 from core.domain import load_domain
-from core.prism import PrismError, PrismRunner
+from core.prism import PrismRunner
 from core.verifier import PolicyVerifier
 from settings import RESULTS_PATH
 
@@ -25,6 +25,7 @@ CEILINGS_PATH = RESULTS_PATH / "ceilings"
 
 
 def ceilings(domain_name: str, dataset: str) -> pd.DataFrame:
+    """One row per instance: each requirement's optimum and whether all thresholds are jointly achievable."""
     cfg = load_config()
     domain = load_domain(domain_name)
     runner = PrismRunner(config=cfg.prism)
@@ -33,12 +34,8 @@ def ceilings(domain_name: str, dataset: str) -> pd.DataFrame:
         verifier = PolicyVerifier(domain, instance, runner)
         reqs = verifier.spec.requirements
         optimum = runner.run(verifier.model, [f"{r.best_op()}=? [ {r.formula} ]" for r in reqs]).initial_values
-        try:
-            joint = verifier.jointly_feasible()
-        except PrismError as e:
-            joint = None
-            print(f"instance {instance.id}: joint query failed: {str(e).splitlines()[0]}")
-        row = {"sample_id": idx, "instance": instance.id, "jointly_feasible": joint}
+        joint = verifier.jointly_feasible()   # None: PRISM could not decide (e.g. step-bounded objectives)
+        row ={"sample_id": idx, "instance": instance.id, "jointly_feasible": joint}
         for r, value in zip(reqs, optimum):
             row[f"optimum_{r.name}"] = value
             row[f"threshold_{r.name}"] = r.threshold
