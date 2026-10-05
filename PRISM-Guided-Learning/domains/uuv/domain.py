@@ -75,8 +75,6 @@ class UUV(Domain):
             "altitudes": ALTITUDES,
             "states": STATES,
             "follow": FOLLOW,
-            "med_visib": med_visib,
-            "high_visib": high_visib,
             "init_visib": int(span / 2 + 0.5),   # PRISM's round((max_visib-min_visib)/2)
             "visib_bands": [
                 {"name": "poor", "levels": [v for v in visib if v < med_visib], "allowed": ["low"]},
