@@ -4,25 +4,35 @@ Nothing in rounds 1..k depends on later rounds, so the result with budget k is t
 keep-best rule holds after round k. No extra runs are needed.
 
 Usage (from PRISM-Guided-Learning/):
-    python viz/plot_budget.py "Legacy=out/results/legacy_grid20" "Symbolic=out/results/symbolic_grid20_capped"
-    python viz/plot_budget.py "B2=out/results/ablations/B2" "R5=out/results/ablations/R5"   # pools seed_* dirs
-Writes viz/figures/budget.png (+ .csv) unless --out is given.
+    python viz/plot_budget.py configs/plot/budget_grid20.yaml
+Settings: the plot config (PlotConfig below); a run can be a condition dir, whose seed_* runs are pooled.
+Writes the figure and a CSV (same stem).
 """
-import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, Optional
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import load_domain  # noqa: E402
+from loaders import load_domain, plot_config  # noqa: E402
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
                         requirements_by_sample, run_facts)
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+
+
+@dataclass
+class PlotConfig:
+    """A configs/plot/*.yaml file for this script (configs/plot/budget_grid20.yaml documents each key)."""
+    script: str
+    runs: Dict[str, str]
+    max_k: Optional[int]
+    out: str
 
 
 def run_dirs(path: Path):
@@ -73,19 +83,16 @@ def legacy_curve(run_dir: Path, max_k: int) -> list:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("runs", nargs="+", help="label=path (a run dir, or a condition dir with seed_* runs)")
-    parser.add_argument("--max-k", type=int, default=5)
-    parser.add_argument("--out", type=Path, default=Path("viz/figures/budget.png"))
-    args = parser.parse_args()
+    cfg = plot_config(PlotConfig, "plot_budget")
+    out = Path(cfg.out)
+    runs = [(label, seed, run_dir) for label, path in cfg.runs.items() for seed, run_dir in run_dirs(Path(path))]
+    max_k = cfg.max_k or max(run_facts(run_dir).max_rounds for _, _, run_dir in runs)
 
     frames = []
-    for spec in args.runs:
-        label, _, path = spec.partition("=")
-        for seed, run_dir in run_dirs(Path(path)):
-            legacy = (run_dir / LEGACY_RESULTS).exists()
-            rows = legacy_curve(run_dir, args.max_k) if legacy else symbolic_curve(run_dir, args.max_k)
-            frames.append(pd.DataFrame(rows).assign(run=label, seed=seed))
+    for label, seed, run_dir in runs:
+        legacy = (run_dir / LEGACY_RESULTS).exists()
+        rows = legacy_curve(run_dir, max_k) if legacy else symbolic_curve(run_dir, max_k)
+        frames.append(pd.DataFrame(rows).assign(run=label, seed=seed))
     data = pd.concat(frames)
     summary = data.groupby(["run", "k"]).agg(success=("success", "mean"), met=("met", "mean"),
                                              shortfall=("shortfall", "mean"), n=("success", "size")).reset_index()
@@ -94,7 +101,7 @@ def main():
     panels = [("success", "Solved (worst case for symbolic)", "share of instances", "{:.0%}"),
               ("met", "Requirements met", "mean per instance", "{:.2f}"),
               ("shortfall", "Shortfall below thresholds (lower is better)", "mean per instance", "{:.2f}")]
-    labels = list(dict.fromkeys(s.partition("=")[0] for s in args.runs))
+    labels = list(cfg.runs)
     for ax, (col, title, ylabel, fmt) in zip(axes, panels):
         for i, label in enumerate(labels):
             d = summary[summary.run == label]
@@ -105,7 +112,7 @@ def main():
         ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold")
         ax.set_xlabel("rounds budget k", color=INK_2, fontsize=9)
         ax.set_ylabel(ylabel, color=INK_2, fontsize=9)
-        ax.set_xticks(range(1, args.max_k + 1))
+        ax.set_xticks(range(1, max_k + 1))
         ax.set_facecolor(SURFACE)
         ax.grid(axis="y", color=GRID, lw=0.8)
         for side in ("top", "right"):
@@ -116,11 +123,11 @@ def main():
     fig.suptitle("Result vs rounds budget (keep-best policy after k rounds)", x=0.01, ha="left",
                  fontsize=13, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.out, dpi=150, facecolor=SURFACE)
-    summary.to_csv(args.out.with_suffix(".csv"), index=False)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
+    summary.to_csv(out.with_suffix(".csv"), index=False)
     print(summary.to_string(index=False))
-    print(args.out)
+    print(out)
 
 
 if __name__ == "__main__":
