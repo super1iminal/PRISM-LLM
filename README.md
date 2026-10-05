@@ -19,7 +19,8 @@ Its per-state approach survives as the `legacy` baseline.
 ```
 PRISM-Guided-Learning/
   src/
-    core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts
+    core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts,
+                     LLM tasks, backends (core/backends/) and the lockstep scheduler
     legacy/          previous per-state approach (gridworld only), kept as a baseline
     run_symbolic.py  new approach on any domain
     run_legacy.py    legacy approach on gridworld

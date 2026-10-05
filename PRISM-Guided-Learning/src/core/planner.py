@@ -15,17 +15,19 @@ failure shows the results table and asks for a complete new rule list. Semantics
 """
 import zlib
 from time import time
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from config import Config
 from core.analysis import MassAnalyzer
+from core.backends import LLMBackend
 from core.domain import Domain, Instance, Requirement
-from core.llm import OllamaLLM
 from core.prism import PrismError, PrismRunner
 from core.retry import RetryPolicy
 from core.rules import RuleError, SymbolicPolicy
+from core.scheduler import drive
+from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.verifier import PolicyVerifier, Verification
 
 
@@ -41,6 +43,10 @@ def rule_schema(actions: List[str], max_rules: int = 64, max_condition_chars: in
     return create_model("RuleList", rules=(List[rule], Field(..., max_length=max_rules)))
 
 
+AskSteps = Generator[LLMTask, LLMResult, Tuple[Optional[SymbolicPolicy], List[str], List[LLMResult]]]
+SolveSteps = Generator[LLMTask, LLMResult, Dict[str, Any]]
+
+
 def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
     """Lower is better: worst-case failures, best-case failures, then total shortfalls."""
     return (sum(not r.satisfied(v.worst[r.name]) for r in reqs),
@@ -50,10 +56,10 @@ def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
 
 
 class SymbolicPlanner:
-    def __init__(self, domain: Domain, llm: OllamaLLM, config: Optional[Config] = None,
+    def __init__(self, domain: Domain, backend: Optional[LLMBackend] = None, config: Optional[Config] = None,
                  runner: Optional[PrismRunner] = None):
         self.domain = domain
-        self.llm = llm
+        self.backend = backend   # used by solve(); schedulers drive solve_steps() with their own
         self.config = config or Config()
         self.runner = runner or PrismRunner(config=self.config.prism)
         self.retry = RetryPolicy.parse(self.config.planner.retry)
@@ -82,29 +88,46 @@ class SymbolicPlanner:
         return {"rules_listing": policy.listing(), "num_rules": len(policy.rules), "results": rows,
                 "reachable": v.reachable_situations, "uncovered": v.uncovered_situations}
 
-    def _ask(self, prompt: str, schema, spec, log) -> Tuple[Optional[SymbolicPolicy], List[str]]:
-        """Query the LLM, re-asking with the errors if the rules do not parse."""
+    def _ask(self, prompt: str, schema, spec, log, tasks: TaskFactory, round_no: int,
+             mode: str) -> AskSteps:
+        """Query the LLM, re-asking with the errors if the rules do not parse.
+
+        A generator: yields each `LLMTask` and is sent its `LLMResult`. Returns the policy (None if
+        every answer was invalid), the parse errors and the results of every call.
+        """
         errors: List[str] = []
+        results: List[LLMResult] = []
         current = prompt
-        for _ in range(1 + self.config.planner.max_fixups):
-            raw = self.llm.invoke_raw(current, schema)
+        json_schema = schema.model_json_schema()
+        for fixup in range(1 + self.config.planner.max_fixups):
+            result = yield tasks.make(current, json_schema, round=round_no, mode=mode, fixup=fixup)
+            results.append(result)
+            if result.error is not None:
+                raise LLMError(result.error)
             try:
-                parsed = schema.model_validate_json(raw)
+                parsed = schema.model_validate_json(result.text)
                 policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),
                                                  [(r.condition, r.action) for r in parsed.rules])
-                return policy, errors
+                return policy, errors, results
             except (ValidationError, RuleError) as e:
                 message = str(e)
                 errors.append(message)
                 log(f"Invalid LLM answer: {message}")
                 current = self.domain.render("invalid.md.j2", prompt=prompt, errors=message)
-        return None, errors
+        return None, errors, results
 
     # ---------------------------------------------------------------- main loop
 
     def solve(self, instance: Instance, logger) -> Dict[str, Any]:
+        """Run the refinement loop for one instance, answering each task with `self.backend` in turn."""
+        return drive(self.solve_steps(instance, logger), self.backend.execute)
+
+    def solve_steps(self, instance: Instance, logger) -> SolveSteps:
+        """The refinement loop for one instance, as a generator: yields each `LLMTask`, is sent its
+        `LLMResult`, and returns the result dict. Schedulers (core/scheduler.py) drive it."""
         log = logger.info
         cfg = self.config
+        tasks = TaskFactory(cfg.llm, instance.id)
         verifier = PolicyVerifier(self.domain, instance, self.runner, cfg.rules.max_enumeration)
         analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
                                 cfg.feedback.states_per_rule, method=cfg.feedback.blame,
@@ -129,10 +152,10 @@ class SymbolicPlanner:
 
         for attempt in range(1, max_rounds + 1):
             iter_start = time()
-            calls_before = len(self.llm.usage().calls)
             log(f"=== Attempt {attempt}/{max_rounds} ({mode}) ===\n{prompt}")
-            new_rules, errors = self._ask(prompt, schema, spec, log)
-            calls = self.llm.usage().calls[calls_before:]
+            ask_start = time()
+            new_rules, errors, calls = yield from self._ask(prompt, schema, spec, log, tasks, attempt, mode)
+            ask_seconds = time() - ask_start
             if new_rules is None:
                 new_rules = verifier.empty_policy()
             candidate = best[0].extended(new_rules) if mode == "extend" else new_rules
@@ -175,6 +198,7 @@ class SymbolicPlanner:
                 "llm_calls": len(calls),
                 "llm_time": sum(c.seconds for c in calls),
                 "llm_server_time": sum(c.server_seconds for c in calls),
+                "llm_wall_time": ask_seconds,        # includes queueing and, in lockstep, waiting for the batch
                 "llm_output_tokens": sum(c.output_tokens for c in calls),
                 "llm_prompt_tokens": sum(c.prompt_tokens for c in calls),
                 "prism_time": v.seconds,
@@ -182,7 +206,7 @@ class SymbolicPlanner:
                 "kept_joint_feasible": None,        # joint best case of the kept policy (if queried)
                 "branch_disagreement": False,       # per-requirement best passes but joint fails
                 "prompt": prompt,
-                "raw_outputs": [c.raw_output for c in calls],
+                "raw_outputs": [c.text for c in calls],
             }
             iterations.append(record)
 

@@ -26,6 +26,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits | — |
 | `llm.seed` | `null` | run seed (set per seed by `run_ablation.py`); each call uses a seed derived from it and the call's index within the instance | seeds 1, 2 |
 | `llm.temperature` | `null` | `null` = the model's default | — |
+| `llm.backend` | `ollama` | serving engine for the symbolic planner's tasks (`src/core/backends/`); legacy always uses `core/llm.py` | — |
 | `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free), D7 (7 rounds) |
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
 | `planner.retry` | `gain:0.05` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. Was `stall:2` until Oct 3 (the conditions that ran with it pin it) | R1–R5 |
@@ -46,7 +47,8 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
 | `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
 | `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |
-| `run.workers` / `run.limit` | 2 / `null` | parallel instances / first N instances only | — |
+| `run.workers` / `run.limit` | 2 / `null` | parallel instances (threads, or the lockstep batch size) / first N instances only | — |
+| `run.scheduler` | `threads` | symbolic only. `threads`: each worker solves an instance and calls the LLM itself (all runs so far). `lockstep`: every step sends one task per active instance as one batch and logs it to `<run>/llm_tasks.jsonl` | — |
 
 
 **Domain constants (not run settings):** gridworld dynamics 0.7/0.15/0.15 and thresholds (goals 0.8, ordering 0.8, avoid 0.7) in `domains/gridworld/domain.py`; UUV thresholds per scenario in `domains/uuv/data/uuv_paper.csv`.
