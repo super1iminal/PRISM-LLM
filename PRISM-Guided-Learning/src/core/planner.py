@@ -7,8 +7,8 @@ Each round, for the best rule set so far (keep-best, as in the legacy loop):
   * some completion can                -> extend: rules are fine but incomplete; the LLM adds rules
                                           (appended, so existing decisions are unchanged) for the
                                           uncovered states carrying the most mass
-"Can any completion meet them" is PRISM's multi-objective query (`planner.branch: joint`) or, as in
-the runs before Phase A, each requirement's best case on its own (`per_requirement`). The retry
+"Can any completion meet them" is PRISM's multi-objective query (`planner.branch: joint`) or each
+requirement's best case on its own (`per_requirement`, as in the `pre_phase_a` condition). The retry
 policy (`planner.retry`, see core/retry.py) decides when to drop feedback and start from the initial
 prompt instead. With `planner.feedback: table` (ablation S1) there is no branch: every round after a
 failure shows the results table and asks for a complete new rule list. Semantics: docs/semantics.md.

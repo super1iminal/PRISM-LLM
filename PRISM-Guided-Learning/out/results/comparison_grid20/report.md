@@ -9,7 +9,9 @@ Success = all requirements meet their thresholds (symbolic: in the **worst case*
 | metric | legacy (per-state) | symbolic (rules) |
 |---|---|---|
 | success | 0/20 | 1/20 |
+| success, of jointly solvable instances | 0/19 | 1/19 |
 | success in best case only | n/a | 1/20 |
+| shortfall below the achievable (mean) | 3.157 | 2.105 |
 | mean requirements met (of 9) | 4.30 | 5.25 (best case 5.40) |
 | mean total shortfall below thresholds | 3.162 | 2.110 (best case 2.025) |
 | mean iterations | 5.00 | 4.85 |
@@ -20,7 +22,19 @@ Success = all requirements meet their thresholds (symbolic: in the **worst case*
 | mean PRISM time (s) | 6.8 | 7.4 |
 | mean wall time per sample (s) | 414.9 | 169.7 |
 | mean final rules | n/a | 34.6 |
+| uncovered situations, last round's policy (mean %) | n/a | 8.8 |
 | invalid LLM answers (total) | n/a | 3 |
+
+## Medians [interquartile range] per sample
+
+| metric | legacy | symbolic |
+|---|---|---|
+| requirements met | 4 [3–5] | 6 [4–6] |
+| shortfall | 3.27 [1.95–4.62] | 2.05 [1.57–2.45] |
+| output tokens | 11102 [7904–16063] | 5428 [2555–6752] |
+| prompt (input) tokens | 23800 [21866–26524] | 14818 [12924–17886] |
+| PRISM time (s) | 6.7 [6.7–6.8] | 7.0 [6.9–7.1] |
+| wall time (s) | 414 [269–588] | 165 [118–201] |
 
 ## Mean final probability per requirement
 

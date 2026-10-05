@@ -2,12 +2,15 @@
 
 Design decisions and results, to review together. Each entry has the decision and why. Items marked **[REVIEW]** are the ones I'm least sure about.
 
+Paper target: **SEAMS 2027** (research track Oct 23; check the official site), with ICAPS (Dec 7 abstract) as the fallback. Write first, then finish. Rajan helps with implementation.
+
 ## 📌 OPEN: the story. Why an LLM, if PRISM can already synthesize the policy?
 Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha with the ceilings and the experiment designs). None of the runs settles it. The ceilings make the question sharper: PRISM's optimum is 1.0 on almost every gridworld requirement.
 - **Expressiveness gaps (Aren).** Find a problem whose requirements or structure PRISM can't express, or can only express approximately or through a very complicated encoding (his example: unrolling recursion into a finite model). Marsha added data structures, time, and other language features. The challenge is a problem that needs the LLM's expressiveness *and* benefits from PRISM's guarantees. Our spec is one-to-one with PRISM. Candidate: the UUV paper's full three-phase mission (we model one phase). Keeps the pipeline (the LLM writes policies) but needs a new problem.
 - **Model engineering (Marsha).** Start from the problem description, not a PRISM model (Aren: our inputs are "designed to fit PRISM"). The LLM builds the model, PRISM's counterexamples drive revisions, and the result should be analyzable *and* reasonable, not "correct but abstracted into uselessness". The chain of revisions doubles as a justification of the model. The LLM then produces models, not policies.
 - A third candidate from our notes: **restricted observation** (memoryless policies over what the agent can see are hard to synthesize; PRISM's POMDP engine rejected our obstacle requirements).
-- Inputs and notes: `docs/plan.md`, "Why an LLM?".
+- Marsha and Aren asked for ~3 paragraphs plus early evidence.
+- An **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). Reward requirements close a gap in *our core*, not in PRISM, so they don't support the expressiveness argument by themselves.
 
 ## Setup (answers from kickoff)
 - The symbolic approach makes **one LLM call over the whole state space** (no per-goal decomposition). Rules may refer to progress variables such as `g1`.
@@ -17,7 +20,7 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 
 ## Scope of this branch
 - This branch holds the symbolic approach and one baseline. The predecessor's other planners (Vanilla, VanillaPlus, Feedback, FeedbackMinus, RL), their plotting scripts and the predecessor paper's code are on `main`.
-- The baseline is FeedbackSimplified in `src/legacy/` (gridworld only): the predecessor's planner plus instrumentation (per-iteration policies, raw outputs, tokens) and the Phase A obstacle-visibility switch.
+- The baseline is FeedbackSimplified in `src/legacy/` (gridworld only): the predecessor's planner plus instrumentation (per-iteration policies, raw outputs, tokens) and the obstacle-visibility switch (`domain.visible_extra`).
 - `grid_20_balanced.csv` = the first 4 grids of each size (4–8) from `grid_50_balanced.csv`, so it is balanced by size.
 
 ## Generalization: inputs (what a case study provides)
@@ -91,7 +94,7 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
   - Transfer: the North Sea rules reused unchanged on the Caribbean keep safety (0.347) but not the deadline (0.824).
 
 ## UUV optimization (branch `optimization`, archived on GitHub, not merged)
-- Its runs have no energy requirement and none of the Phase A settings, so their numbers aren't comparable with the runs above. Target: match `stay` (passes both scenarios). **Not reached.** North Sea passed reliably; Caribbean failed in all 12 runs by ~0.002. Figure and runs (`out/results/opt/e*/r*`, 1–2 repeats each) live on that branch.
+- Its runs use another configuration (no energy requirement, among others), so their numbers aren't comparable with the runs above. Target: match `stay` (passes both scenarios). **Not reached.** North Sea passed reliably; Caribbean failed in all 12 runs by ~0.002. Figure and runs (`out/results/opt/e*/r*`, 1–2 repeats each) live on that branch.
 - E1 `keep` action: unused by qwen. E4 more explanation (switching arithmetic, requirement drivers): worse (0/4), not kept. E7 altitude facts in action text: no change.
 - E2 found a **domain bug**: with the visibility thresholds given as decimals (`< 5.67`), qwen copies them into conditions, and the integer rule language rejects them. The UUV description lists the integer levels of each band instead (E3).
 - **[REVIEW] Not in this branch, need a decision:**
@@ -105,7 +108,7 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 - Gridworld has no forced states (checked on all 20 grids), so this doesn't affect it. UUV North Sea: a search-only policy is complete (0 of 85 situations uncovered).
 
 ## Sept 24 meeting (Marsha, Aren)
-Its outcomes are in `docs/plan.md` (target, Phase A items, run order) and `docs/ablations.md` (retry sweep, seeds). Also:
+Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`), and:
 - The story is open (pinned at the top). Generalization and readability are "a nice bonus", not the reason.
 - **V^opt stays in the loop**; regret is an ablation (S5), not a replacement. Ceilings are "foundational", not an experiment.
 - **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV). Rule transfer (5×5 → 8×8) is dropped.
@@ -127,8 +130,12 @@ Its outcomes are in `docs/plan.md` (target, Phase A items, run order) and `docs/
 - Figures: `viz/figures/catchall_ablation.png` (instruction only) and `viz/figures/catchall_ablation_full.png` (instruction and example).
 - The default prompt keeps both (`prompt.catch_all_instruction`, `prompt.examples`), since they give qwen better results. Run without them when studying extend, or with a stronger model.
 
-## Phase A
-The items are in `docs/plan.md` (ceilings and budget curves under Phase B). Decisions and findings:
+## Ceilings and budget curves
+- Ceilings (`src/ceilings.py`, `out/results/ceilings/`): what any controller achieves on the bare MDP. Gridworld: 19/20 grids jointly solvable, and almost every requirement's optimum is 1.0. Grid 17 is not solvable: `complete_sequence` can reach at most 0.70 against a 0.80 threshold. UUV: joint undecided (step-bounded deadline), but `stay` is a witness that both scenarios are solvable, energy budget included.
+- The single-seed runs against the ceilings (`src/compare.py`): solved of solvable 0/19 legacy vs 1/19 symbolic.
+- Budget curves of the single-seed runs (`viz/figures/budget_grid20.png`; the result with budget k is the kept policy after round k): symbolic starts behind (3.25 vs 4.00 requirements met after 1 round) but improves every round to 5.25; legacy plateaus at 4.30 after round 3.
+
+## Solvers, joint queries and seeds
 - **PRISM solver: Gauss-Seidel** (`prism.method`). With `obs_idx` readable, a rule set can make the induced chain periodic. PRISM's default value iteration then fails to converge, which would crash an instance mid-run (a three-rule test policy shows it). Gauss-Seidel and policy iteration agree on those models. Checks against published or recorded numbers use PRISM's defaults: the UUV paper's numbers (Gauss-Seidel gives 4726.0 for the Caribbean max energy, vs the reported 4723.29; `tests/test_uuv.py`, `configs/plot/uuv_summary.yaml`) and the regression's stored-values check.
 - **Joint queries use exact LP** (`prism.multi_method: lp`); value iteration has the same convergence problem there. LP can't handle step-bounded objectives (UUV's deadline). There, PRISM's value-iteration fallback wrongly says "not jointly feasible" even though the `stay` policy passes both scenarios. So the joint query returns *undecided*, and the loop falls back to the per-requirement branch. **[REVIEW]** This means the joint branch applies to gridworld but not UUV.
 - **Legacy with the obstacle visible:** one call per (goal, obstacle phase); a short note in the prompt says which phase the per-cell policy is for. The legacy DTMC is solved with Gauss-Seidel when phases are observed (power method otherwise). **[REVIEW]** Prompt wording of that note.

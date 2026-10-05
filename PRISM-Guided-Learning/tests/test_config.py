@@ -1,4 +1,4 @@
-"""Phase A: config, retry policies, joint best case, obstacle visibility."""
+"""Run config, retry policies, obstacle visibility and the joint best-case branch."""
 import json
 import shutil
 from dataclasses import MISSING, fields, is_dataclass

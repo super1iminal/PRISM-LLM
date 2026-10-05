@@ -1,9 +1,8 @@
 # CLAUDE.md
 
-LLM-based planning with probabilistic verification. An LLM writes a **symbolic, possibly partial policy** (ordered `condition -> action` rules, first match wins) for a user-specified MDP. PRISM checks it in the best and worst case over all completions, and the loop refines or extends the rules. See `README.md` for layout and `DECISIONS.md` for design choices, results and open TODOs. **Read `DECISIONS.md` and `docs/plan.md` before changing the approach.**
+LLM-based planning with probabilistic verification. An LLM writes a **symbolic, possibly partial policy** (ordered `condition -> action` rules, first match wins) for a user-specified MDP. PRISM checks it in the best and worst case over all completions, and the loop refines or extends the rules. See `README.md` for layout and `DECISIONS.md` for design choices, results and open TODOs. **Read `DECISIONS.md` and `docs/semantics.md` before changing the approach.**
 
 ## Docs (`docs/`)
-- `plan.md`: the work plan. Code changes (Phase A) all land before any run.
 - `semantics.md`: the formal semantics of rule sets, the induced MDP and the loop branch. **Update it whenever the inputs, the rule language or the REFINE/EXTEND branch change.**
 - `config.md`: every run setting, its default, where it lives and whether it is ablated. Keep it in sync with `configs/`.
 - `ablations.md` + `ablation_run.png` / `ablation_not_run.png`: the ablation conditions, run and not run. Regenerate the PNGs with `viz/plot_ablation_grid.py configs/plot/ablation_grid.yaml` after editing its tables. Results: `PRISM-Guided-Learning/out/results/ablations/summary/SUMMARY.md` (`viz/ablation_summary.py configs/plot/ablation_summary.yaml`).
@@ -11,7 +10,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 ## Where things live
 - `PRISM-Guided-Learning/src/core/`: the domain-agnostic approach (rules, PRISM runner, verifier, mass analysis, planner, prompt templates in `core/templates/`). **No domain-specific code here.** If a domain truly needs a core change, make it generic and log it in `DECISIONS.md`.
 - `PRISM-Guided-Learning/domains/<name>/`: one directory per case study. `domains/README.md` describes the contract; `domains/gridworld/` is the reference implementation. `domains/uuv/` is the second case study (the pipeline-inspection AUV from arXiv:2308.14663); its bare MDP must keep reproducing the paper's numbers (`tests/test_uuv.py`), and `domains/uuv/data/calibrate.py` shows what its thresholds are calibrated against.
-- `PRISM-Guided-Learning/src/legacy/`: the per-state gridworld planner of the predecessor paper, kept only as a baseline. Only change it to keep the comparison fair (e.g. the obstacle-visibility switch in `docs/plan.md` A1).
+- `PRISM-Guided-Learning/src/legacy/`: the per-state gridworld planner of the predecessor paper, kept only as a baseline. Only change it to keep the comparison fair (e.g. the obstacle-visibility switch, `domain.visible_extra`).
 - `PRISM-Guided-Learning/viz/`: plotting (`plot_comparison.py`: legacy vs one symbolic run; `plot_runs.py`: legacy vs up to two symbolic runs, e.g. ablations; styling in `theme.py`). Every figure has a config in `configs/plot/`; facts about a run (dataset, model, rounds) come from its `config.json` via `src/results_io.py`.
 - `PRISM-Guided-Learning/out/results/<run>/`: run outputs (parquet + per-sample JSON in `outputs/`).
 
