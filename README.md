@@ -60,7 +60,7 @@ python src/regression.py
 ```
 
 ```bash
-python src/compare.py --legacy out/results/legacy_grid20 --symbolic out/results/symbolic_grid20
+python src/compare.py configs/plot/compare_grid20.yaml
 ```
 
 ```bash

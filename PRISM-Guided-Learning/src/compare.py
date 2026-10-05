@@ -1,21 +1,22 @@
 """End-to-end comparison of the legacy (per-state) and symbolic approaches.
 
-Usage: python src/compare.py --legacy out/results/legacy_grid20 --symbolic out/results/symbolic_grid20 [--out DIR]
+Usage: python src/compare.py configs/plot/compare_grid20.yaml [--set key=value ...]
+Settings: the plot config (PlotConfig below); the dataset comes from the runs.
 
 Success means every requirement meets its threshold: for legacy, on the full per-state policy;
 for symbolic, in the worst case over all completions of the (possibly partial) rule list.
 With per-instance ceilings (src/ceilings.py, picked up automatically), the report also gives
 solved-of-solvable and the shortfall below what is actually achievable (min(threshold, optimum)).
 """
-import argparse
 import json
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from config import plot_config
 from core.domain import Requirement, load_domain
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall, requirements_by_sample,
                         run_facts)
@@ -24,19 +25,23 @@ from settings import RESULTS_PATH
 PREFIXES = ("legacy_", "symbolic_worst_", "symbolic_best_")   # probability columns that get metrics
 
 
+@dataclass
+class PlotConfig:
+    """configs/plot/compare_grid20.yaml documents each key."""
+    script: str
+    legacy: str
+    symbolic: str
+    ceilings: Optional[str]
+    out: str
+
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--legacy", required=True)
-    parser.add_argument("--symbolic", required=True)
-    parser.add_argument("--ceilings", default=None, help="Ceilings CSV (default: out/results/ceilings/gridworld_<data>.csv)")
-    parser.add_argument("--out", default=None)
-    args = parser.parse_args()
-    legacy_dir, symbolic_dir = Path(args.legacy), Path(args.symbolic)
+    cfg = plot_config(PlotConfig, "compare")
+    legacy_dir, symbolic_dir, out_dir = Path(cfg.legacy), Path(cfg.symbolic), Path(cfg.out)
     dataset = run_facts(symbolic_dir).dataset
     if run_facts(legacy_dir).dataset != dataset:
         raise SystemExit(f"the runs used different datasets ({run_facts(legacy_dir).dataset} vs {dataset})")
-    ceilings_path = Path(args.ceilings) if args.ceilings else RESULTS_PATH / "ceilings" / f"gridworld_{Path(dataset).stem}.csv"
-    out_dir = Path(args.out) if args.out else symbolic_dir.parent / "comparison"
+    ceilings_path = Path(cfg.ceilings) if cfg.ceilings else RESULTS_PATH / "ceilings" / f"gridworld_{Path(dataset).stem}.csv"
     os.makedirs(out_dir, exist_ok=True)
 
     ceilings = pd.read_csv(ceilings_path, index_col="sample_id") if ceilings_path.exists() else None

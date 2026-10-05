@@ -6,10 +6,7 @@ Both loaders return a DataFrame indexed by sample_id with columns:
     p_best_<requirement>       symbolic only: best case
 Symbolic runs are read from their parquet when present, otherwise reconstructed from the
 worker logs, which is how partial/aborted runs (which never saved a parquet) are plotted.
-
-Also the command line every plot script shares: `python viz/<script>.py configs/plot/<figure>.yaml`.
 """
-import argparse
 import json
 import re
 import sys
@@ -18,28 +15,14 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from config import load_file  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
                         requirements_by_sample, run_facts)
 
-
-def plot_config(schema: type, script: str, argv=None):
-    """Parse `CONFIG [--set key=value ...]` and load that plot config as `schema`. The file names the
-    script it is for (`script:`), so a figure's config cannot be fed to the wrong script."""
-    parser = argparse.ArgumentParser(description=f"Plot from a config in configs/plot/ (script: {script})")
-    parser.add_argument("config", type=Path, help="Plot config file, e.g. configs/plot/<figure>.yaml")
-    parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
-    args = parser.parse_args(argv)
-    named = (yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}).get("script")
-    if named != script:
-        raise SystemExit(f"{args.config} is a config for {named}.py, not {script}.py")
-    return load_file(args.config, schema, args.set)
 
 
 def short_model(model: str) -> str:

@@ -10,7 +10,9 @@ a default. `docs/config.md` documents every key.
 The other tools keep their settings in their own folders (configs/regression/, configs/ablation/,
 configs/plot/) with their own schemas, loaded the same way by `load_file`.
 """
+import argparse
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import yaml
@@ -172,6 +174,19 @@ def load_file(path, schema: type, overrides: Sequence[str] = ()):
     for text in overrides:
         data = _merge(data, _parse_override(text))
     return _build(schema, data)
+
+
+def plot_config(schema: type, script: str, argv=None):
+    """Parse `CONFIG [--set key=value ...]` and load that plot config as `schema`. The file names the
+    script it is for (`script:`), so a figure's config cannot be fed to the wrong script."""
+    parser = argparse.ArgumentParser(description=f"Plot from a config in configs/plot/ (script: {script})")
+    parser.add_argument("config", type=Path, help="Plot config file, e.g. configs/plot/<figure>.yaml")
+    parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
+    args = parser.parse_args(argv)
+    named = (yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}).get("script")
+    if named != script:
+        raise SystemExit(f"{args.config} is a config for {named}.py, not {script}.py")
+    return load_file(args.config, schema, args.set)
 
 
 def conditions() -> Dict[str, Dict[str, Any]]:

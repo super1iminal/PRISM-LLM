@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import add_summary_metrics, load_legacy, load_symbolic, plot_config, short_model  # noqa: E402
+from loaders import add_summary_metrics, load_legacy, load_symbolic, short_model  # noqa: E402
+from config import plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from plot_budget import legacy_curve, symbolic_curve  # noqa: E402
 from results_io import LEGACY_RESULTS as LEGACY_FILE, SYMBOLIC_RESULTS as SYMBOLIC_FILE, run_facts  # noqa: E402

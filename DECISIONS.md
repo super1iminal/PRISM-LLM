@@ -158,6 +158,11 @@ What was built is in `docs/plan.md` (Phase A table; ceilings and budget curves u
 - **L1:** legacy's retry uses the same `stall:k` rule as symbolic; a blind-retry round regenerates every (goal, phase) from the initial prompt, then keep-best applies as usual.
 - **Run order:** batch 1 (B2, R1–R5) finished first; then the symbolic part of batch 2 (S1, S4, S5, V1, V2), U1, then all legacy runs (B1, L1, L2). Legacy B1 was moved behind the symbolic batch-2 runs, following "all symbolic first, then legacy".
 
+## Config folders (Oct 5)
+- `configs/` has one folder per tool (Asher): `run/` (`default.yaml` + `conditions/<name>.yaml`), `ablation/`, `regression/` (each with a `default.yaml`) and `plot/` (one file per figure or report). The run config says what a run does; domains are defined in `domains/<name>/`, not in configs.
+- Each `default.yaml` is the only place its defaults live (no Python defaults; a missing key is an error). The old Python copy of the run defaults had drifted (`domain.visible_extra`).
+- Figures and reports read run facts (dataset, model, round budget) from each run's `config.json` instead of hard-coding them; metrics use each domain's `Requirement` thresholds instead of legacy's gridworld lookup. Committed figures regenerate byte-identical except the ablation summary's title (model name as recorded) and "Caribbean Sea" in its UUV table.
+
 ## Default retry policy changed (Oct 3)
 - **Default `planner.retry` is now `gain:0.05`** (restart when the last round cut total worst-case shortfall by less than 0.05, including no improvement). It won the retry sweep: 4.95 requirements met vs 4.45 for the old default `stall:2` (p = 0.055) and 4.72 for pure resampling (p = 0.31; better on 10 grids, worse on 6).
 - Every condition that ran with the old default now pins `retry: "stall:2"` in its condition file (`configs/run/conditions/<name>.yaml` since Oct 5), so its name still means what was run (checked against each run's `config.json`).

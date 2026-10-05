@@ -6,13 +6,13 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - `plan.md`: the current work plan. Code changes (Phase A) all land before any run.
 - `semantics.md`: the formal semantics of rule sets, the induced MDP and the loop branch. **Update it whenever the inputs, the rule language or the REFINE/EXTEND branch change.**
 - `config.md`: every run setting, its default, where it lives and whether it is ablated. Keep it in sync with `configs/`.
-- `ablations.md` + `ablation_run.png` / `ablation_not_run.png`: the ablation conditions, run and not run. Regenerate the PNGs with `viz/plot_ablation_grid.py` after editing its tables. Results: `PRISM-Guided-Learning/out/results/ablations/summary/SUMMARY.md` (`viz/ablation_summary.py`).
+- `ablations.md` + `ablation_run.png` / `ablation_not_run.png`: the ablation conditions, run and not run. Regenerate the PNGs with `viz/plot_ablation_grid.py configs/plot/ablation_grid.yaml` after editing its tables. Results: `PRISM-Guided-Learning/out/results/ablations/summary/SUMMARY.md` (`viz/ablation_summary.py configs/plot/ablation_summary.yaml`).
 
 ## Where things live
 - `PRISM-Guided-Learning/src/core/`: the domain-agnostic approach (rules, PRISM runner, verifier, mass analysis, planner, prompt templates in `core/templates/`). **No domain-specific code here.** If a domain truly needs a core change, make it generic and log it in `DECISIONS.md`.
 - `PRISM-Guided-Learning/domains/<name>/`: one directory per case study. `domains/README.md` describes the contract; `domains/gridworld/` is the reference implementation. `domains/uuv/` is the second case study (the pipeline-inspection AUV from arXiv:2308.14663); its bare MDP must keep reproducing the paper's numbers (`tests/test_uuv.py`), and `domains/uuv/data/calibrate.py` shows what its thresholds are calibrated against.
 - `PRISM-Guided-Learning/src/legacy/`: the old per-state gridworld planner, kept only as a baseline. Only change it to keep the comparison fair (e.g. the obstacle-visibility switch in `docs/plan.md` A1).
-- `PRISM-Guided-Learning/viz/`: plotting (`plot_comparison.py`: legacy vs one symbolic run; `plot_runs.py`: legacy vs up to two symbolic runs, e.g. ablations).
+- `PRISM-Guided-Learning/viz/`: plotting (`plot_comparison.py`: legacy vs one symbolic run; `plot_runs.py`: legacy vs up to two symbolic runs, e.g. ablations; styling in `theme.py`). Every figure has a config in `configs/plot/`; facts about a run (dataset, model, rounds) come from its `config.json` via `src/results_io.py`.
 - `PRISM-Guided-Learning/out/results/<run>/`: run outputs (parquet + per-sample JSON in `outputs/`).
 
 ## Environment (Windows)
@@ -28,7 +28,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - Regression (legacy policies reproduced in the new pipeline): `src/regression.py` (settings: `configs/regression/default.yaml`)
 - Conditions × seeds: `src/run_ablation.py B2 R1 [--seeds 1 2] [--dry-run] [--set key=value]` (seeds: `configs/ablation/default.yaml`; run settings: `configs/run/`, `docs/config.md`)
 - Ceilings: `src/ceilings.py [--condition U1]` (domain and dataset from the run config)
-- Comparison report: `src/compare.py`; figures: `viz/plot_comparison.py`, `viz/plot_runs.py`, `viz/plot_budget.py`
+- Comparison report: `src/compare.py configs/plot/compare_grid20.yaml`; figures: `viz/<script>.py configs/plot/<figure>.yaml` (e.g. `viz/plot_runs.py configs/plot/catchall_ablation.yaml`)
 
 ## Experiment etiquette
 - **Ask before starting any LLM run.** A 20-grid run takes 30–60 min of GPU time. Use `--limit 1` for smoke tests.

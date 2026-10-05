@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import (add_summary_metrics, load_legacy, load_symbolic, plot_config,  # noqa: E402
-                     requirement_names, short_model)
+from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names, short_model  # noqa: E402
+from config import plot_config  # noqa: E402
 from results_io import run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 

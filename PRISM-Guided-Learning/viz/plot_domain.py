@@ -22,11 +22,10 @@ from matplotlib.ticker import MaxNLocator  # noqa: E402
 import pandas as pd  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from config import load_config  # noqa: E402
+from config import load_config, plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
-from loaders import plot_config  # noqa: E402
 from results_io import SYMBOLIC_RESULTS, run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 

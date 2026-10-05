@@ -37,7 +37,7 @@ def test_style_without_ylabel_or_pad_keeps_matplotlib_defaults():
     plt.close(fig)
 
 
-@pytest.mark.parametrize("module", ["ablation_summary", "plot_budget", "plot_comparison", "plot_domain",
-                                    "plot_runs", "plot_uuv_summary"])
+@pytest.mark.parametrize("module", ["ablation_summary", "plot_ablation_grid", "plot_budget", "plot_comparison",
+                                    "plot_domain", "plot_runs", "plot_uuv_summary"])
 def test_figure_scripts_import(module):
     importlib.import_module(module)

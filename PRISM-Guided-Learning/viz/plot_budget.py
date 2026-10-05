@@ -18,7 +18,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import load_domain, plot_config  # noqa: E402
+from loaders import load_domain  # noqa: E402
+from config import plot_config  # noqa: E402
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
                         requirements_by_sample, run_facts)
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402

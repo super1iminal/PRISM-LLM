@@ -15,8 +15,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import yaml  # noqa: E402
 from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 
-from loaders import plot_config, short_model  # noqa: E402
-from config import load_config, load_file  # noqa: E402
+from loaders import short_model  # noqa: E402
+from config import load_config, load_file, plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.retry import RetryPolicy  # noqa: E402
 from run_ablation import DEFAULT_CONFIG as ABLATION_CONFIG, AblationConfig  # noqa: E402

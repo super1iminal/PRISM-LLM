@@ -20,11 +20,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from config import load_config  # noqa: E402
+from config import load_config, plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
-from loaders import plot_config, short_model  # noqa: E402
+from loaders import short_model  # noqa: E402
 from results_io import run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
