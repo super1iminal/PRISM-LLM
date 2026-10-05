@@ -89,6 +89,14 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
   - Size: 25 rules vs ≥1,620 (North Sea) and ≥8,850 (Caribbean) states that an optimal PRISM strategy must decide (reachable states with more than one distinct choice). For the step-bounded deadline, the optimal strategy also depends on the step count.
   - Transfer: the North Sea rules reused unchanged on the Caribbean keep safety (0.347) but not the deadline (0.824).
 
+## UUV optimization (branch `optimization`, archived on GitHub, not merged)
+- Sep 24, before the energy requirement and Phase A, so its numbers don't match the current setup. Target: match `stay` (passes both scenarios). **Not reached.** North Sea passed reliably; Caribbean failed in all 12 runs by ~0.002. Figure and runs (`out/results/opt/e*/r*`, 1–2 repeats each) live on the branch.
+- E1 `keep` action: unused by qwen. E4 more explanation (switching arithmetic, requirement drivers): worse (0/4), reverted. E7 altitude facts in action text: no change.
+- E2 found a **domain bug**: the description gave the visibility thresholds as decimals (`< 5.67`), qwen copied them into conditions, and the integer rule language rejected them. **Fixed on this branch** (E3): the description lists the integer levels of each band.
+- **[REVIEW] Not carried over, need a decision:**
+  - E5 (core): refine/extend feedback lists every previous attempt's worst case and flags an answer that verifies identically to an earlier one. Didn't help on UUV; never tested on gridworld.
+  - E6: hide `water_visib` from the policy (limits are enforced by clamping anyway). The most useful change: qwen stopped writing per-band rules (which act like always-high) and wrote "hold the altitude" rules over 4–11 situations, but still started low or med at `s = 11`, where the Caribbean needs high. It contradicts "policy sees what the paper's controller monitors".
+
 ## Forced states (core change, made for UUV)
 - Motivation: UUV states where the action has no effect (following, found, done: about 70%) showed up as uncovered and in feedback.
 - `PolicyVerifier.forced_states()` finds the states of the bare MDP where every choice has the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
