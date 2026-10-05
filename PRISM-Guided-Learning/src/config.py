@@ -1,19 +1,21 @@
-"""Run configuration: one schema, defaults in configs/default.yaml, named conditions in configs/conditions.yaml.
+"""Run configuration: one schema, defaults in configs/default.yaml, one file per named condition in
+configs/conditions/<name>.yaml.
 
     cfg = load_config("R2", overrides=["llm.seed=1", "run.limit=1"])
 
-A condition is a partial override of the default; CLI overrides (`section.key=value`, value parsed
+A condition file is a partial override of the default; CLI overrides (`section.key=value`, value parsed
 as YAML) apply last. Unknown sections or keys are errors, so a typo cannot silently fall back to
 a default. `docs/config.md` documents every key.
 """
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import yaml
 
 from settings import PROJECT_ROOT
 
 CONFIG_DIR = PROJECT_ROOT / "configs"
+CONDITIONS_DIR = CONFIG_DIR / "conditions"
 
 
 @dataclass
@@ -47,19 +49,18 @@ class PlannerConfig:
 @dataclass
 class FeedbackConfig:
     blame: str = "mass"                       # mass | regret (S5) | random (V1) | none (V2)
-    horizon: int = 100                        # steps for the occupancy in the mass analysis
-    horizon_by_domain: Dict[str, Any] = field(default_factory=dict)   # steps, or "domain" (Domain.horizon)
+    horizon: Union[int, str] = 100            # occupancy steps in the mass analysis, or "domain" (Domain.horizon)
     top_k: int = 10                           # hotspots / rules shown in feedback
     states_per_rule: int = 3
 
-    def horizon_for(self, domain, instance=None) -> int:
-        """Occupancy horizon for `domain` (a Domain, or its name). The value "domain" asks the domain
-        (e.g. UUV's mission deadline), falling back to `horizon`."""
-        name = getattr(domain, "name", domain)
-        value = self.horizon_by_domain.get(name, self.horizon)
-        if value == "domain":
-            value = (domain.horizon(instance) if hasattr(domain, "horizon") and instance is not None else None)
-            return int(value) if value else self.horizon
+    def horizon_for(self, domain, instance) -> int:
+        """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
+        (e.g. UUV's mission deadline)."""
+        if self.horizon != "domain":
+            return int(self.horizon)
+        value = domain.horizon(instance)
+        if value is None:
+            raise ValueError(f"domain {domain.name!r} has no horizon of its own; set feedback.horizon to a number")
         return int(value)
 
 
@@ -149,20 +150,24 @@ def _parse_override(text: str) -> Dict[str, Any]:
     return nested
 
 
-def conditions() -> Dict[str, Dict[str, Any]]:
-    with open(CONFIG_DIR / "conditions.yaml", encoding="utf-8") as f:
+def _read_yaml(path) -> Dict[str, Any]:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
+def conditions() -> Dict[str, Dict[str, Any]]:
+    """Every named condition (file stem -> its overrides of the default), sorted by name."""
+    return {path.stem: _read_yaml(path) for path in sorted(CONDITIONS_DIR.glob("*.yaml"))}
+
+
 def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) -> Config:
-    """Default config, then the named condition, then `section.key=value` overrides."""
-    with open(CONFIG_DIR / "default.yaml", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    """Default config, then the named condition's file, then `section.key=value` overrides."""
+    data = _read_yaml(CONFIG_DIR / "default.yaml")
     if condition:
-        known = conditions()
-        if condition not in known:
-            raise ValueError(f"unknown condition {condition!r}; known: {', '.join(known)}")
-        data = _merge(data, known[condition] or {})
+        path = CONDITIONS_DIR / f"{condition}.yaml"
+        if not path.is_file():
+            raise ValueError(f"unknown condition {condition!r}; known: {', '.join(conditions())}")
+        data = _merge(data, _read_yaml(path))
         data["condition"] = condition
     for text in overrides:
         data = _merge(data, _parse_override(text))
@@ -184,3 +189,6 @@ def validate(cfg: Config) -> None:
     for key, (value, allowed) in checks.items():
         if value not in allowed:
             raise ValueError(f"{key}={value!r} is not supported (allowed: {', '.join(sorted(allowed))})")
+    horizon = cfg.feedback.horizon
+    if horizon != "domain" and not (isinstance(horizon, int) and not isinstance(horizon, bool) and horizon >= 1):
+        raise ValueError(f"feedback.horizon={horizon!r} must be a number of steps (>= 1) or \"domain\"")

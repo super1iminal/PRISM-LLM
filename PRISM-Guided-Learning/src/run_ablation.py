@@ -1,4 +1,4 @@
-"""Run named conditions (configs/conditions.yaml) for several seeds.
+"""Run named conditions (configs/conditions/<name>.yaml) for several seeds.
 
 Usage: python src/run_ablation.py B2 R1 R2 --seeds 1 2 [--set section.key=value ...] [--dry-run]
 
@@ -23,7 +23,7 @@ def run_dir_for(condition: str, seed: int, root: Path = ABLATIONS_PATH) -> Path:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("conditions", nargs="+", help="Condition names from configs/conditions.yaml")
+    parser.add_argument("conditions", nargs="+", help="Condition names (files in configs/conditions/)")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2])
     parser.add_argument("--set", action="append", default=[], help="Extra override section.key=value")
     parser.add_argument("--dry-run", action="store_true", help="Only print what would run")

@@ -14,13 +14,16 @@ from legacy.prompting import get_prompt
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
 
 
-def test_uuv_horizon_is_the_deadline():
-    cfg = load_config()
+def test_horizon_is_steps_or_the_domains_own():
     uuv, grid = load_domain("uuv"), load_domain("gridworld")
     north_sea, caribbean = uuv.load_instances("uuv_paper.csv")
-    assert cfg.feedback.horizon_for(uuv, north_sea) == 30 and cfg.feedback.horizon_for(uuv, caribbean) == 70
-    assert cfg.feedback.horizon_for(grid, grid.load_instances("grid_20_balanced.csv")[0]) == 100
-    assert load_config(overrides=["feedback.horizon_by_domain={uuv: 12}"]).feedback.horizon_for(uuv, north_sea) == 12
+    grid_instance = grid.load_instances("grid_20_balanced.csv")[0]
+    default, u1 = load_config().feedback, load_config("U1").feedback
+    assert default.horizon_for(grid, grid_instance) == 100 == default.horizon_for(uuv, north_sea)
+    assert u1.horizon_for(uuv, north_sea) == 30 and u1.horizon_for(uuv, caribbean) == 70   # the mission deadline
+    assert load_config("U1", ["feedback.horizon=12"]).feedback.horizon_for(uuv, north_sea) == 12
+    with pytest.raises(ValueError, match="no horizon of its own"):
+        u1.horizon_for(grid, grid_instance)
 
 
 def test_legacy_examples_switch():

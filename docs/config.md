@@ -2,7 +2,7 @@
 
 Every setting that affects a run lives in `PRISM-Guided-Learning/configs/`:
 - `default.yaml`: every key below with its default.
-- `conditions.yaml`: named conditions (B1, B2, R1–R5, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default.
+- `conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. Conditions that ran before Oct 3 pin `planner.retry: "stall:2"`, the default then, so each name still means what was run.
 - Schema and validation: `src/config.py`. Unknown keys and unsupported values are errors.
 - Every run writes its resolved config to `<run>/config.json`.
 
@@ -33,8 +33,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5 --seeds 1 2
 | `planner.feedback` | `blame` | `blame`: REFINE/EXTEND prompts with blame; `table`: results table and previous rules only, no branch | S1 |
 | `planner.max_rules` / `max_condition_chars` | 64 / 200 | schema caps (stop repetition loops) | — |
 | `feedback.blame` | `mass` | blame signal: `mass`, `regret` (one-step regret, no occupancy), `random` (placebo), `none` (no blame section) | S5, V1, V2 |
-| `feedback.horizon` | 100 | mass-analysis occupancy horizon (steps) | — |
-| `feedback.horizon_by_domain` | `{uuv: domain}` | per-domain horizon in steps, or `domain` to ask the domain (UUV: the mission deadline, 30 / 70) | — |
+| `feedback.horizon` | 100 | mass-analysis occupancy horizon in steps, or `domain` for the domain's own (UUV: the mission deadline, 30 / 70; U1 sets it) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | done (catch-all ablation) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |

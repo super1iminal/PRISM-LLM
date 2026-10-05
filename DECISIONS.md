@@ -150,7 +150,7 @@ What was built is in `docs/plan.md` (Phase A table; ceilings and budget curves u
 - The mass horizon for UUV is still open.
 
 ## Batch 2 settings (deferred ablations, implemented Oct 3)
-- **UUV mass horizon = the mission deadline** (Asher, Oct 3): `feedback.horizon_by_domain: {uuv: domain}` asks `Domain.horizon(instance)`, so North Sea uses 30 and Caribbean 70.
+- **UUV mass horizon = the mission deadline** (Asher, Oct 3): `feedback.horizon: domain` asks `Domain.horizon(instance)`, so North Sea uses 30 and Caribbean 70. Since Oct 5 (Asher) the UUV run's own config file (`configs/conditions/U1.yaml`) sets it. Before, `default.yaml` held a per-domain map (`feedback.horizon_by_domain: {uuv: domain}`), but the run config should not name domains: each kind of run gets its own config file. Every condition resolves to the same settings as before.
 - **Story:** A (expressiveness) for now, maybe B later. Nothing story-specific is implemented until there's a domain.
 - **S1 (table feedback):** after a failure, every round shows the results table and the previous rules and asks for a complete new list. No blame, no REFINE/EXTEND framing, no appending. Retry policy unchanged.
 - **S5 (regret blame):** one-step regret of the rule's action on the best-case values, with Q from the bare MDP. Successors the policy never reaches take their optimum value, which slightly favours deviating (a heuristic). Extend ranks uncovered states by the local gap best − worst, without occupancy. The prompt wording describes the signal it shows. **[REVIEW]**
@@ -160,6 +160,6 @@ What was built is in `docs/plan.md` (Phase A table; ceilings and budget curves u
 
 ## Default retry policy changed (Oct 3)
 - **Default `planner.retry` is now `gain:0.05`** (restart when the last round cut total worst-case shortfall by less than 0.05, including no improvement). It won the retry sweep: 4.95 requirements met vs 4.45 for the old default `stall:2` (p = 0.055) and 4.72 for pure resampling (p = 0.31; better on 10 grids, worse on 6).
-- Every condition that ran with the old default now pins `retry: "stall:2"` in `configs/conditions.yaml`, so its name still means what was run (checked against each run's `config.json`).
+- Every condition that ran with the old default now pins `retry: "stall:2"` in its condition file (`configs/conditions/<name>.yaml` since Oct 5), so its name still means what was run (checked against each run's `config.json`).
 - **D7:** the new default with 7 rounds, 2 seeds, to see whether more rounds keep paying off (all budget curves were still rising at round 5).
 - Legacy runs were stopped on Oct 3 (lower priority than the symbolic results); `docs/ablation_not_run.png`.

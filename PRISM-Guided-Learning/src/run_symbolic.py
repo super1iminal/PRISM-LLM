@@ -36,7 +36,7 @@ def cli_overrides(args) -> List[str]:
 
 
 def add_cli(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--condition", default=None, help="Named condition from configs/conditions.yaml")
+    parser.add_argument("--condition", default=None, help="Named condition: configs/conditions/<name>.yaml")
     parser.add_argument("--set", action="append", help="Config override section.key=value (repeatable)")
     parser.add_argument("--domain")
     parser.add_argument("--data")
