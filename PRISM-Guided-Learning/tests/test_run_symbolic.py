@@ -22,6 +22,7 @@ def test_run_writes_results_and_releases_its_logs(tmp_path, tiny_grid, monkeypat
 
     df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index()
     assert len(df) == 1 and df.success.tolist() == [True] and df.llm_calls.tolist() == [1]
+    assert df.final_check.tolist() == ["interval iteration"]
     record = json.loads((run_dir / "outputs" / "sample_000.json").read_text(encoding="utf-8"))
     assert record["final_rules"] == [{"condition": "true", "action": "right"}]
     assert json.loads((run_dir / "config.json").read_text(encoding="utf-8"))["planner"]["max_rounds"] == 2

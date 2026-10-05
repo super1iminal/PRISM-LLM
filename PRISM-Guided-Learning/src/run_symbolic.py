@@ -138,6 +138,8 @@ def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> p
                 **{f"final_best_{k}": p for k, p in result.get("final_best", {}).items()},
                 **{f"final_worst_{k}": p for k, p in result.get("final_worst", {}).items()},
                 **{f"optimum_{k}": p for k, p in result.get("optimum", {}).items()},
+                "final_check": result.get("final_check"),
+                "final_check_time": result.get("final_check_time", 0.0),
                 "final_num_rules": len(result.get("final_rules", [])),
                 **totals,
                 "total_time": result.get("total_time", 0.0),

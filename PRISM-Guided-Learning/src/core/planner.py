@@ -11,7 +11,9 @@ Each round, for the best rule set so far (keep-best, as in the legacy loop):
 requirement's best case on its own (`per_requirement`, as in the `pre_phase_a` condition). The retry
 policy (`planner.retry`, see core/retry.py) decides when to drop feedback and start from the initial
 prompt instead. With `planner.feedback: table` (ablation S1) there is no branch: every round after a
-failure shows the results table and asks for a complete new rule list. Semantics: docs/semantics.md.
+failure shows the results table and asks for a complete new rule list. The loop's solver is fast but
+not sound; the final rule set is re-verified exactly (`prism.exact_check`), and the result reports
+those values. Semantics: docs/semantics.md.
 """
 import zlib
 from dataclasses import dataclass
@@ -204,11 +206,21 @@ class SymbolicPlanner:
             if done:
                 break
 
+        final, final_check, check_start = kept.v, "off", time()
+        if self.config.prism.exact_check:
+            exact, solver = ep.verifier.verify_exact(kept.policy)
+            final, final_check = (exact, solver) if exact else (kept.v, "failed")
+            ep.log(f"Exact check ({final_check}): " + ", ".join(
+                f"{r.name}: best={final.best[r.name]:.4f} worst={final.worst[r.name]:.4f}" for r in reqs))
         return {
-            "success": not failing(reqs, kept.v.worst),
-            "best_case_success": not failing(reqs, kept.v.best),
-            "final_best": dict(kept.v.best),
-            "final_worst": dict(kept.v.worst),
+            "success": not failing(reqs, final.worst),
+            "best_case_success": not failing(reqs, final.best),
+            "final_best": dict(final.best),
+            "final_worst": dict(final.worst),
+            "final_check": final_check,             # solver of the exact check, "off", or "failed" (loop values)
+            "final_check_time": time() - check_start,
+            "loop_best": dict(kept.v.best),         # the final policy's values from the loop's solver
+            "loop_worst": dict(kept.v.worst),
             "final_rules": kept.policy.to_dicts(),
             "optimum": optimum,
             "optimum_time": optimum_seconds,

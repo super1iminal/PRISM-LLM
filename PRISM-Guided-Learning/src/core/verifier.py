@@ -1,5 +1,6 @@
 """Verify a (partial) symbolic policy on a domain instance: best and worst case per requirement."""
-from dataclasses import dataclass, field
+import subprocess
+from dataclasses import dataclass, field, replace
 from time import time
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -39,6 +40,7 @@ class PolicyVerifier:
         self.spec: Spec = domain.spec(instance)
         self.model = domain.model(instance)
         self.runner = runner or PrismRunner(config.prism)
+        self.prism_config = config.prism
         self.max_enumeration = config.rules.max_enumeration
         self._optimum: Optional[Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]] = None
         self._forced: Optional[Set[StateKey]] = None
@@ -54,12 +56,14 @@ class PolicyVerifier:
                 props.append(f"filter(printall, {prop})" if vectors else prop)
         return props
 
-    def verify(self, policy: SymbolicPolicy, analysis: bool = True) -> Verification:
-        """Model check `policy`. With `analysis`, also export per-state values and transitions."""
+    def verify(self, policy: SymbolicPolicy, analysis: bool = True,
+               runner: Optional[PrismRunner] = None) -> Verification:
+        """Model check `policy` (with `runner`, default the verifier's own). With `analysis`, also export
+        per-state values and transitions."""
         start = time()
         model = self.compose(policy)
         props = self._properties([lambda r: r.best_op(), lambda r: r.worst_op()], vectors=analysis)
-        result = self.runner.run(model, props, export_transitions=analysis)
+        result = (runner or self.runner).run(model, props, export_transitions=analysis)
 
         v = Verification(best={}, worst={}, result=result)
         for i, req in enumerate(self.spec.requirements):
@@ -71,6 +75,28 @@ class PolicyVerifier:
         self._assign_rules(v, policy)
         v.seconds = time() - start
         return v
+
+    def verify_exact(self, policy: SymbolicPolicy) -> Tuple[Optional[Verification], Optional[str]]:
+        """Model check `policy` with solvers whose answers hold to `prism.exact_epsilon`: interval
+        iteration, or Gauss-Seidel at `prism.exact_fallback_epsilon` where interval iteration does not
+        converge. Returns the verification and the solver used, or (None, None) if neither finishes.
+
+        The loop's solver stops when an iteration changes little, which bounds nothing: on chains that
+        leak probability slowly it stops early, and values PRISM derives as 1 - another probability
+        (`G` properties, the worst case of LTL properties) then come out too high.
+        """
+        cfg = self.prism_config
+        exact = replace(cfg, method="", max_iters=cfg.exact_max_iters)
+        solvers = [("interval iteration", ["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon]),
+                   (f"Gauss-Seidel {cfg.exact_fallback_epsilon}",
+                    ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon])]
+        for name, args in solvers:
+            try:
+                runner = PrismRunner(exact, extra_args=args, prism_path=self.runner.prism_path)
+                return self.verify(policy, analysis=False, runner=runner), name
+            except (PrismError, subprocess.TimeoutExpired):
+                continue
+        return None, None
 
     def compose(self, policy: Optional[SymbolicPolicy]) -> str:
         """The domain's MDP restricted by `policy` (the bare MDP when `policy` is None)."""

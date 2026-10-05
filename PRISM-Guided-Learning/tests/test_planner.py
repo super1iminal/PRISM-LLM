@@ -114,13 +114,35 @@ def test_prism_failure_scores_the_round_without_losing_the_instance(tiny_grid, m
     """The first candidate PRISM fails on counts as the empty policy, or as the kept one when extending."""
     original, failed = PolicyVerifier.verify, []
 
-    def verify(self, policy, analysis=True):
+    def verify(self, policy, analysis=True, runner=None):
         if len(policy.rules) > kept_rules and not failed:
             failed.append(policy)
             raise PrismError("injected failure\ndetails")
-        return original(self, policy, analysis)
+        return original(self, policy, analysis, runner)
     monkeypatch.setattr(PolicyVerifier, "verify", verify)
     result, _ = solve(tiny_grid, answers, len(answers))
     last = result["iterations"][-1]
     assert failed and last["invalid_answers"] == ["verification failed: injected failure"]
     assert last["num_rules"] == kept_rules
+
+
+def test_the_final_policy_is_checked_exactly(tiny_grid):
+    result, _ = solve(tiny_grid, [PRE_G1, POST_G1], 2)
+    assert result["success"] and result["final_check"] == "interval iteration"
+    for case in ("best", "worst"):
+        loop, final = result[f"loop_{case}"], result[f"final_{case}"]
+        assert loop == result["iterations"][-1][case] and list(final) == REQUIREMENTS
+        assert all(abs(final[r] - loop[r]) < 1e-6 for r in REQUIREMENTS)
+
+
+def test_without_the_exact_check_the_run_reports_the_loops_values(tiny_grid):
+    result, _ = solve(tiny_grid, [LEFT], 1, "prism.exact_check=false")
+    assert result["final_check"] == "off"
+    assert result["final_worst"] == result["loop_worst"] == result["iterations"][0]["worst"]
+
+
+def test_the_exact_check_falls_back_to_gauss_seidel_then_to_the_loops_values(tiny_grid):
+    result, _ = solve(tiny_grid, [LEFT], 1, "prism.exact_epsilon=bad")   # PRISM rejects it: interval iteration fails
+    assert result["final_check"] == "Gauss-Seidel 1e-12"
+    result, _ = solve(tiny_grid, [LEFT], 1, "prism.exact_epsilon=bad", "prism.exact_fallback_epsilon=bad")
+    assert result["final_check"] == "failed" and result["final_worst"] == result["loop_worst"]

@@ -88,6 +88,10 @@ class PrismConfig:
     timeout_s: float
     multi_engine: str                         # PRISM's explicit engine has no multi-objective support
     multi_method: str                         # exact LP; value iteration fails to converge on periodic chains
+    exact_check: bool                         # re-verify the final policy with sound solvers and report those values
+    exact_epsilon: str                        # interval iteration's precision (passed to PRISM as written)
+    exact_fallback_epsilon: str               # Gauss-Seidel's, where interval iteration does not converge
+    exact_max_iters: int
 
 
 @dataclass
@@ -226,3 +230,5 @@ def validate(cfg: Config) -> None:
     horizon = cfg.feedback.horizon
     if horizon != "domain" and not (isinstance(horizon, int) and not isinstance(horizon, bool) and horizon >= 1):
         raise ValueError(f"feedback.horizon={horizon!r} must be a number of steps (>= 1) or \"domain\"")
+    if cfg.prism.exact_max_iters < 1:
+        raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
