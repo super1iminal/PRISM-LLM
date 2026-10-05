@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from time import time
 from typing import Dict, List, Optional, Set, Tuple
 
+from config import Config
 from core.domain import Domain, Instance, Spec
 from core.prism import PrismError, PrismResult, PrismRunner, StateKey
 from core.rules import SymbolicPolicy, Value
@@ -30,14 +31,15 @@ class PolicyVerifier:
     gives best == worst.
     """
 
-    def __init__(self, domain: Domain, instance: Instance, runner: Optional[PrismRunner] = None,
-                 max_enumeration: int = 200_000):
+    def __init__(self, domain: Domain, instance: Instance, config: Config, runner: Optional[PrismRunner] = None):
+        """PRISM and rule settings come from `config`; `runner` replaces the one it would build
+        (e.g. to share it, or to use other solver arguments)."""
         self.domain = domain
         self.instance = instance
         self.spec: Spec = domain.spec(instance)
         self.model = domain.model(instance)
-        self.runner = runner or PrismRunner()
-        self.max_enumeration = max_enumeration
+        self.runner = runner or PrismRunner(config.prism)
+        self.max_enumeration = config.rules.max_enumeration
         self._optimum: Optional[Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]] = None
         self._forced: Optional[Set[StateKey]] = None
 

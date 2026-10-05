@@ -35,16 +35,19 @@ def test_legacy_examples_switch():
 @pytest.mark.parametrize("method", ["mass", "regret", "random"])
 def test_blame_methods(method):
     domain = load_domain("gridworld", ["obs_idx"])
-    verifier = PolicyVerifier(domain, domain.load_instances("grid_20_balanced.csv")[0])
+    verifier = PolicyVerifier(domain, domain.load_instances("grid_20_balanced.csv")[0], load_config())
     spec = verifier.spec
     policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions), [("!g1", "left"), ("g1 & !g2", "left")])
     v = verifier.verify(policy)
     failing = [r for r in spec.requirements if not r.satisfied(v.best[r.name])]
     assert failing
-    blame = MassAnalyzer(verifier, method=method, seed=1).rule_blame(v, failing)
+    fb = load_config().feedback
+    analyzer = MassAnalyzer(verifier, fb.horizon, fb.top_k, fb.states_per_rule, method, seed=1)
+    blame = analyzer.rule_blame(v, failing)
     assert blame and np.isclose(sum(b.mass for b in blame), 1.0)
     empty = verifier.verify(verifier.empty_policy())   # everything uncovered: best and worst differ
-    hotspots = MassAnalyzer(verifier, method=method, seed=1).uncovered_hotspots(empty, spec.requirements)
+    analyzer = MassAnalyzer(verifier, fb.horizon, fb.top_k, fb.states_per_rule, method, seed=1)
+    hotspots = analyzer.uncovered_hotspots(empty, spec.requirements)
     assert hotspots and 0 < sum(h.mass for h in hotspots) <= 1 + 1e-9   # top k of the shares
     if method == "regret":   # "left" before goal 1 is bad, so rule 1 carries regret
         assert 0 in [b.rule for b in blame]

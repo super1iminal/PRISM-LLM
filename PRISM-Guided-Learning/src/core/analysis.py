@@ -103,8 +103,9 @@ def _normalize(items, total: float) -> None:
 
 
 class MassAnalyzer:
-    def __init__(self, verifier: PolicyVerifier, horizon: int = 100, top_k: int = 10, states_per_rule: int = 3,
-                 method: str = "mass", seed: int = 0):
+    def __init__(self, verifier: PolicyVerifier, horizon: int, top_k: int, states_per_rule: int, method: str,
+                 seed: int):
+        """Settings from the run config's `feedback` section; `horizon` from `FeedbackConfig.horizon_for`."""
         self.verifier = verifier
         self.horizon = horizon
         self.top_k = top_k

@@ -1,10 +1,13 @@
 """Phase A: config, retry policies, joint best case, obstacle visibility."""
 import json
 import shutil
+from dataclasses import MISSING, fields, is_dataclass
 
 import pytest
+import yaml
 
-from config import conditions, load_config
+import config
+from config import Config, conditions, load_config
 from core.domain import load_domain
 from core.retry import RetryPolicy
 from core.rules import SymbolicPolicy
@@ -34,6 +37,26 @@ def test_bad_config_is_rejected(override):
         load_config(overrides=[override])
 
 
+def test_defaults_live_only_in_default_yaml():
+    """No setting has a second default in Python (only `condition`, which is a record, not a setting)."""
+    def defaults(cls, path=""):
+        for f in fields(cls):
+            if is_dataclass(f.type):
+                yield from defaults(f.type, f"{path}{f.name}.")
+            elif f.default is not MISSING or f.default_factory is not MISSING:
+                yield path + f.name
+    assert list(defaults(Config)) == ["condition"]
+
+
+def test_key_missing_from_default_yaml_is_an_error(tmp_path, monkeypatch):
+    data = yaml.safe_load((config.RUN_CONFIG_DIR / "default.yaml").read_text(encoding="utf-8"))
+    del data["planner"]["max_fixups"]
+    (tmp_path / "default.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setattr(config, "RUN_CONFIG_DIR", tmp_path)
+    with pytest.raises(ValueError, match=r"missing config key\(s\) \['planner.max_fixups'\]"):
+        load_config()
+
+
 @pytest.mark.parametrize("spec,next_round,stall,gain,expected", [
     ("stall:2", 3, 1, 0.0, False), ("stall:2", 3, 2, 0.0, True),
     ("never", 5, 9, 0.0, False), ("always", 2, 0, 1.0, True),
@@ -59,7 +82,7 @@ def test_obstacle_phase_visibility():
 @needs_prism
 def test_joint_best_case_query():
     domain = load_domain("gridworld", ["obs_idx"])
-    verifier = PolicyVerifier(domain, domain.load_instances("grid_20_balanced.csv")[0])
+    verifier = PolicyVerifier(domain, domain.load_instances("grid_20_balanced.csv")[0], load_config())
     spec = verifier.spec
     assert verifier.jointly_feasible() is True                      # bare MDP: solvable
     complete = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),

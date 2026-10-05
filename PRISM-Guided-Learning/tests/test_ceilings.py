@@ -4,6 +4,7 @@ import shutil
 import pytest
 
 from ceilings import ceilings
+from config import load_config
 from core.domain import load_domain
 from core.verifier import PolicyVerifier
 
@@ -15,7 +16,7 @@ def test_gridworld_ceilings(tiny_grid):
     df = ceilings("gridworld", str(tiny_grid))
     row = df.loc[0]
     domain = load_domain("gridworld")
-    optimum = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0]).optimum()[0]
+    optimum = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0], load_config()).optimum()[0]
     for name, value in optimum.items():
         assert row[f"optimum_{name}"] == pytest.approx(value, abs=1e-9)
         assert row[f"achievable_{name}"] == (value >= row[f"threshold_{name}"])

@@ -65,7 +65,7 @@ def run(cfg: Config, run_dir: str) -> str:
     instances = domain.load_instances(cfg.domain.dataset)[:cfg.run.limit]
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
-    llm = OllamaLLM(config=cfg.llm)
+    llm = OllamaLLM(cfg.llm)
     planner = SymbolicPlanner(domain, llm, cfg)
 
     def solve(instance: Instance) -> Dict[str, Any]:

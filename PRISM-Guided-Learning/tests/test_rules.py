@@ -59,10 +59,11 @@ def test_first_match_and_coverage():
     assert policy.first_match({"x": 2, "y": 0, "g1": False}) is None
 
 
-def test_prism_module_guards_match_first_match_semantics():
+@pytest.mark.parametrize("max_enumeration", [0, 1000])   # guards without / with overlap pruning
+def test_prism_module_guards_match_first_match_semantics(max_enumeration):
     """Each action's guard must hold exactly where first-match picks it (or nothing matches)."""
     policy = SymbolicPolicy.from_raw(VARS, ACTIONS, [("x = 0 & !g1", "up"), ("y > 1", "down"), ("x < 3", "up")])
-    module = policy.to_prism_module()
+    module = policy.to_prism_module(max_enumeration)
     guards = {}
     for line in module.splitlines():
         if line.strip().startswith("["):

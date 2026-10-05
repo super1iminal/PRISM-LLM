@@ -30,7 +30,7 @@ from core.rules import RuleError, SymbolicPolicy
 from core.verifier import PolicyVerifier, Verification
 
 
-def rule_schema(actions: List[str], max_rules: int = 64, max_condition_chars: int = 200) -> type[BaseModel]:
+def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
     """JSON schema for the LLM's answer. The length bounds are enforced by constrained decoding,
     which stops degenerate repetition loops from running into the token limit."""
     rule = create_model(
@@ -108,12 +108,11 @@ def _record(attempt: int, mode: str, prompt: str, candidate: SymbolicPolicy, v: 
 
 
 class SymbolicPlanner:
-    def __init__(self, domain: Domain, llm: OllamaLLM, config: Optional[Config] = None,
-                 runner: Optional[PrismRunner] = None):
+    def __init__(self, domain: Domain, llm: OllamaLLM, config: Config, runner: Optional[PrismRunner] = None):
         self.domain = domain
         self.llm = llm
-        self.config = config or Config()
-        self.runner = runner or PrismRunner(config=self.config.prism)
+        self.config = config
+        self.runner = runner or PrismRunner(config.prism)
         self.retry = RetryPolicy.parse(self.config.planner.retry)
 
     # ---------------------------------------------------------------- prompting
@@ -218,7 +217,7 @@ class SymbolicPlanner:
 
     def _episode(self, instance: Instance, log: Callable[[str], None]) -> _Episode:
         cfg = self.config
-        verifier = PolicyVerifier(self.domain, instance, self.runner, cfg.rules.max_enumeration)
+        verifier = PolicyVerifier(self.domain, instance, cfg, self.runner)
         analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
                                 cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                 seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))

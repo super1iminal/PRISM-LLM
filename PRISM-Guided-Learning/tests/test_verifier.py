@@ -3,6 +3,7 @@ import shutil
 
 import pytest
 
+from config import load_config
 from core.domain import Requirement, failing, load_domain
 from core.prism import PrismResult
 from core.verifier import PolicyVerifier
@@ -19,7 +20,7 @@ def test_positions_map_variable_names_to_tuple_slots():
 @needs_prism
 def test_policy_valuation_follows_spec_order_whatever_prism_order(tiny_grid):
     domain = load_domain("gridworld", ["obs_idx"])
-    verifier = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0])
+    verifier = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0], load_config())
     names = [v.name for v in verifier.spec.variables]
     assert names == ["x", "y", "g1", "g2", "obs_idx"]
     prism_order = ["obs_idx", "g2", "y", "g1", "x", "hidden"]

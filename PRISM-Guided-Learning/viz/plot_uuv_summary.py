@@ -19,6 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
@@ -34,7 +35,7 @@ def evaluate(verifier, rules):
     spec = verifier.spec
     policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions), rules)
     v = verifier.verify(policy, analysis=False)
-    costs = verifier.runner.run(verifier.model + "\n" + policy.to_prism_module() + "\n", COSTS).initial_values
+    costs = verifier.runner.run(verifier.compose(policy), COSTS).initial_values
     return v, costs
 
 
@@ -54,7 +55,7 @@ def main():
     grid = fig.add_gridspec(1, 3, width_ratios=[1.2, 1.2, 1])
     rows, sizes = [], []
     for i, inst in enumerate(instances):
-        verifier = PolicyVerifier(domain, inst)
+        verifier = PolicyVerifier(domain, inst, load_config())
         reqs = verifier.spec.requirements
         bare = verifier.runner.run(verifier.model, [f"{op}=? [ {r.formula} ]" for r in reqs for op in ("Pmin", "Pmax")]
                                    + COSTS).initial_values

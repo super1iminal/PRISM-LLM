@@ -44,8 +44,7 @@ class OllamaLLM:
     back their own raw outputs and token counts via `usage()` / `reset_usage()`.
     """
 
-    def __init__(self, schema: Optional[Type[T]] = None, config: Optional[LLMConfig] = None):
-        config = config or LLMConfig()
+    def __init__(self, config: LLMConfig, schema: Optional[Type[T]] = None):
         self.schema = schema
         self.model = config.model
         self.think = config.think

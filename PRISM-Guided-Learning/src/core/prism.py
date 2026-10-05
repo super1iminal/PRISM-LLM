@@ -125,9 +125,8 @@ def _error_excerpt(stdout: str) -> str:
 class PrismRunner:
     """Thin wrapper around the PRISM command line (explicit engine)."""
 
-    def __init__(self, prism_path: Optional[str] = None, extra_args: Sequence[str] = (),
-                 config: Optional[PrismConfig] = None):
-        config = config or PrismConfig()
+    def __init__(self, config: PrismConfig, extra_args: Sequence[str] = (), prism_path: Optional[str] = None):
+        """`extra_args` are appended to every model-checking call (not to `check`)."""
         self.prism_path = prism_path or get_prism_path()
         self.extra_args = list(extra_args)
         self.java_max_mem = config.java_max_mem

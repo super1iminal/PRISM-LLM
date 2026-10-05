@@ -5,6 +5,7 @@ import shutil
 
 import pytest
 
+from config import load_config
 from core.domain import load_domain
 from core.prism import PrismRunner
 from core.rules import SymbolicPolicy
@@ -17,6 +18,7 @@ from legacy.requirements import SimplifiedVerifier
 pytestmark = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
 
 LOG = logging.getLogger("test")
+CFG = load_config()
 
 
 @pytest.mark.parametrize("sample,observe", [(0, False), (7, False), (16, False), (0, True), (16, True)])
@@ -32,11 +34,11 @@ def test_random_policy_matches_legacy(sample, observe):
               for g1 in (False, True) for g2 in (False, True) for g3 in (False, True) for ph in phases]
     legacy_policy = [(s, rng.randrange(4)) for s in states]
 
-    runner = PrismRunner(extra_args=["-epsilon", "1e-10"])
+    runner = PrismRunner(CFG.prism, extra_args=["-epsilon", "1e-10"])
     model = PrismModelGenerator(gw, LOG).generate_prism_model(dict(legacy_policy))
     legacy = runner.run(model, [r.property for r in SimplifiedVerifier(None, gw, LOG).requirements]).initial_values
 
-    verifier = PolicyVerifier(domain, instance, runner)
+    verifier = PolicyVerifier(domain, instance, CFG, runner)
     policy = SymbolicPolicy.from_raw(verifier.spec.variables, list(verifier.spec.actions),
                                      legacy_policy_to_rules(legacy_policy, 3))
     v = verifier.verify(policy, analysis=False)
@@ -50,7 +52,7 @@ def test_partial_policy_bounds():
     """Dropping rules can only widen [worst, best] around the full policy's value."""
     domain = load_domain("gridworld")
     instance = domain.load_instances("grid_20_balanced.csv")[0]
-    verifier = PolicyVerifier(domain, instance)
+    verifier = PolicyVerifier(domain, instance, CFG)
     spec = verifier.spec
     full = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),
                                    [("!g1 & y < 1", "right"), ("!g1", "up"), ("g1 & !g2", "down"),

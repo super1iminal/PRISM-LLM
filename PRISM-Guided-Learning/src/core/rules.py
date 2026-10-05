@@ -339,7 +339,7 @@ class SymbolicPolicy:
                 overlaps[i].update(matching[:a])
         return [sorted(o) for o in overlaps]
 
-    def to_prism_module(self, max_enumeration: int = 200_000) -> str:
+    def to_prism_module(self, max_enumeration: int) -> str:
         """A variable-free PRISM module that synchronizes on every action label.
 
         Action `a` is enabled iff the first matching rule chooses `a`, or no rule matches.

@@ -28,14 +28,14 @@ def ceilings(domain_name: str, dataset: str) -> pd.DataFrame:
     """One row per instance: each requirement's optimum and whether all thresholds are jointly achievable."""
     cfg = load_config()
     domain = load_domain(domain_name)
-    runner = PrismRunner(config=cfg.prism)
+    runner = PrismRunner(cfg.prism)
     rows = []
     for idx, instance in enumerate(domain.load_instances(dataset)):
-        verifier = PolicyVerifier(domain, instance, runner)
+        verifier = PolicyVerifier(domain, instance, cfg, runner)
         reqs = verifier.spec.requirements
         optimum = runner.run(verifier.model, [f"{r.best_op()}=? [ {r.formula} ]" for r in reqs]).initial_values
         joint = verifier.jointly_feasible()   # None: PRISM could not decide (e.g. step-bounded objectives)
-        row ={"sample_id": idx, "instance": instance.id, "jointly_feasible": joint}
+        row = {"sample_id": idx, "instance": instance.id, "jointly_feasible": joint}
         for r, value in zip(reqs, optimum):
             row[f"optimum_{r.name}"] = value
             row[f"threshold_{r.name}"] = r.threshold

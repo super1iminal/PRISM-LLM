@@ -58,7 +58,7 @@ def run(cfg: Config, run_dir: str) -> str:
     dataloader.data = dataloader.data[:cfg.run.limit]
     logger = setup_logger("eval", run_dir=run_dir, include_timestamp=False)
 
-    model = OllamaLLM(ActionPolicy, cfg.llm)
+    model = OllamaLLM(cfg.llm, ActionPolicy)
     planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=cfg.llm.model.replace(":", "_"),
                                            max_attempts=cfg.legacy.max_rounds,
                                            observe_obstacle="obs_idx" in cfg.domain.visible_extra,

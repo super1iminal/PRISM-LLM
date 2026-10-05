@@ -7,7 +7,7 @@ A condition file is a partial override of the default; CLI overrides (`section.k
 as YAML) apply last. Unknown sections or keys are errors, so a typo cannot silently fall back to
 a default. `docs/config.md` documents every key.
 """
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import yaml
@@ -19,40 +19,43 @@ RUN_CONFIG_DIR = CONFIG_DIR / "run"
 CONDITIONS_DIR = RUN_CONFIG_DIR / "conditions"
 
 
+# Each section mirrors a block of configs/run/default.yaml, which holds every default. No key has a
+# default here, so a key missing from the YAML is an error rather than a silent second default.
+
 @dataclass
 class DomainConfig:
-    name: str = "gridworld"
-    dataset: str = "grid_20_balanced.csv"
-    visible_extra: List[str] = field(default_factory=list)   # extra state variables rules may read, if in the model
+    name: str
+    dataset: str
+    visible_extra: List[str]                  # extra state variables rules may read, if in the model
 
 
 @dataclass
 class LLMConfig:
-    model: str = "qwen3:14b-q4_K_M"
-    think: bool = False
-    num_ctx: int = 16384
-    num_predict: int = 8192
-    seed: Optional[int] = None
-    temperature: Optional[float] = None       # None = the model's default
+    model: str
+    think: bool
+    num_ctx: int
+    num_predict: int
+    seed: Optional[int]
+    temperature: Optional[float]              # None = the model's default
 
 
 @dataclass
 class PlannerConfig:
-    max_rounds: int = 5
-    max_fixups: int = 2                       # extra calls per round when the answer has invalid rules
-    retry: str = "gain:0.05"                  # stall:k | never | every:k | gain:eps | always
-    branch: str = "joint"                     # joint | per_requirement
-    feedback: str = "blame"                   # blame (REFINE/EXTEND with blame) | table (S1: results table only)
-    max_rules: int = 64
-    max_condition_chars: int = 200
+    max_rounds: int
+    max_fixups: int                           # extra calls per round when the answer has invalid rules
+    retry: str                                # stall:k | never | every:k | gain:eps | always
+    branch: str                               # joint | per_requirement
+    feedback: str                             # blame (REFINE/EXTEND with blame) | table (S1: results table only)
+    max_rules: int
+    max_condition_chars: int
 
 
 @dataclass
 class FeedbackConfig:
-    blame: str = "mass"                       # mass | regret (S5) | random (V1) | none (V2)
-    horizon: Union[int, str] = 100            # occupancy steps in the mass analysis, or "domain" (Domain.horizon)
-    top_k: int = 10                           # hotspots / rules shown in feedback
-    states_per_rule: int = 3
+    blame: str                                # mass | regret (S5) | random (V1) | none (V2)
+    horizon: Union[int, str]                  # occupancy steps in the mass analysis, or "domain" (Domain.horizon)
+    top_k: int                                # hotspots / rules shown in feedback
+    states_per_rule: int
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
@@ -67,52 +70,52 @@ class FeedbackConfig:
 
 @dataclass
 class PromptConfig:
-    catch_all_instruction: bool = True
-    examples: bool = True
+    catch_all_instruction: bool
+    examples: bool
 
 
 @dataclass
 class PrismConfig:
-    method: str = "gaussseidel"               # iterative method; plain value iteration oscillates on periodic chains
-    fallback_methods: List[str] = field(default_factory=lambda: ["modpoliter"])   # tried when `method` does not converge
-    java_max_mem: str = "4g"
-    max_iters: int = 1_000_000
-    timeout_s: float = 900
-    multi_engine: str = "sparse"              # PRISM's explicit engine has no multi-objective support
-    multi_method: str = "lp"                  # exact LP; value iteration fails to converge on periodic chains
+    method: str                               # iterative method; plain value iteration oscillates on periodic chains
+    fallback_methods: List[str]               # tried in order when `method` does not converge
+    java_max_mem: str
+    max_iters: int
+    timeout_s: float
+    multi_engine: str                         # PRISM's explicit engine has no multi-objective support
+    multi_method: str                         # exact LP; value iteration fails to converge on periodic chains
 
 
 @dataclass
 class RulesConfig:
-    max_enumeration: int = 200_000
+    max_enumeration: int
 
 
 @dataclass
 class LegacyConfig:
-    max_rounds: int = 5
-    retry: str = "never"                      # never | stall:k (L1: blind retry with the initial prompt)
-    examples: bool = True                     # the two worked examples in the initial prompt (L2: off)
+    max_rounds: int
+    retry: str                                # never | stall:k (L1: blind retry with the initial prompt)
+    examples: bool                            # the two worked examples in the initial prompt (L2: off)
 
 
 @dataclass
 class RunConfig:
-    workers: int = 2
-    limit: Optional[int] = None
+    workers: int
+    limit: Optional[int]
 
 
 @dataclass
 class Config:
-    approach: str = "symbolic"                # symbolic | legacy
-    domain: DomainConfig = field(default_factory=DomainConfig)
-    llm: LLMConfig = field(default_factory=LLMConfig)
-    planner: PlannerConfig = field(default_factory=PlannerConfig)
-    feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
-    prompt: PromptConfig = field(default_factory=PromptConfig)
-    prism: PrismConfig = field(default_factory=PrismConfig)
-    rules: RulesConfig = field(default_factory=RulesConfig)
-    legacy: LegacyConfig = field(default_factory=LegacyConfig)
-    run: RunConfig = field(default_factory=RunConfig)
-    condition: Optional[str] = None           # name of the applied condition, for the record
+    approach: str                             # symbolic | legacy
+    domain: DomainConfig
+    llm: LLMConfig
+    planner: PlannerConfig
+    feedback: FeedbackConfig
+    prompt: PromptConfig
+    prism: PrismConfig
+    rules: RulesConfig
+    legacy: LegacyConfig
+    run: RunConfig
+    condition: Optional[str] = None           # name of the applied condition (set by load_config, not a setting)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -126,16 +129,20 @@ def _merge(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build(cls, data: Dict[str, Any], path: str = ""):
-    """Instantiate dataclass `cls` from `data`, rejecting unknown keys."""
+    """Instantiate dataclass `cls` from `data`, rejecting unknown and missing keys."""
     known = {f.name: f for f in fields(cls)}
     unknown = set(data) - set(known)
     if unknown:
         raise ValueError(f"unknown config key(s) {sorted(path + k for k in unknown)}")
+    missing = [n for n, f in known.items() if n not in data and f.default is MISSING and f.default_factory is MISSING]
+    if missing:
+        raise ValueError(f"missing config key(s) {[path + k for k in missing]}")
     kwargs = {}
     for name, value in data.items():
-        default = known[name].default_factory() if callable(known[name].default_factory) else None
-        if is_dataclass(default) and isinstance(value, dict):
-            kwargs[name] = _build(type(default), value, f"{path}{name}.")
+        if is_dataclass(known[name].type):
+            if not isinstance(value, dict):
+                raise ValueError(f"config section {path}{name} must be a mapping, got {value!r}")
+            kwargs[name] = _build(known[name].type, value, f"{path}{name}.")
         else:
             kwargs[name] = value
     return cls(**kwargs)

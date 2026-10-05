@@ -19,11 +19,12 @@ import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 
-from config import PrismConfig
+from config import load_config
 from core.domain import load_domain
 from core.prism import PrismError, PrismRunner
 from core.rules import SymbolicPolicy
@@ -65,7 +66,8 @@ def main():
     run_dir = Path(args.legacy_run)
     domain = load_domain("gridworld")
     instances = domain.load_instances(args.data)
-    default_runner = PrismRunner(config=PrismConfig(method=""))   # PRISM defaults, as in the legacy run
+    cfg = load_config()
+    default_runner = PrismRunner(replace(cfg.prism, method=""))   # PRISM defaults, as in the legacy run
 
     jobs = []
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
@@ -85,7 +87,7 @@ def main():
     def _check(job):
         sample_id, iteration, instance, legacy_policy, stored = job
         rules = legacy_policy_to_rules(legacy_policy, len(instance.data["goals"]))
-        verifier = PolicyVerifier(domain, instance, default_runner)
+        verifier = PolicyVerifier(domain, instance, cfg, default_runner)
         policy = SymbolicPolicy.from_raw(verifier.spec.variables, list(verifier.spec.actions), rules)
         v = verifier.verify(policy, analysis=False)
         names = [r.name for r in verifier.spec.requirements]
@@ -94,9 +96,9 @@ def main():
         solvers = [("interval iteration", ["-intervaliter", "-epsilon", args.epsilon]),
                    ("Gauss-Seidel 1e-12", ["-gaussseidel", "-epsilon", "1e-12"])]
         for solver, solver_args in solvers:
-            runner = PrismRunner(extra_args=solver_args, config=PrismConfig(method=""))
+            runner = PrismRunner(replace(cfg.prism, method=""), extra_args=solver_args)
             try:
-                v_tight = PolicyVerifier(domain, instance, runner).verify(policy, analysis=False)
+                v_tight = PolicyVerifier(domain, instance, cfg, runner).verify(policy, analysis=False)
                 exact_legacy = dict(zip(names, legacy_dtmc_values(instance, legacy_policy, runner)))
                 break
             except PrismError:
