@@ -22,7 +22,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 - Run scripts from `PRISM-Guided-Learning/`, e.g. `../.venv/Scripts/python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/<name>`.
 
 ## Commands
-- Tests (fast, ~40 s, need PRISM): `../.venv/Scripts/python -m pytest -q tests`
+- Tests (~2 min, need PRISM, no LLM): `../.venv/Scripts/python -m pytest -q tests`. The planner and run tests use a scripted stand-in for Ollama and a 4x4 grid (`tests/fakes.py`).
 - New approach: `src/run_symbolic.py --domain <name> --data <dataset> [--limit N] --workers 2 --out out/results/<name>`
 - Legacy baseline (gridworld only): `src/run_legacy.py`
 - Regression (legacy policies reproduced in the new pipeline): `src/regression.py --legacy-run out/results/legacy_grid20`
