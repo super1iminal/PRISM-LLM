@@ -78,35 +78,40 @@ def main():
     for i, inst in enumerate(instances):
         verifier = PolicyVerifier(domain, inst, load_config())
         spec = verifier.spec
-        props = [f"{op}=? [ {r.formula} ]" for r in spec.requirements for op in ("Pmin", "Pmax")]
+        # Band = min..max any controller achieves: Pmin/Pmax, or R{..}min/max for a reward requirement
+        props = [f"{op}=? [ {r.formula} ]" for r in spec.requirements
+                 for op in ((r.worst_op(), r.best_op()) if r.maximize else (r.best_op(), r.worst_op()))]
         bounds = verifier.runner.run(verifier.model, props).initial_values
         rows = []   # (label, worst, best, color, success)
         for k, (label, res) in enumerate(runs):
             worst, best, ok = res[i]
-            rows.append((label, worst, best, COLORS[k], ok))
+            missing = [r.name for r in spec.requirements if r.name not in worst]   # runs older than a requirement
+            rows.append((f"{label} (no {', '.join(missing)})" if missing else label, worst, best, COLORS[k], ok))
         for name, rules in references.items():
             v = verifier.verify(SymbolicPolicy.from_raw(spec.variables, list(spec.actions), rules), analysis=False)
             ok = all(r.satisfied(v.worst[r.name]) for r in spec.requirements)
             rows.append((name, v.worst, v.best, INK_2, ok))
         for label, worst, best, _, ok in rows:
             table.append({"instance": inst.data.get("name", inst.id), "policy": label, "success": ok,
-                          **{r.name: round(worst[r.name], 4) for r in spec.requirements}})
+                          **{r.name: round(worst[r.name], 4) if r.name in worst else "—" for r in spec.requirements}})
 
         for j, req in enumerate(spec.requirements):
             ax = axes[i][j]
             lo, hi = bounds[2 * j], bounds[2 * j + 1]
             ax.axvspan(lo, hi, color=BAND, zorder=0)
             ax.axvline(req.threshold, color=INK, linestyle=(0, (4, 3)), linewidth=1.2, zorder=1)
-            for y, (label, worst, best, color, ok) in enumerate(rows):
-                ax.plot([worst[req.name]], [y], "o", markersize=8, color=color, markeredgecolor=SURFACE,
+            present = [(y, worst, best) for y, (_, worst, best, *_) in enumerate(rows) if req.name in worst]
+            for y, worst, best in present:
+                ax.plot([worst[req.name]], [y], "o", markersize=8, color=rows[y][3], markeredgecolor=SURFACE,
                         markeredgewidth=2, zorder=3)
                 if abs(best[req.name] - worst[req.name]) > 1e-9:
                     ax.plot([best[req.name]] * 2, [y - 0.25, y + 0.25], color=INK, linewidth=1.5, zorder=2)
             ax.set_yticks(range(len(rows)))
-            ax.set_yticklabels([f"{label} {'✓' if ok else '✗'}" if j == 0 else label for label, *_, ok in rows])
-            ax.invert_yaxis()
-            # Zoom on the policies and the threshold; the band continues past the panel edges
-            shown = [req.threshold, hi] + [w[req.name] for _, w, *_ in rows] + [b[req.name] for _, _, b, *_ in rows]
+            ax.set_yticklabels([f"{label} {'✓' if ok else '✗'}" for label, *_, ok in rows] if j == 0 else [])
+            ax.set_ylim(len(rows) - 0.5, -0.5)   # first row on top
+            # Zoom on the policies, the threshold and the band's good end; the band continues past the edges
+            shown = ([req.threshold, hi if req.maximize else lo] + [w[req.name] for _, w, _ in present]
+                     + [b[req.name] for _, _, b in present])
             left, right = max(lo, min(shown)), max(shown)
             pad = (right - left) * 0.15 or 0.01
             ax.set_xlim(left - pad, right + pad)
@@ -120,7 +125,7 @@ def main():
                 ax.spines[side].set_visible(False)
             ax.spines["bottom"].set_color(GRID)
             ax.tick_params(colors=INK_2, labelsize=9, length=0)
-    fig.suptitle((cfg.title or f"{cfg.domain}: worst-case probability of each final policy") +
+    fig.suptitle((cfg.title or f"{cfg.domain}: worst-case value of each final policy") +
                  "\ngrey band = what any controller achieves, dashed = threshold, black tick = best case, "
                  "✓ = all requirements met", x=0.01, ha="left", fontsize=10, color=INK)
     fig.tight_layout()
