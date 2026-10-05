@@ -18,7 +18,7 @@ LLM-based planning with probabilistic verification. An LLM writes a **symbolic, 
 ## Environment (Windows)
 - Python venv at the repo root: `.venv/Scripts/python`. Install with `.venv/Scripts/python -m pip install -r requirements.txt`.
 - PRISM 4.10.1 is on PATH as `prism` (`prism.bat`), or set `PRISM_PATH`.
-- Ollama serves `qwen3:14b-q4_K_M` locally on a 16 GB RTX 4080 Super. It needs ~11.7 GB of VRAM, so **a running game or other GPU app will crash runs with CUDA out-of-memory**. Check `nvidia-smi` first. Run settings are in `configs/default.yaml` (thinking off, 16k context); `src/settings.py` only holds paths.
+- Ollama serves `qwen3:14b-q4_K_M` locally on a 16 GB RTX 4080 Super. It needs ~11.7 GB of VRAM, so **a running game or other GPU app will crash runs with CUDA out-of-memory**. Check `nvidia-smi` first. Run settings are in `configs/run/default.yaml` (thinking off, 16k context); `src/settings.py` only holds paths.
 - Run scripts from `PRISM-Guided-Learning/`, e.g. `../.venv/Scripts/python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/<name>`.
 
 ## Commands

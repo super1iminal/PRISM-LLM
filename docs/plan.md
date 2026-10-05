@@ -7,7 +7,7 @@ Target: **SEAMS 2027** (research track Oct 23; check the official site), with IC
 ## Phase A: code (no GPU). Done on branch `phase-a` (A3 on `energy`)
 | # | Change | Status |
 |---|---|---|
-| A0 | **One config:** `configs/default.yaml` + one file per condition in `configs/conditions/`, `src/config.py`, resolved `config.json` per run. | Done. See `docs/config.md`. |
+| A0 | **One config:** `configs/run/default.yaml` + one file per condition in `configs/run/conditions/`, `src/config.py`, resolved `config.json` per run. | Done. See `docs/config.md`. |
 | A1 | **Obstacle phase visible** (`domain.visible_extra: [obs_idx]`) to rules **and** legacy. | Done. Legacy makes one call per (goal, phase). Equivalence tests cover phase-observing policies. `pre_phase_a` reproduces the hidden setting. |
 | A2 | **Joint best case** in the REFINE/EXTEND branch (PRISM `multi(…)`, sparse engine, exact LP). | Done. Each round logs `kept_joint_feasible` and `branch_disagreement`. If LP can't decide (step-bounded requirements, i.e. UUV), the result is *undecided* and the loop uses the per-requirement branch; PRISM's value-iteration variant wrongly said "no" on UUV. |
 | A3 | **Reward requirements** (UUV energy). | Done on branch `energy` (worktree `../PRISM-LLM-energy`), to merge into `phase-a` after the gridworld batch. UUV thresholds ≤ 26.5 / ≤ 62.5, calibrated like the others. |

@@ -14,7 +14,7 @@ needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on
 
 
 def test_every_condition_loads_and_round_trips():
-    names = conditions()   # one file per condition in configs/conditions/
+    names = conditions()   # one file per condition in configs/run/conditions/
     assert {"B1", "B2", "R1", "R2", "R3", "R4", "R5", "S1", "S4", "S5", "V1", "V2", "L1", "L2", "D7", "U1",
             "pre_phase_a"} <= set(names)
     for name in names:

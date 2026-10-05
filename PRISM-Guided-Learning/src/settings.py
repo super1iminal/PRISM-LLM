@@ -18,4 +18,4 @@ def get_prism_path() -> str:
     return path
 
 
-# Run settings (LLM, planner, PRISM limits, ...) live in configs/default.yaml; see src/config.py.
+# Run settings (LLM, planner, PRISM limits, ...) live in configs/run/default.yaml; see src/config.py.

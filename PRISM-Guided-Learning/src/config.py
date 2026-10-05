@@ -1,5 +1,5 @@
-"""Run configuration: one schema, defaults in configs/default.yaml, one file per named condition in
-configs/conditions/<name>.yaml.
+"""Run configuration: one schema, defaults in configs/run/default.yaml, one file per named condition in
+configs/run/conditions/<name>.yaml.
 
     cfg = load_config("R2", overrides=["llm.seed=1", "run.limit=1"])
 
@@ -15,7 +15,8 @@ import yaml
 from settings import PROJECT_ROOT
 
 CONFIG_DIR = PROJECT_ROOT / "configs"
-CONDITIONS_DIR = CONFIG_DIR / "conditions"
+RUN_CONFIG_DIR = CONFIG_DIR / "run"
+CONDITIONS_DIR = RUN_CONFIG_DIR / "conditions"
 
 
 @dataclass
@@ -162,7 +163,7 @@ def conditions() -> Dict[str, Dict[str, Any]]:
 
 def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) -> Config:
     """Default config, then the named condition's file, then `section.key=value` overrides."""
-    data = _read_yaml(CONFIG_DIR / "default.yaml")
+    data = _read_yaml(RUN_CONFIG_DIR / "default.yaml")
     if condition:
         path = CONDITIONS_DIR / f"{condition}.yaml"
         if not path.is_file():
