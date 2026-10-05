@@ -17,8 +17,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import get_threshold_for_key, load_domain  # noqa: E402
-from results_io import LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, run_facts  # noqa: E402
+from loaders import load_domain  # noqa: E402
+from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
+                        requirements_by_sample, run_facts)
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -30,15 +31,16 @@ def run_dirs(path: Path):
     return [(p.name, p) for p in seeds] or [("", path)]
 
 
-def _metrics(probs: dict) -> dict:
-    met = sum(p >= get_threshold_for_key(k) for k, p in probs.items())
+def _metrics(probs: dict, requirements) -> dict:
+    met, shortfall = met_and_shortfall(requirements, probs)
     return {"met": met, "success": met == len(probs),
-            "shortfall": sum(max(0.0, get_threshold_for_key(k) - p) for k, p in probs.items())}
+            "shortfall": shortfall}
 
 
 def symbolic_curve(run_dir: Path, max_k: int) -> list:
     df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index().sort_values(["sample_id", "iteration"])
     reqs = [c[len("prob_worst_"):] for c in df.columns if c.startswith("prob_worst_")]
+    by_sample = requirements_by_sample(run_dir)
     rows = []
     for sid, g in df.groupby("sample_id"):
         kept, key = None, None
@@ -48,24 +50,25 @@ def symbolic_curve(run_dir: Path, max_k: int) -> list:
                 r = r.iloc[0]
                 worst = {q: r[f"prob_worst_{q}"] for q in reqs}
                 best = {q: r[f"prob_best_{q}"] for q in reqs}
-                score = (sum(not _metrics({q: worst[q]})["success"] for q in reqs),
-                         sum(not _metrics({q: best[q]})["success"] for q in reqs),
-                         _metrics(worst)["shortfall"], _metrics(best)["shortfall"])
+                score = (sum(not _metrics({q: worst[q]}, by_sample[sid])["success"] for q in reqs),
+                         sum(not _metrics({q: best[q]}, by_sample[sid])["success"] for q in reqs),
+                         _metrics(worst, by_sample[sid])["shortfall"], _metrics(best, by_sample[sid])["shortfall"])
                 if key is None or score < key:
                     kept, key = worst, score
-            rows.append({"sample_id": sid, "k": k, **_metrics(kept)})
+            rows.append({"sample_id": sid, "k": k, **_metrics(kept, by_sample[sid])})
     return rows
 
 
 def legacy_curve(run_dir: Path, max_k: int) -> list:
     instances = load_domain("gridworld").load_instances(run_facts(run_dir).dataset)
+    by_sample = requirements_by_sample(run_dir)
     rows = []
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
         rec = json.loads(path.read_text(encoding="utf-8"))
         probs = rec.get("iteration_prism_probs", [])
         for k in range(1, max_k + 1):
             prefix = {"iteration_prism_probs": probs[:k]}   # no final_prism_probs: replay keep-best on k rounds
-            rows.append({"sample_id": rec["sample_id"], "k": k, **_metrics(legacy_kept(prefix, instances[rec["sample_id"]]))})
+            rows.append({"sample_id": rec["sample_id"], "k": k, **_metrics(legacy_kept(prefix, instances[rec["sample_id"]]), by_sample[rec["sample_id"]])})
     return rows
 
 

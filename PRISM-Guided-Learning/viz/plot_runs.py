@@ -19,8 +19,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names  # noqa: E402
-from legacy.requirements import get_threshold_for_key  # noqa: E402
-from results_io import SYMBOLIC_RESULTS  # noqa: E402
+from results_io import SYMBOLIC_RESULTS, met_and_shortfall, requirements_by_sample  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 # Reference categorical palette, slots 1-3 (validated all-pairs in light and dark)
@@ -55,12 +54,13 @@ def symbolic_rounds(run_dir: Path) -> pd.DataFrame:
     """Per-round rows with mode, coverage and whether the round improved the kept policy."""
     df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index().sort_values(["sample_id", "iteration"])
     reqs = [c[len("prob_worst_"):] for c in df.columns if c.startswith("prob_worst_")]
-    thr = {r: get_threshold_for_key(r) for r in reqs}
-    df["key"] = list(zip(
-        sum((df[f"prob_worst_{r}"] < thr[r]).astype(int) for r in reqs),
-        sum((df[f"prob_best_{r}"] < thr[r]).astype(int) for r in reqs),
-        sum((thr[r] - df[f"prob_worst_{r}"]).clip(lower=0) for r in reqs),
-        sum((thr[r] - df[f"prob_best_{r}"]).clip(lower=0) for r in reqs)))
+    by_sample = requirements_by_sample(run_dir)
+
+    def key(row):   # the planner's keep-best score: failures, then shortfalls (worst, best)
+        worst = met_and_shortfall(by_sample[row.sample_id], {r: row[f"prob_worst_{r}"] for r in reqs})
+        best = met_and_shortfall(by_sample[row.sample_id], {r: row[f"prob_best_{r}"] for r in reqs})
+        return len(reqs) - worst[0], len(reqs) - best[0], worst[1], best[1]
+    df["key"] = [key(row) for _, row in df.iterrows()]
     improved = []
     for _, g in df.groupby("sample_id"):
         best = None
@@ -89,8 +89,8 @@ def main():
         label, _, path = spec.partition("=")
         runs.append((label, Path(path), load_symbolic(Path(path), legacy["size"].to_dict())))
     common = sorted(set(legacy.index).intersection(*[set(r[2].index) for r in runs]))
-    legacy = add_summary_metrics(legacy.loc[common])
-    runs = [(label, path, add_summary_metrics(df.loc[common])) for label, path, df in runs]
+    legacy = add_summary_metrics(legacy.loc[common], args.legacy)
+    runs = [(label, path, add_summary_metrics(df.loc[common], path)) for label, path, df in runs]
     rounds = {label: symbolic_rounds(path) for label, path, _ in runs}
     for r in rounds.values():
         r["size"] = r.sample_id.map(legacy["size"])

@@ -70,7 +70,8 @@ def main():
         common = [s for s in common if s in wanted]
     if not common:
         raise SystemExit("no samples present in both runs")
-    legacy, symbolic = add_summary_metrics(legacy.loc[common]), add_summary_metrics(symbolic.loc[common])
+    legacy = add_summary_metrics(legacy.loc[common], args.legacy)
+    symbolic = add_summary_metrics(symbolic.loc[common], args.symbolic)
     reqs = requirement_names(legacy)
 
     has_tokens = symbolic.output_tokens.notna().all() and legacy.output_tokens.notna().all()

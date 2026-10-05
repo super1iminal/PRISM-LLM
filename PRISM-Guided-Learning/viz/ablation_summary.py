@@ -82,7 +82,7 @@ def mode_stats(run_dir: Path) -> dict:
 
 def load_run(condition: str, run_dir: Path, solvable: set) -> pd.DataFrame:
     legacy = (run_dir / LEGACY_FILE).exists()
-    df = add_summary_metrics(load_legacy(run_dir) if legacy else load_symbolic(run_dir))
+    df = add_summary_metrics(load_legacy(run_dir) if legacy else load_symbolic(run_dir), run_dir)
     raw = pd.read_parquet(run_dir / (LEGACY_FILE if legacy else SYMBOLIC_FILE)).reset_index()
     per = raw.groupby("sample_id")
     df["input_tokens"] = per.llm_prompt_tokens.first()

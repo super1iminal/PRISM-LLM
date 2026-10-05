@@ -10,13 +10,14 @@ solved-of-solvable and the shortfall below what is actually achievable (min(thre
 import argparse
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 
 from core.domain import load_domain
-from legacy.requirements import get_threshold_for_key
-from results_io import LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, run_facts
+from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall, requirements_by_sample,
+                        run_facts)
 from settings import RESULTS_PATH
 
 
@@ -50,6 +51,7 @@ def main():
 
     requirements = sorted({c[len("final_worst_"):] for c in sym.columns if c.startswith("final_worst_")})
     samples = sorted(set(leg.index) | set(sym.index))
+    by_sample = requirements_by_sample(symbolic_dir)
 
     rows = []
     for sid in samples:
@@ -80,14 +82,16 @@ def main():
             row.update({f"optimum_{k}": s.get(f"optimum_{k}") for k in requirements})
         if ceilings is not None and sid in ceilings.index:
             row["solvable"] = bool(ceilings.loc[sid, "jointly_feasible"] == True)  # noqa: E712
+        reqs = by_sample[sid]
         for prefix in ("legacy_", "symbolic_worst_", "symbolic_best_"):
             probs = {k: row[prefix + k] for k in requirements if row.get(prefix + k) is not None}
             if probs:
-                row[prefix + "met"] = sum(p >= get_threshold_for_key(k) for k, p in probs.items())
-                row[prefix + "shortfall"] = sum(max(0.0, get_threshold_for_key(k) - p) for k, p in probs.items())
+                row[prefix + "met"], row[prefix + "shortfall"] = met_and_shortfall(reqs, probs)
                 if ceilings is not None and sid in ceilings.index:
-                    target = {k: min(get_threshold_for_key(k), ceilings.loc[sid, f"optimum_{k}"]) for k in probs}
-                    row[prefix + "achievable_shortfall"] = sum(max(0.0, target[k] - p) for k, p in probs.items())
+                    # Achievable: the threshold, or the optimum where the threshold is out of reach
+                    achievable = [replace(r, threshold=(min if r.maximize else max)(
+                        r.threshold, ceilings.loc[sid, f"optimum_{r.name}"])) for r in reqs if r.name in probs]
+                    row[prefix + "achievable_shortfall"] = met_and_shortfall(achievable, probs)[1]
         rows.append(row)
     per_sample = pd.DataFrame(rows).set_index("sample_id")
     per_sample.to_csv(out_dir / "per_sample.csv")
