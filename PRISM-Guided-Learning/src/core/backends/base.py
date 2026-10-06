@@ -20,7 +20,10 @@ class LLMBackend(ABC):
     @abstractmethod
     def execute_batch(self, tasks: List[LLMTask]) -> List[LLMResult]:
         """Run every task and return one result per task, in the same order. A task that fails gets
-        `LLMResult.error` set; one failure must not raise or lose the rest of the batch."""
+        `LLMResult.error` set; one failure must not raise or lose the rest of the batch.
+
+        The threads scheduler (and legacy's `LLMClient`) call one shared backend from several threads at
+        once, so this must be safe for concurrent calls; lockstep calls it one batch at a time."""
 
     def execute(self, task: LLMTask) -> LLMResult:
         """Run a single task."""

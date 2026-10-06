@@ -32,7 +32,9 @@ def test_every_condition_loads_and_round_trips():
                                       "planner.branch=sideways", "approach=rl", "feedback.horizon=0",
                                       "feedback.horizon=deadline", "feedback.horizon=true",
                                       "feedback.horizon_by_domain={uuv: domain}", "llm.backend=vllm",
-                                      "run.scheduler=batched", "prism.exact_max_iters=0"])
+                                      "run.scheduler=batched", "prism.exact_max_iters=0",
+                                      "llm.openrouter.providers=deepinfra", "llm.openrouter.quantizations=[8]",
+                                      "llm.openrouter.api_key=sk-or-x"])
 def test_bad_config_is_rejected(override):
     with pytest.raises(ValueError):
         load_config(overrides=[override])

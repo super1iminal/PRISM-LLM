@@ -35,6 +35,16 @@ class DomainConfig:
 
 
 @dataclass
+class OpenRouterConfig:
+    base_url: str
+    api_key_env: str                          # environment variable holding the API key (never the key itself)
+    providers: List[str]                      # provider slugs to use, in order, with no fallback; [] = OpenRouter routes
+    quantizations: List[str]                  # accepted weight precisions, e.g. [fp8, bf16]; [] = any
+    timeout_s: float                          # per request
+    max_retries: int                          # the client's retries on rate limits and server errors
+
+
+@dataclass
 class LLMConfig:
     model: str
     think: bool
@@ -43,6 +53,7 @@ class LLMConfig:
     seed: Optional[int]
     temperature: Optional[float]              # None = the model's default
     backend: str                              # serving engine (core/backends)
+    openrouter: OpenRouterConfig              # used by llm.backend=openrouter only
 
 
 @dataclass
@@ -235,6 +246,10 @@ def validate(cfg: Config) -> None:
     horizon = cfg.feedback.horizon
     if horizon != "domain" and not (isinstance(horizon, int) and not isinstance(horizon, bool) and horizon >= 1):
         raise ValueError(f"feedback.horizon={horizon!r} must be a number of steps (>= 1) or \"domain\"")
+    for key in ("providers", "quantizations"):
+        value = getattr(cfg.llm.openrouter, key)
+        if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+            raise ValueError(f"llm.openrouter.{key}={value!r} must be a list of names, e.g. [deepinfra]")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":

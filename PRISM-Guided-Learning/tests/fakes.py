@@ -1,7 +1,12 @@
-"""Test doubles: scripted LLM backends, and a tiny gridworld that PRISM solves in about a second."""
+"""Test doubles: scripted LLM backends, a stand-in for the OpenAI client, and a tiny gridworld that PRISM
+solves in about a second."""
 import json
+import random
+import threading
+import time
 from pathlib import Path
-from typing import Callable, List, Optional
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, List, Optional
 
 from core.backends import BackendInfo, LLMBackend
 from core.tasks import LLMResult, LLMTask
@@ -56,3 +61,26 @@ class ScriptedBackend(FakeBackend):
     def __init__(self, answers=()):
         queue = list(answers)
         super().__init__(lambda task: queue.pop(0) if queue else answer())
+
+
+class FakeChatClient:
+    """Stands in for `openai.OpenAI`: records every `chat.completions.create` call and answers with
+    `reply(kwargs)` (raising makes the request fail), after a random delay of up to `delay` seconds."""
+
+    def __init__(self, reply: Callable[[Dict[str, Any]], str] = lambda kwargs: "ok", delay: float = 0.0):
+        self.reply, self.delay = reply, delay
+        self.requests: List[Dict[str, Any]] = []
+        self.closed = False
+        self._lock = threading.Lock()
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        with self._lock:
+            self.requests.append(kwargs)
+        time.sleep(random.uniform(0, self.delay))
+        text = self.reply(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+                               usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7))
+
+    def close(self) -> None:
+        self.closed = True

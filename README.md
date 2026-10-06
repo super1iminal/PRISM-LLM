@@ -13,6 +13,7 @@ Its per-state approach is the `legacy` baseline.
 - Python 3.11+ and `pip install -r requirements.txt`
 - [PRISM](https://www.prismmodelchecker.org/download.php), with `prism` on `PATH` or `PRISM_PATH` set
 - [Ollama](https://ollama.com) with the model in `configs/run/default.yaml` (default `qwen3:14b-q4_K_M`, thinking off)
+  - or, without a GPU, [OpenRouter](https://openrouter.ai) with an API key: `--set llm.backend=openrouter --set llm.model=qwen/qwen3-14b` (see docs/openrouter.md)
 
 ## Layout
 
@@ -37,7 +38,8 @@ PRISM-Guided-Learning/
   tests/
   out/results/       run outputs
 DECISIONS.md         design decisions to review
-docs/                semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids)
+docs/                semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids),
+                     openrouter.md (running on OpenRouter, and its smoke test), testing_openrouter.md (how it was tested)
 ```
 
 ## Running (from `PRISM-Guided-Learning/`)

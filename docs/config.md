@@ -28,12 +28,17 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `approach` | `symbolic` | `symbolic` or `legacy` planner | B1 |
 | `domain.name` / `domain.dataset` | `gridworld` / `grid_20_balanced.csv` | case study and instances | — |
 | `domain.visible_extra` | `[obs_idx]` | extra state variables rules (and legacy) may read, if the model has them | `pre_phase_a` (hidden) |
-| `llm.model` | `qwen3:14b-q4_K_M` | Ollama model | not run (a stronger model) |
+| `llm.model` | `qwen3:14b-q4_K_M` | model name for the backend: an Ollama tag, or an OpenRouter id such as `qwen/qwen3-14b` | not run (a stronger model) |
 | `llm.think` | `false` | qwen3 thinking mode | — |
 | `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits | — |
 | `llm.seed` | `null` | run seed (set per seed by `run_ablation.py`); each call uses a seed derived from it and the call's index within the instance | seeds 1, 2 |
 | `llm.temperature` | `null` | `null` = the model's default | — |
-| `llm.backend` | `ollama` | serving engine (`src/core/backends/`): runs the symbolic planner's tasks, and legacy's calls through `core/llm.py` | — |
+| `llm.backend` | `ollama` | serving engine, `ollama` or `openrouter` (`src/core/backends/`): runs the symbolic planner's tasks, and legacy's calls through `core/llm.py` | — |
+| `llm.openrouter.base_url` | `https://openrouter.ai/api/v1` | OpenRouter's OpenAI-compatible API (`openrouter` backend only, like every `llm.openrouter` key; see `docs/openrouter.md`) | — |
+| `llm.openrouter.api_key_env` | `OPENROUTER_API_KEY` | environment variable holding the API key; the key itself never goes in a config or `config.json` | — |
+| `llm.openrouter.providers` | `[]` | provider slugs to use, in order, with no fallback to others (e.g. `[deepinfra]`); `[]` lets OpenRouter pick per request, so runs may mix providers | — |
+| `llm.openrouter.quantizations` | `[]` | accepted weight precisions (e.g. `[fp8, bf16]`); `[]` = any | — |
+| `llm.openrouter.timeout_s` / `max_retries` | 600 / 2 | per-request timeout; the client's retries on rate limits and server errors | — |
 | `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free), D7 (7 rounds) |
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
 | `planner.retry` | `gain:0.05` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. The default is R4's, which won the retry sweep; B2 and its comparisons use `stall:2` | R1–R5 |

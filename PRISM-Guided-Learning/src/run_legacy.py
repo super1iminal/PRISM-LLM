@@ -60,7 +60,7 @@ def run(cfg: Config, run_dir: str) -> str:
     logger = setup_logger("eval", run_dir=run_dir, include_timestamp=False)
 
     model = LLMClient(cfg.llm, ActionPolicy)
-    planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=cfg.llm.model.replace(":", "_"),
+    planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=cfg.llm.model.replace(":", "_").replace("/", "_"),
                                            max_attempts=cfg.legacy.max_rounds,
                                            observe_obstacle="obs_idx" in cfg.domain.visible_extra,
                                            retry=cfg.legacy.retry, examples=cfg.legacy.examples)

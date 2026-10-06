@@ -2,7 +2,7 @@
 from config import LLMConfig
 from core.backends.base import BackendInfo, LLMBackend
 
-BACKENDS = ("ollama",)
+BACKENDS = ("ollama", "openrouter")
 
 
 def make_backend(config: LLMConfig) -> LLMBackend:
@@ -10,6 +10,9 @@ def make_backend(config: LLMConfig) -> LLMBackend:
     if config.backend == "ollama":
         from core.backends.ollama import OllamaBackend
         return OllamaBackend()
+    if config.backend == "openrouter":
+        from core.backends.openrouter import OpenRouterBackend
+        return OpenRouterBackend(config)
     raise ValueError(f"llm.backend={config.backend!r} is not supported (allowed: {', '.join(BACKENDS)})")
 
 
