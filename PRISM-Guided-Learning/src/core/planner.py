@@ -14,22 +14,31 @@ prompt instead. With `planner.feedback: table` (ablation S1) there is no branch:
 failure shows the results table and asks for a complete new rule list. The loop's solver is fast but
 not sound; the final rule set is re-verified exactly (`prism.exact_check`), and the result reports
 those values. Semantics: docs/semantics.md.
+
+The planner never calls a model: `solve_steps` is the loop as a generator that yields each LLM task
+(core/tasks.py) and is sent its result. `solve` answers the tasks one at a time with a backend
+(core/backends); core/scheduler.py can instead batch the tasks of many instances.
 """
 import zlib
 from dataclasses import dataclass
 from time import time
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from config import Config
 from core.analysis import MassAnalyzer
+from core.backends import LLMBackend
 from core.domain import Domain, Instance, Requirement, failing
-from core.llm import LLMCall, OllamaLLM
 from core.prism import PrismError, PrismRunner
 from core.retry import RetryPolicy
 from core.rules import RuleError, SymbolicPolicy
+from core.scheduler import drive
+from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.verifier import PolicyVerifier, Verification
+
+T = TypeVar("T")
+Steps = Generator[LLMTask, LLMResult, T]   # yields LLM tasks, is sent their results, returns T
 
 
 def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
@@ -61,10 +70,20 @@ class _Episode:
     schema: type
     context: Dict[str, Any]           # prompt context shared by every template
     log: Callable[[str], None]
+    tasks: TaskFactory                # numbers the instance's LLM calls (their seeds)
 
     @property
     def requirements(self) -> List[Requirement]:
         return self.verifier.spec.requirements
+
+
+@dataclass
+class _Answer:
+    """What one round's questions to the LLM produced."""
+    policy: Optional[SymbolicPolicy]  # None if every answer was invalid
+    errors: List[str]                 # invalid answers (and a failed verification), in order
+    results: List[LLMResult]          # one per LLM call, re-asks included
+    seconds: float = 0.0              # wall time, including queueing and, in lockstep, waiting for the batch
 
 
 @dataclass
@@ -78,8 +97,7 @@ class _Kept:
 
 
 def _record(attempt: int, mode: str, prompt: str, candidate: SymbolicPolicy, v: Verification,
-            reqs: List[Requirement], *, improved: bool, gain: float, errors: List[str],
-            calls: List[LLMCall]) -> Dict[str, Any]:
+            reqs: List[Requirement], *, improved: bool, gain: float, answer: _Answer) -> Dict[str, Any]:
     """One entry of the result's `iterations`. The feedback step fills in the joint fields."""
     return {
         "iteration": attempt,
@@ -94,25 +112,28 @@ def _record(attempt: int, mode: str, prompt: str, candidate: SymbolicPolicy, v: 
         "worst_case_success": not failing(reqs, v.worst),
         "improved": improved,
         "shortfall_gain": gain,
-        "invalid_answers": errors,
-        "llm_calls": len(calls),
-        "llm_time": sum(c.seconds for c in calls),
-        "llm_server_time": sum(c.server_seconds for c in calls),
-        "llm_output_tokens": sum(c.output_tokens for c in calls),
-        "llm_prompt_tokens": sum(c.prompt_tokens for c in calls),
+        "invalid_answers": answer.errors,
+        "llm_calls": len(answer.results),
+        "llm_time": sum(c.seconds for c in answer.results),
+        "llm_server_time": sum(c.server_seconds for c in answer.results),
+        "llm_wall_time": answer.seconds,
+        "llm_output_tokens": sum(c.output_tokens for c in answer.results),
+        "llm_prompt_tokens": sum(c.prompt_tokens for c in answer.results),
         "prism_time": v.seconds,
         "joint_time": 0.0,
         "kept_joint_feasible": None,        # joint best case of the kept policy (if queried)
         "branch_disagreement": False,       # per-requirement best passes but joint fails
         "prompt": prompt,
-        "raw_outputs": [c.raw_output for c in calls],
+        "raw_outputs": [c.text for c in answer.results],
     }
 
 
 class SymbolicPlanner:
-    def __init__(self, domain: Domain, llm: OllamaLLM, config: Config, runner: Optional[PrismRunner] = None):
+    def __init__(self, domain: Domain, backend: Optional[LLMBackend], config: Config,
+                 runner: Optional[PrismRunner] = None):
+        """`backend` answers the tasks of `solve`; schedulers drive `solve_steps` with their own (None)."""
         self.domain = domain
-        self.llm = llm
+        self.backend = backend
         self.config = config
         self.runner = runner or PrismRunner(config.prism)
         self.retry = RetryPolicy.parse(self.config.planner.retry)
@@ -144,27 +165,40 @@ class SymbolicPlanner:
     def _render(self, ep: _Episode, template: str, **extra) -> str:
         return self.domain.render(template, ep.instance, **ep.context, **extra)
 
-    def _ask(self, prompt: str, schema, spec, log) -> Tuple[Optional[SymbolicPolicy], List[str]]:
-        """Query the LLM, re-asking with the errors if the rules do not parse."""
-        errors: List[str] = []
+    def _ask(self, ep: _Episode, prompt: str, attempt: int, mode: str) -> Steps[_Answer]:
+        """Query the LLM, re-asking with the errors if the rules do not parse. A backend failure
+        raises `LLMError`, which ends the instance."""
+        start, spec = time(), ep.verifier.spec
+        answer = _Answer(None, [], [])
+        json_schema = ep.schema.model_json_schema()
         current = prompt
-        for _ in range(1 + self.config.planner.max_fixups):
-            raw = self.llm.invoke_raw(current, schema)
+        for fixup in range(1 + self.config.planner.max_fixups):
+            result = yield ep.tasks.make(current, json_schema, round=attempt, mode=mode, fixup=fixup)
+            answer.results.append(result)
+            if result.error is not None:
+                raise LLMError(result.error)
             try:
-                parsed = schema.model_validate_json(raw)
-                policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),
-                                                 [(r.condition, r.action) for r in parsed.rules])
-                return policy, errors
+                parsed = ep.schema.model_validate_json(result.text)
+                answer.policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),
+                                                        [(r.condition, r.action) for r in parsed.rules])
+                break
             except (ValidationError, RuleError) as e:
                 message = str(e)
-                errors.append(message)
-                log(f"Invalid LLM answer: {message}")
+                answer.errors.append(message)
+                ep.log(f"Invalid LLM answer: {message}")
                 current = self.domain.render("invalid.md.j2", prompt=prompt, errors=message)
-        return None, errors
+        answer.seconds = time() - start
+        return answer
 
     # ---------------------------------------------------------------- main loop
 
     def solve(self, instance: Instance, logger) -> Dict[str, Any]:
+        """Run the loop for one instance, answering each task with the planner's backend in turn."""
+        return drive(self.solve_steps(instance, logger), self.backend.execute)
+
+    def solve_steps(self, instance: Instance, logger) -> Steps[Dict[str, Any]]:
+        """The loop for one instance, as a generator: yields each LLM task, is sent its result, and
+        returns the result dict. `solve` and the schedulers (core/scheduler.py) drive it."""
         ep = self._episode(instance, logger.info)
         reqs, max_rounds = ep.requirements, self.config.planner.max_rounds
 
@@ -179,7 +213,7 @@ class SymbolicPlanner:
         for attempt in range(1, max_rounds + 1):
             iter_start = time()
             ep.log(f"=== Attempt {attempt}/{max_rounds} ({mode}) ===\n{prompt}")
-            candidate, v, errors, calls = self._round(ep, mode, prompt, kept)
+            candidate, v, answer = yield from self._round(ep, mode, prompt, attempt, kept)
             score = _score(v, reqs)
             previous_shortfall = kept.score[2] if kept else None
             improved = kept is None or score < kept.score
@@ -189,8 +223,7 @@ class SymbolicPlanner:
             ep.log("Results: " + ", ".join(f"{r.name}: best={v.best[r.name]:.4f} worst={v.worst[r.name]:.4f}"
                                            for r in reqs))
             ep.log(f"Score {score} ({'new best' if improved else 'no improvement, keeping best'})")
-            record = _record(attempt, mode, prompt, candidate, v, reqs,
-                             improved=improved, gain=gain, errors=errors, calls=calls)
+            record = _record(attempt, mode, prompt, candidate, v, reqs, improved=improved, gain=gain, answer=answer)
             iterations.append(record)
 
             done = not failing(reqs, kept.v.worst)
@@ -234,29 +267,27 @@ class SymbolicPlanner:
                                 cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                 seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
         schema = rule_schema(list(verifier.spec.actions), cfg.planner.max_rules, cfg.planner.max_condition_chars)
-        return _Episode(instance, verifier, analyzer, schema, self._prompt_context(instance, verifier.spec), log)
+        return _Episode(instance, verifier, analyzer, schema, self._prompt_context(instance, verifier.spec), log,
+                        TaskFactory(cfg.llm, instance.id))
 
-    def _round(self, ep: _Episode, mode: str, prompt: str,
-               kept: Optional[_Kept]) -> Tuple[SymbolicPolicy, Verification, List[str], List[LLMCall]]:
+    def _round(self, ep: _Episode, mode: str, prompt: str, attempt: int,
+               kept: Optional[_Kept]) -> Steps[Tuple[SymbolicPolicy, Verification, _Answer]]:
         """Ask for rules and verify the candidate: the new rules, or the kept ones followed by them when
-        extending. Returns the candidate, its verification, the invalid answers and the LLM calls."""
-        calls_before = len(self.llm.usage().calls)
-        new_rules, errors = self._ask(prompt, ep.schema, ep.verifier.spec, ep.log)
-        calls = self.llm.usage().calls[calls_before:]
-        if new_rules is None:
-            new_rules = ep.verifier.empty_policy()
+        extending. Returns the candidate, its verification and what the LLM calls produced."""
+        answer = yield from self._ask(ep, prompt, attempt, mode)
+        new_rules = answer.policy if answer.policy is not None else ep.verifier.empty_policy()
         candidate = kept.policy.extended(new_rules) if mode == "extend" else new_rules
         ep.log(f"Candidate policy ({len(candidate.rules)} rules):\n{candidate.listing()}")
         try:
-            return candidate, ep.verifier.verify(candidate), errors, calls
+            return candidate, ep.verifier.verify(candidate), answer
         except PrismError as e:
             # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
             # Count the round as producing nothing (the empty policy) instead of losing the instance.
             reason = str(e).splitlines()[0]
             ep.log(f"Verification failed ({reason}); scoring the round as an empty policy")
-            errors.append(f"verification failed: {reason}")
+            answer.errors.append(f"verification failed: {reason}")
             candidate = kept.policy if mode == "extend" and kept else ep.verifier.empty_policy()
-            return candidate, ep.verifier.verify(candidate), errors, calls
+            return candidate, ep.verifier.verify(candidate), answer
 
     # ---------------------------------------------------------------- feedback
 

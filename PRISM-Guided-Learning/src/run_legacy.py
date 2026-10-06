@@ -15,7 +15,7 @@ from typing import Dict, List
 import pandas as pd
 
 from config import Config, load_config
-from core.llm import OllamaLLM
+from core.llm import LLMClient
 from legacy.data_loader import DataLoader
 from legacy.planner import FeedbackSimplifiedLLMPlanner
 from legacy.prompting import ActionPolicy
@@ -59,7 +59,7 @@ def run(cfg: Config, run_dir: str) -> str:
     dataloader.data = dataloader.data[:cfg.run.limit]
     logger = setup_logger("eval", run_dir=run_dir, include_timestamp=False)
 
-    model = OllamaLLM(cfg.llm, ActionPolicy)
+    model = LLMClient(cfg.llm, ActionPolicy)
     planner = FeedbackSimplifiedLLMPlanner(model=model, model_name=cfg.llm.model.replace(":", "_"),
                                            max_attempts=cfg.legacy.max_rounds,
                                            observe_obstacle="obs_idx" in cfg.domain.visible_extra,

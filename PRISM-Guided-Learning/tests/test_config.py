@@ -31,10 +31,17 @@ def test_every_condition_loads_and_round_trips():
 @pytest.mark.parametrize("override", ["planner.retyr=never", "nosuch.key=1", "planner.retry=bogus",
                                       "planner.branch=sideways", "approach=rl", "feedback.horizon=0",
                                       "feedback.horizon=deadline", "feedback.horizon=true",
-                                      "feedback.horizon_by_domain={uuv: domain}"])
+                                      "feedback.horizon_by_domain={uuv: domain}", "llm.backend=vllm",
+                                      "run.scheduler=batched", "prism.exact_max_iters=0"])
 def test_bad_config_is_rejected(override):
     with pytest.raises(ValueError):
         load_config(overrides=[override])
+
+
+def test_lockstep_is_symbolic_only():
+    assert load_config(overrides=["run.scheduler=lockstep"]).run.scheduler == "lockstep"
+    with pytest.raises(ValueError, match="symbolic planner only"):
+        load_config(overrides=["approach=legacy", "run.scheduler=lockstep"])
 
 
 def test_defaults_live_only_in_default_yaml():

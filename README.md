@@ -19,7 +19,8 @@ Its per-state approach is the `legacy` baseline.
 ```
 PRISM-Guided-Learning/
   src/
-    core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts
+    core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts,
+                     LLM tasks, backends (core/backends/) and the lockstep scheduler
     legacy/          the predecessor's per-state approach (gridworld only), the baseline
     run_symbolic.py  symbolic approach on any domain
     run_legacy.py    legacy approach on gridworld
@@ -51,6 +52,11 @@ python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out 
 
 ```bash
 python src/run_symbolic.py --domain uuv --data uuv_paper.csv --out out/results/symbolic_uuv
+```
+
+```bash
+# lockstep: one LLM batch per step (one task per active instance), logged to <run>/llm_tasks.jsonl
+python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=lockstep --out out/results/symbolic_grid20_lockstep
 ```
 
 ```bash

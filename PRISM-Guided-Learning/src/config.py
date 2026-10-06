@@ -42,6 +42,7 @@ class LLMConfig:
     num_predict: int
     seed: Optional[int]
     temperature: Optional[float]              # None = the model's default
+    backend: str                              # serving engine (core/backends)
 
 
 @dataclass
@@ -108,8 +109,9 @@ class LegacyConfig:
 
 @dataclass
 class RunConfig:
-    workers: int
+    workers: int                              # instances in flight (threads, or the lockstep batch size)
     limit: Optional[int]
+    scheduler: str                            # threads (each worker calls the LLM itself) | lockstep (batched)
 
 
 @dataclass
@@ -215,7 +217,8 @@ def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) 
 
 
 def validate(cfg: Config) -> None:
-    from core.retry import RetryPolicy  # local import: core depends on config, not the reverse
+    from core.backends import BACKENDS   # local imports: core depends on config, not the reverse
+    from core.retry import RetryPolicy
     RetryPolicy.parse(cfg.planner.retry)
     RetryPolicy.parse(cfg.legacy.retry)
     checks = {
@@ -223,6 +226,8 @@ def validate(cfg: Config) -> None:
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
+        "llm.backend": (cfg.llm.backend, set(BACKENDS)),
+        "run.scheduler": (cfg.run.scheduler, {"threads", "lockstep"}),
     }
     for key, (value, allowed) in checks.items():
         if value not in allowed:
@@ -232,3 +237,5 @@ def validate(cfg: Config) -> None:
         raise ValueError(f"feedback.horizon={horizon!r} must be a number of steps (>= 1) or \"domain\"")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
+    if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
+        raise ValueError("run.scheduler=lockstep drives the symbolic planner only; legacy runs use threads")

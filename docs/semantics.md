@@ -35,6 +35,8 @@ Each round: verify `R`, then
 
 Appending only removes choices at states the existing rules leave uncovered, so EXTEND never lowers `w_i` and never raises `b_i`. The best rule set so far is kept, scored lexicographically by (worst-case failures, best-case failures, worst shortfall, best shortfall).
 
+The loop is per instance and sees the LLM only through tasks and results (`src/core/tasks.py`). How instances are interleaved (`run.scheduler`: threads, or lockstep batches) does not change any instance's rounds: given the same answers, both give identical prompts, rule sets and values.
+
 ## PRISM encoding
 The planner adds one variable-free module that synchronizes on every label in `A`:
 

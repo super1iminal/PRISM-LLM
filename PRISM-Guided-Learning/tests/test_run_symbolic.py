@@ -7,7 +7,7 @@ import pytest
 
 import run_symbolic
 from config import load_config
-from fakes import ScriptedLLM, answer
+from fakes import ScriptedBackend, answer
 from results_io import SYMBOLIC_RESULTS
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
@@ -15,7 +15,7 @@ needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on
 
 @needs_prism
 def test_run_writes_results_and_releases_its_logs(tmp_path, tiny_grid, monkeypatch):
-    monkeypatch.setattr(run_symbolic, "OllamaLLM", lambda config: ScriptedLLM([answer(("true", "right"))]))
+    monkeypatch.setattr(run_symbolic, "make_backend", lambda config: ScriptedBackend([answer(("true", "right"))]))
     cfg = load_config(overrides=[f"domain.dataset={tiny_grid.as_posix()}", "run.workers=1", "planner.max_rounds=2"])
     run_dir = tmp_path / "run"
     run_symbolic.run(cfg, str(run_dir))

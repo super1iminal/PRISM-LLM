@@ -9,7 +9,7 @@ from core.domain import load_domain
 from core.planner import SymbolicPlanner
 from core.prism import PrismError
 from core.verifier import PolicyVerifier
-from fakes import ScriptedLLM, answer
+from fakes import ScriptedBackend, answer
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
 pytestmark = needs_prism
@@ -26,7 +26,7 @@ def solve(tiny_grid, answers, rounds, *overrides):
     """Run the planner; returns (result, the scripted LLM)."""
     domain = load_domain("gridworld", ["obs_idx"])
     cfg = load_config(overrides=[f"planner.max_rounds={rounds}", "llm.seed=1", *overrides])
-    llm = ScriptedLLM(answers)
+    llm = ScriptedBackend(answers)
     result = SymbolicPlanner(domain, llm, cfg).solve(domain.load_instances(str(tiny_grid))[0],
                                                      logging.getLogger("test_planner"))
     return result, llm

@@ -3,22 +3,26 @@
 Usage: python src/run_symbolic.py [--condition B2] [--set section.key=value ...] [--out DIR]
        (shortcuts: --domain, --data, --workers, --max-attempts, --limit)
 Settings come from configs/ (see docs/config.md); the resolved config is saved as <run>/config.json.
+`run.scheduler` picks how instances share the LLM: worker threads, or lockstep batches (tasks logged to
+<run>/llm_tasks.jsonl).
 """
 import argparse
 import datetime
 import json
+import logging
 import os
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import time
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import pandas as pd
 
 from config import Config, load_config
+from core.backends import make_backend
 from core.domain import Instance, load_domain
-from core.llm import OllamaLLM
 from core.planner import SymbolicPlanner
+from core.scheduler import LockstepScheduler, failed_result
 from logging_utils import close_logger, setup_logger
 from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
@@ -63,39 +67,62 @@ def run(cfg: Config, run_dir: str) -> str:
     instances = domain.load_instances(cfg.domain.dataset)[:cfg.run.limit]
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
-    llm = OllamaLLM(cfg.llm)
-    planner = SymbolicPlanner(domain, llm, cfg)
+    backend = make_backend(cfg.llm)
+    planner = SymbolicPlanner(domain, backend, cfg)
+    loggers: Dict[Any, logging.Logger] = {}
 
-    def solve(instance: Instance) -> Dict[str, Any]:
-        logger = setup_logger(f"worker_{instance.id}", run_dir=run_dir, include_timestamp=False)
-        llm.reset_usage()
-        start = time()
-        try:
-            result = planner.solve(instance, logger)
-        except Exception as e:
-            logger.error(traceback.format_exc())
-            result = {"success": False, "error": f"{type(e).__name__}: {e}", "iterations": []}
-        finally:
-            close_logger(logger)
-        result["total_time"] = time() - start
-        result["instance"] = instance.id
-        return result
+    def worker_logger(instance: Instance) -> logging.Logger:
+        loggers[instance.id] = setup_logger(f"worker_{instance.id}", run_dir=run_dir, include_timestamp=False)
+        return loggers[instance.id]
 
-    results: Dict[str, Dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=cfg.run.workers) as pool:
-        futures = {pool.submit(solve, inst): inst for inst in instances}
-        for future in as_completed(futures):
-            inst = futures[future]
-            results[inst.id] = future.result()
-            r = results[inst.id]
-            main_logger.info(f"Instance {inst.id}: success={r['success']} iterations={len(r['iterations'])} "
-                             f"time={r['total_time']:.1f}s {r.get('error') or ''}")
+    def finish(instance: Instance, r: Dict[str, Any]) -> None:
+        close_logger(loggers.pop(instance.id))
+        main_logger.info(f"Instance {instance.id}: success={r['success']} iterations={len(r['iterations'])} "
+                         f"time={r['total_time']:.1f}s {r.get('error') or ''}")
+
+    try:
+        if cfg.run.scheduler == "lockstep":
+            with open(os.path.join(run_dir, "llm_tasks.jsonl"), "w", encoding="utf-8") as task_log:
+                scheduler = LockstepScheduler(planner.solve_steps, backend, cfg.run.workers, worker_logger,
+                                              task_log=task_log, on_finish=finish)
+                results = scheduler.run(instances)
+            main_logger.info(f"Lockstep: {scheduler.batches} batches of up to {cfg.run.workers} tasks")
+        else:
+            results = solve_threaded(planner, instances, cfg.run.workers, worker_logger, finish)
+    finally:
+        backend.close()
 
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")
     close_logger(main_logger)
     return run_dir
+
+
+def solve_threaded(planner: SymbolicPlanner, instances: List[Instance], workers: int,
+                   logger_for: Callable[[Instance], logging.Logger],
+                   on_finish: Callable[[Instance, Dict[str, Any]], None]) -> Dict[Any, Dict[str, Any]]:
+    """`workers` threads, each solving one instance at a time and calling the backend itself."""
+    def solve(instance: Instance) -> Dict[str, Any]:
+        logger = logger_for(instance)
+        start = time()
+        try:
+            result = planner.solve(instance, logger)
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            result = failed_result(e)
+        result["total_time"] = time() - start
+        result["instance"] = instance.id
+        return result
+
+    results: Dict[Any, Dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(solve, inst): inst for inst in instances}
+        for future in as_completed(futures):
+            inst = futures[future]
+            results[inst.id] = future.result()
+            on_finish(inst, results[inst.id])
+    return results
 
 
 def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> pd.DataFrame:
