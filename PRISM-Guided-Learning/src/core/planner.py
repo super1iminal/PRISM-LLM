@@ -7,29 +7,32 @@ Each round, for the best rule set so far (keep-best, as in the legacy loop):
   * some completion can                -> extend: rules are fine but incomplete; the LLM adds rules
                                           (appended, so existing decisions are unchanged) for the
                                           uncovered states carrying the most mass
-"Can any completion meet them" is PRISM's multi-objective query (`planner.branch: joint`) or, as in
-the runs before Phase A, each requirement's best case on its own (`per_requirement`). The retry
+"Can any completion meet them" is PRISM's multi-objective query (`planner.branch: joint`) or each
+requirement's best case on its own (`per_requirement`, as in the `pre_phase_a` condition). The retry
 policy (`planner.retry`, see core/retry.py) decides when to drop feedback and start from the initial
 prompt instead. With `planner.feedback: table` (ablation S1) there is no branch: every round after a
-failure shows the results table and asks for a complete new rule list. Semantics: docs/semantics.md.
+failure shows the results table and asks for a complete new rule list. The loop's solver is fast but
+not sound; the final rule set is re-verified exactly (`prism.exact_check`), and the result reports
+those values. Semantics: docs/semantics.md.
 """
 import zlib
+from dataclasses import dataclass
 from time import time
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from config import Config
 from core.analysis import MassAnalyzer
-from core.domain import Domain, Instance, Requirement
-from core.llm import OllamaLLM
+from core.domain import Domain, Instance, Requirement, failing
+from core.llm import LLMCall, OllamaLLM
 from core.prism import PrismError, PrismRunner
 from core.retry import RetryPolicy
 from core.rules import RuleError, SymbolicPolicy
 from core.verifier import PolicyVerifier, Verification
 
 
-def rule_schema(actions: List[str], max_rules: int = 64, max_condition_chars: int = 200) -> type[BaseModel]:
+def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
     """JSON schema for the LLM's answer. The length bounds are enforced by constrained decoding,
     which stops degenerate repetition loops from running into the token limit."""
     rule = create_model(
@@ -43,19 +46,75 @@ def rule_schema(actions: List[str], max_rules: int = 64, max_condition_chars: in
 
 def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
     """Lower is better: worst-case failures, best-case failures, then total shortfalls."""
-    return (sum(not r.satisfied(v.worst[r.name]) for r in reqs),
-            sum(not r.satisfied(v.best[r.name]) for r in reqs),
+    return (len(failing(reqs, v.worst)),
+            len(failing(reqs, v.best)),
             sum(r.shortfall(v.worst[r.name]) for r in reqs),
             sum(r.shortfall(v.best[r.name]) for r in reqs))
 
 
+@dataclass
+class _Episode:
+    """What stays fixed while one instance is solved."""
+    instance: Instance
+    verifier: PolicyVerifier
+    analyzer: MassAnalyzer
+    schema: type
+    context: Dict[str, Any]           # prompt context shared by every template
+    log: Callable[[str], None]
+
+    @property
+    def requirements(self) -> List[Requirement]:
+        return self.verifier.spec.requirements
+
+
+@dataclass
+class _Kept:
+    """The best rule set so far (keep-best), with its verification and score."""
+    policy: SymbolicPolicy
+    v: Verification
+    score: Tuple
+    joint: Optional[bool] = None      # can one completion meet every threshold? (None: undecided)
+    joint_queried: bool = False
+
+
+def _record(attempt: int, mode: str, prompt: str, candidate: SymbolicPolicy, v: Verification,
+            reqs: List[Requirement], *, improved: bool, gain: float, errors: List[str],
+            calls: List[LLMCall]) -> Dict[str, Any]:
+    """One entry of the result's `iterations`. The feedback step fills in the joint fields."""
+    return {
+        "iteration": attempt,
+        "mode": mode,
+        "rules": candidate.to_dicts(),
+        "num_rules": len(candidate.rules),
+        "best": dict(v.best),
+        "worst": dict(v.worst),
+        "reachable_situations": v.reachable_situations,
+        "uncovered_situations": v.uncovered_situations,
+        "best_case_success": not failing(reqs, v.best),
+        "worst_case_success": not failing(reqs, v.worst),
+        "improved": improved,
+        "shortfall_gain": gain,
+        "invalid_answers": errors,
+        "llm_calls": len(calls),
+        "llm_time": sum(c.seconds for c in calls),
+        "llm_server_time": sum(c.server_seconds for c in calls),
+        "llm_output_tokens": sum(c.output_tokens for c in calls),
+        "llm_prompt_tokens": sum(c.prompt_tokens for c in calls),
+        "prism_time": v.seconds,
+        "joint_time": 0.0,
+        "kept_joint_feasible": None,        # joint best case of the kept policy (if queried)
+        "branch_disagreement": False,       # per-requirement best passes but joint fails
+        "prompt": prompt,
+        "raw_outputs": [c.raw_output for c in calls],
+    }
+
+
 class SymbolicPlanner:
-    def __init__(self, domain: Domain, llm: OllamaLLM, config: Optional[Config] = None,
-                 runner: Optional[PrismRunner] = None):
+    def __init__(self, domain: Domain, llm: OllamaLLM, config: Config, runner: Optional[PrismRunner] = None):
         self.domain = domain
         self.llm = llm
-        self.config = config or Config()
-        self.runner = runner or PrismRunner(config=self.config.prism)
+        self.config = config
+        self.runner = runner or PrismRunner(config.prism)
         self.retry = RetryPolicy.parse(self.config.planner.retry)
 
     # ---------------------------------------------------------------- prompting
@@ -82,6 +141,9 @@ class SymbolicPlanner:
         return {"rules_listing": policy.listing(), "num_rules": len(policy.rules), "results": rows,
                 "reachable": v.reachable_situations, "uncovered": v.uncovered_situations}
 
+    def _render(self, ep: _Episode, template: str, **extra) -> str:
+        return self.domain.render(template, ep.instance, **ep.context, **extra)
+
     def _ask(self, prompt: str, schema, spec, log) -> Tuple[Optional[SymbolicPolicy], List[str]]:
         """Query the LLM, re-asking with the errors if the rules do not parse."""
         errors: List[str] = []
@@ -103,151 +165,148 @@ class SymbolicPlanner:
     # ---------------------------------------------------------------- main loop
 
     def solve(self, instance: Instance, logger) -> Dict[str, Any]:
-        log = logger.info
-        cfg = self.config
-        verifier = PolicyVerifier(self.domain, instance, self.runner, cfg.rules.max_enumeration)
-        analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
-                                cfg.feedback.states_per_rule, method=cfg.feedback.blame,
-                                seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
-        show_blame = cfg.feedback.blame != "none"
-        spec = verifier.spec
-        reqs = spec.requirements
-        schema = rule_schema(list(spec.actions), cfg.planner.max_rules, cfg.planner.max_condition_chars)
-        base_ctx = self._prompt_context(instance, spec)
-        max_rounds = cfg.planner.max_rounds
+        ep = self._episode(instance, logger.info)
+        reqs, max_rounds = ep.requirements, self.config.planner.max_rounds
 
         opt_start = time()
-        optimum, _, _ = verifier.optimum()
+        optimum, _, _ = ep.verifier.optimum()
         optimum_seconds = time() - opt_start
-        log(f"Unconstrained optimum per requirement: {optimum}")
+        ep.log(f"Unconstrained optimum per requirement: {optimum}")
 
         iterations: List[Dict[str, Any]] = []
-        best: Optional[Tuple[SymbolicPolicy, Verification, Tuple]] = None
-        kept_joint: Optional[bool] = None   # joint feasibility of the kept policy, once queried
-        joint_queried = False
-        mode, prompt, stall = "initial", self.domain.render("initial.md.j2", instance, **base_ctx), 0
-
+        kept: Optional[_Kept] = None
+        mode, prompt, stall = "initial", self._render(ep, "initial.md.j2"), 0
         for attempt in range(1, max_rounds + 1):
             iter_start = time()
-            calls_before = len(self.llm.usage().calls)
-            log(f"=== Attempt {attempt}/{max_rounds} ({mode}) ===\n{prompt}")
-            new_rules, errors = self._ask(prompt, schema, spec, log)
-            calls = self.llm.usage().calls[calls_before:]
-            if new_rules is None:
-                new_rules = verifier.empty_policy()
-            candidate = best[0].extended(new_rules) if mode == "extend" else new_rules
-            log(f"Candidate policy ({len(candidate.rules)} rules):\n{candidate.listing()}")
-
-            try:
-                v = verifier.verify(candidate)
-            except PrismError as e:
-                # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
-                # Count the round as producing nothing (the empty policy) instead of losing the instance.
-                log(f"Verification failed ({str(e).splitlines()[0]}); scoring the round as an empty policy")
-                errors.append(f"verification failed: {str(e).splitlines()[0]}")
-                candidate = best[0] if mode == "extend" and best else verifier.empty_policy()
-                v = verifier.verify(candidate)
+            ep.log(f"=== Attempt {attempt}/{max_rounds} ({mode}) ===\n{prompt}")
+            candidate, v, errors, calls = self._round(ep, mode, prompt, kept)
             score = _score(v, reqs)
-            previous_shortfall = best[2][2] if best else None
-            improved = best is None or score < best[2]
+            previous_shortfall = kept.score[2] if kept else None
+            improved = kept is None or score < kept.score
             if improved:
-                best = (candidate, v, score)
-                kept_joint, joint_queried = None, False
-            gain = (previous_shortfall - best[2][2]) if previous_shortfall is not None else float("inf")
-            log("Results: " + ", ".join(f"{r.name}: best={v.best[r.name]:.4f} worst={v.worst[r.name]:.4f}"
-                                        for r in reqs))
-            log(f"Score {score} ({'new best' if improved else 'no improvement, keeping best'})")
-
-            record = {
-                "iteration": attempt,
-                "mode": mode,
-                "rules": candidate.to_dicts(),
-                "num_rules": len(candidate.rules),
-                "best": dict(v.best),
-                "worst": dict(v.worst),
-                "reachable_situations": v.reachable_situations,
-                "uncovered_situations": v.uncovered_situations,
-                "best_case_success": all(r.satisfied(v.best[r.name]) for r in reqs),
-                "worst_case_success": all(r.satisfied(v.worst[r.name]) for r in reqs),
-                "improved": improved,
-                "shortfall_gain": gain,
-                "invalid_answers": errors,
-                "llm_calls": len(calls),
-                "llm_time": sum(c.seconds for c in calls),
-                "llm_server_time": sum(c.server_seconds for c in calls),
-                "llm_output_tokens": sum(c.output_tokens for c in calls),
-                "llm_prompt_tokens": sum(c.prompt_tokens for c in calls),
-                "prism_time": v.seconds,
-                "joint_time": 0.0,
-                "kept_joint_feasible": None,        # joint best case of the kept policy (if queried)
-                "branch_disagreement": False,       # per-requirement best passes but joint fails
-                "prompt": prompt,
-                "raw_outputs": [c.raw_output for c in calls],
-            }
+                kept = _Kept(candidate, v, score)
+            gain = previous_shortfall - kept.score[2] if previous_shortfall is not None else float("inf")
+            ep.log("Results: " + ", ".join(f"{r.name}: best={v.best[r.name]:.4f} worst={v.worst[r.name]:.4f}"
+                                           for r in reqs))
+            ep.log(f"Score {score} ({'new best' if improved else 'no improvement, keeping best'})")
+            record = _record(attempt, mode, prompt, candidate, v, reqs,
+                             improved=improved, gain=gain, errors=errors, calls=calls)
             iterations.append(record)
 
-            best_policy, best_v, _ = best
-            failing_best = [r for r in reqs if not r.satisfied(best_v.best[r.name])]
-            failing_worst = [r for r in reqs if not r.satisfied(best_v.worst[r.name])]
-            if not failing_worst:
-                log(f"Success after {attempt} attempts")
-                record["iteration_time"] = time() - iter_start
-                break
-
-            if attempt < max_rounds:
+            done = not failing(reqs, kept.v.worst)
+            if done:
+                ep.log(f"Success after {attempt} attempts")
+            elif attempt < max_rounds:
                 stall = 0 if improved else stall + 1
                 if self.retry.restart(attempt + 1, stall, gain):
-                    mode, stall = "initial", 0
-                    prompt = self.domain.render("initial.md.j2", instance, **base_ctx)
-                elif cfg.planner.feedback == "table":
-                    mode = "table"
-                    prompt = self.domain.render("table.md.j2", instance, **base_ctx,
-                                                **self._results_context(best_policy, best_v, reqs))
+                    mode, prompt, stall = "initial", self._render(ep, "initial.md.j2"), 0
                 else:
-                    joint_conflict = False
-                    if not failing_best and cfg.planner.branch == "joint":
-                        if not joint_queried:
-                            t = time()
-                            kept_joint, joint_queried = verifier.jointly_feasible(best_policy), True
-                            record["joint_time"] = time() - t
-                        record["kept_joint_feasible"] = kept_joint
-                        joint_conflict = kept_joint is False   # undecided: fall back to per-requirement
-                        record["branch_disagreement"] = joint_conflict
-                        if joint_conflict:
-                            log("Each requirement passes its best case, but no single completion passes all: refine")
-                    results_ctx = self._results_context(best_policy, best_v, reqs)
-                    if failing_best or joint_conflict:
-                        mode = "refine"
-                        blamed = failing_best or failing_worst
-                        blame = analyzer.rule_blame(best_v, blamed) if show_blame else []
-                        blame_ctx = [{
-                            "rule": b.rule, "mass": b.mass,
-                            "text": (f"{best_policy.rules[b.rule].condition} (action {best_policy.rules[b.rule].action})"
-                                     if b.rule is not None else ""),
-                            "states": [self.domain.format_state(h.valuation) for h in b.hotspots],
-                        } for b in blame]
-                        prompt = self.domain.render("refine.md.j2", instance, **base_ctx, **results_ctx,
-                                                    failing=[r.name for r in blamed], blame=blame_ctx,
-                                                    with_cost=any(r.reward is not None for r in blamed),
-                                                    joint_conflict=joint_conflict, show_blame=show_blame, blame_kind=cfg.feedback.blame)
-                    else:
-                        mode = "extend"
-                        hotspots = analyzer.uncovered_hotspots(best_v, failing_worst) if show_blame else []
-                        hot_ctx = [{"mass": h.mass, "state": self.domain.format_state(h.valuation)} for h in hotspots]
-                        prompt = self.domain.render("extend.md.j2", instance, **base_ctx, **results_ctx,
-                                                    failing=[r.name for r in failing_worst], hotspots=hot_ctx,
-                                                    with_cost=any(r.reward is not None for r in failing_worst),
-                                                    show_blame=show_blame, blame_kind=cfg.feedback.blame)
+                    mode, prompt = self._feedback(ep, kept, record)
             record["iteration_time"] = time() - iter_start
+            if done:
+                break
 
-        best_policy, best_v, _ = best
+        final, final_check, check_start = kept.v, "off", time()
+        if self.config.prism.exact_check:
+            exact, solver = ep.verifier.verify_exact(kept.policy)
+            final, final_check = (exact, solver) if exact else (kept.v, "failed")
+            ep.log(f"Exact check ({final_check}): " + ", ".join(
+                f"{r.name}: best={final.best[r.name]:.4f} worst={final.worst[r.name]:.4f}" for r in reqs))
         return {
-            "success": all(r.satisfied(best_v.worst[r.name]) for r in reqs),
-            "best_case_success": all(r.satisfied(best_v.best[r.name]) for r in reqs),
-            "final_best": dict(best_v.best),
-            "final_worst": dict(best_v.worst),
-            "final_rules": best_policy.to_dicts(),
+            "success": not failing(reqs, final.worst),
+            "best_case_success": not failing(reqs, final.best),
+            "final_best": dict(final.best),
+            "final_worst": dict(final.worst),
+            "final_check": final_check,             # solver of the exact check, "off", or "failed" (loop values)
+            "final_check_time": time() - check_start,
+            "loop_best": dict(kept.v.best),         # the final policy's values from the loop's solver
+            "loop_worst": dict(kept.v.worst),
+            "final_rules": kept.policy.to_dicts(),
             "optimum": optimum,
             "optimum_time": optimum_seconds,
             "iterations": iterations,
         }
+
+    def _episode(self, instance: Instance, log: Callable[[str], None]) -> _Episode:
+        cfg = self.config
+        verifier = PolicyVerifier(self.domain, instance, cfg, self.runner)
+        analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
+                                cfg.feedback.states_per_rule, method=cfg.feedback.blame,
+                                seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
+        schema = rule_schema(list(verifier.spec.actions), cfg.planner.max_rules, cfg.planner.max_condition_chars)
+        return _Episode(instance, verifier, analyzer, schema, self._prompt_context(instance, verifier.spec), log)
+
+    def _round(self, ep: _Episode, mode: str, prompt: str,
+               kept: Optional[_Kept]) -> Tuple[SymbolicPolicy, Verification, List[str], List[LLMCall]]:
+        """Ask for rules and verify the candidate: the new rules, or the kept ones followed by them when
+        extending. Returns the candidate, its verification, the invalid answers and the LLM calls."""
+        calls_before = len(self.llm.usage().calls)
+        new_rules, errors = self._ask(prompt, ep.schema, ep.verifier.spec, ep.log)
+        calls = self.llm.usage().calls[calls_before:]
+        if new_rules is None:
+            new_rules = ep.verifier.empty_policy()
+        candidate = kept.policy.extended(new_rules) if mode == "extend" else new_rules
+        ep.log(f"Candidate policy ({len(candidate.rules)} rules):\n{candidate.listing()}")
+        try:
+            return candidate, ep.verifier.verify(candidate), errors, calls
+        except PrismError as e:
+            # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
+            # Count the round as producing nothing (the empty policy) instead of losing the instance.
+            reason = str(e).splitlines()[0]
+            ep.log(f"Verification failed ({reason}); scoring the round as an empty policy")
+            errors.append(f"verification failed: {reason}")
+            candidate = kept.policy if mode == "extend" and kept else ep.verifier.empty_policy()
+            return candidate, ep.verifier.verify(candidate), errors, calls
+
+    # ---------------------------------------------------------------- feedback
+
+    def _feedback(self, ep: _Episode, kept: _Kept, record: Dict[str, Any]) -> Tuple[str, str]:
+        """Mode and prompt of the next round, from the kept rule set's results."""
+        reqs = ep.requirements
+        results = self._results_context(kept.policy, kept.v, reqs)
+        if self.config.planner.feedback == "table":
+            return "table", self._render(ep, "table.md.j2", **results)
+        failing_best, failing_worst = failing(reqs, kept.v.best), failing(reqs, kept.v.worst)
+        joint_conflict = (not failing_best and self.config.planner.branch == "joint"
+                          and self._joint_conflict(ep, kept, record))
+        if failing_best or joint_conflict:
+            return "refine", self._refine_prompt(ep, kept, failing_best or failing_worst, joint_conflict, results)
+        return "extend", self._extend_prompt(ep, kept, failing_worst, results)
+
+    def _joint_conflict(self, ep: _Episode, kept: _Kept, record: Dict[str, Any]) -> bool:
+        """Whether no single completion of the kept rules meets every threshold, although each requirement
+        passes its best case. Asked once per kept rule set; undecided (None) counts as no conflict."""
+        if not kept.joint_queried:
+            start = time()
+            kept.joint, kept.joint_queried = ep.verifier.jointly_feasible(kept.policy), True
+            record["joint_time"] = time() - start
+        conflict = kept.joint is False
+        record["kept_joint_feasible"], record["branch_disagreement"] = kept.joint, conflict
+        if conflict:
+            ep.log("Each requirement passes its best case, but no single completion passes all: refine")
+        return conflict
+
+    def _refine_prompt(self, ep: _Episode, kept: _Kept, blamed: List[Requirement], joint_conflict: bool,
+                       results: Dict[str, Any]) -> str:
+        """Rewrite the rules, shown how much of the lost probability each rule's states carry."""
+        kind = self.config.feedback.blame
+        rules = kept.policy.rules
+        blame = [{
+            "rule": b.rule, "mass": b.mass,
+            "text": f"{rules[b.rule].condition} (action {rules[b.rule].action})" if b.rule is not None else "",
+            "states": [self.domain.format_state(h.valuation) for h in b.hotspots],
+        } for b in (ep.analyzer.rule_blame(kept.v, blamed) if kind != "none" else [])]
+        return self._render(ep, "refine.md.j2", **results, failing=[r.name for r in blamed], blame=blame,
+                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
+                            show_blame=kind != "none", blame_kind=kind)
+
+    def _extend_prompt(self, ep: _Episode, kept: _Kept, failing_worst: List[Requirement],
+                       results: Dict[str, Any]) -> str:
+        """Add rules, shown the uncovered states where the worst case loses the most probability."""
+        kind = self.config.feedback.blame
+        hotspots = ep.analyzer.uncovered_hotspots(kept.v, failing_worst) if kind != "none" else []
+        return self._render(ep, "extend.md.j2", **results, failing=[r.name for r in failing_worst],
+                            hotspots=[{"mass": h.mass, "state": self.domain.format_state(h.valuation)}
+                                      for h in hotspots],
+                            with_cost=any(r.reward is not None for r in failing_worst),
+                            show_blame=kind != "none", blame_kind=kind)

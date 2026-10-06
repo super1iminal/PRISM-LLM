@@ -47,14 +47,12 @@ def setup_logger(log_filename: str, run_dir: Optional[str] = None,
         log_path = os.path.join(log_path, filename)
     
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    
-    # Create unique logger name to avoid conflicts between workers
-    logger_name = f"{log_filename}_{id(log_filename)}"
-    logger = logging.getLogger(logger_name)
+
+    # One logger per log file: setting the same file up again closes its previous handlers
+    logger = logging.getLogger(f"logfile:{os.path.abspath(log_path)}")
     logger.setLevel(logging.DEBUG)
-    
-    logger.handlers.clear()
-    
+    close_logger(logger)
+
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     
     file_handler = logging.FileHandler(log_path, mode='w', encoding='utf-8')
@@ -69,3 +67,10 @@ def setup_logger(log_filename: str, run_dir: Optional[str] = None,
         logger.addHandler(console_handler)
 
     return logger
+
+
+def close_logger(logger: logging.Logger) -> None:
+    """Close and remove the logger's handlers, releasing its log file (Windows locks open files)."""
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()

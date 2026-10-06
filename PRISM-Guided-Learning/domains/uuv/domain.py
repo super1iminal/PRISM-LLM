@@ -61,7 +61,7 @@ class UUV(Domain):
         return instances
 
     def horizon(self, instance: Instance) -> int:
-        """Mass-analysis horizon: the mission deadline (config `feedback.horizon_by_domain: {uuv: domain}`)."""
+        """Mass-analysis horizon: the mission deadline (used when the run config sets `feedback.horizon: domain`)."""
         return instance.data["deadline"]
 
     def context(self, instance: Instance) -> Dict[str, Any]:
@@ -75,8 +75,6 @@ class UUV(Domain):
             "altitudes": ALTITUDES,
             "states": STATES,
             "follow": FOLLOW,
-            "med_visib": med_visib,
-            "high_visib": high_visib,
             "init_visib": int(span / 2 + 0.5),   # PRISM's round((max_visib-min_visib)/2)
             "visib_bands": [
                 {"name": "poor", "levels": [v for v in visib if v < med_visib], "allowed": ["low"]},

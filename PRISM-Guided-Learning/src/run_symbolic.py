@@ -19,11 +19,9 @@ from config import Config, load_config
 from core.domain import Instance, load_domain
 from core.llm import OllamaLLM
 from core.planner import SymbolicPlanner
-from logging_utils import setup_logger
+from logging_utils import close_logger, setup_logger
+from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
-
-APPROACH_NAME = "SYMBOLIC"
-
 
 def cli_overrides(args) -> List[str]:
     """Map the old shortcut flags onto config overrides."""
@@ -36,7 +34,7 @@ def cli_overrides(args) -> List[str]:
 
 
 def add_cli(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--condition", default=None, help="Named condition from configs/conditions.yaml")
+    parser.add_argument("--condition", default=None, help="Named condition: configs/run/conditions/<name>.yaml")
     parser.add_argument("--set", action="append", help="Config override section.key=value (repeatable)")
     parser.add_argument("--domain")
     parser.add_argument("--data")
@@ -65,7 +63,7 @@ def run(cfg: Config, run_dir: str) -> str:
     instances = domain.load_instances(cfg.domain.dataset)[:cfg.run.limit]
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
-    llm = OllamaLLM(config=cfg.llm)
+    llm = OllamaLLM(cfg.llm)
     planner = SymbolicPlanner(domain, llm, cfg)
 
     def solve(instance: Instance) -> Dict[str, Any]:
@@ -77,6 +75,8 @@ def run(cfg: Config, run_dir: str) -> str:
         except Exception as e:
             logger.error(traceback.format_exc())
             result = {"success": False, "error": f"{type(e).__name__}: {e}", "iterations": []}
+        finally:
+            close_logger(logger)
         result["total_time"] = time() - start
         result["instance"] = instance.id
         return result
@@ -94,6 +94,7 @@ def run(cfg: Config, run_dir: str) -> str:
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")
+    close_logger(main_logger)
     return run_dir
 
 
@@ -137,6 +138,8 @@ def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> p
                 **{f"final_best_{k}": p for k, p in result.get("final_best", {}).items()},
                 **{f"final_worst_{k}": p for k, p in result.get("final_worst", {}).items()},
                 **{f"optimum_{k}": p for k, p in result.get("optimum", {}).items()},
+                "final_check": result.get("final_check"),
+                "final_check_time": result.get("final_check_time", 0.0),
                 "final_num_rules": len(result.get("final_rules", [])),
                 **totals,
                 "total_time": result.get("total_time", 0.0),
@@ -148,7 +151,7 @@ def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> p
 
 
 def save_results(results: List[Dict[str, Any]], instances: List[Instance], run_dir: str) -> None:
-    results_to_df(results, instances).to_parquet(os.path.join(run_dir, f"{APPROACH_NAME}_results.parquet"))
+    results_to_df(results, instances).to_parquet(os.path.join(run_dir, SYMBOLIC_RESULTS))
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
     for idx, result in enumerate(results):

@@ -1,14 +1,15 @@
 """Legacy vs symbolic, grid by grid.
 
 Usage (from PRISM-Guided-Learning/):
-    python viz/plot_comparison.py --legacy out/results/legacy_grid20 --symbolic out/results/symbolic_grid20_capped
-    python viz/plot_comparison.py ... --samples 0-4 --include-partial --out viz/figures/first5.png
+    python viz/plot_comparison.py configs/plot/grid20.yaml [--set samples=0-4 --set include_partial=true ...]
+Settings: the plot config (PlotConfig below). Model and round budget come from the runs.
 
 Symbolic probabilities are worst case (a guarantee over every completion of the rules); the
 black tick marks the best case. Samples missing from either run are dropped.
 """
-import argparse
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -16,12 +17,26 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names  # noqa: E402
+from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names, short_model  # noqa: E402
+from config import plot_config  # noqa: E402
+from results_io import run_facts  # noqa: E402
+from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 # Reference categorical palette, slots 1-2 (validated all-pairs)
 LEGACY, SYMBOLIC = "#2a78d6", "#eb6834"
-SURFACE, INK, INK_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 BAR_W = 0.36
+
+
+@dataclass
+class PlotConfig:
+    """A configs/plot/*.yaml file for this script (configs/plot/grid20.yaml documents each key)."""
+    script: str
+    legacy: str
+    symbolic: str
+    samples: Optional[str]
+    include_partial: bool
+    title: Optional[str]
+    out: str
 
 
 def parse_samples(text):
@@ -32,18 +47,6 @@ def parse_samples(text):
         lo, _, hi = part.partition("-")
         ids.update(range(int(lo), int(hi or lo) + 1))
     return sorted(ids)
-
-
-def style(ax, title, ylabel):
-    ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=10)
-    ax.set_ylabel(ylabel, color=INK_2, fontsize=9)
-    ax.set_facecolor(SURFACE)
-    ax.grid(axis="y", color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.tick_params(colors=INK_2, labelsize=9, length=0)
 
 
 def paired_bars(ax, labels, legacy, symbolic, fmt, symbolic_best=None):
@@ -65,25 +68,20 @@ def paired_bars(ax, labels, legacy, symbolic, fmt, symbolic_best=None):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--legacy", required=True, type=Path)
-    parser.add_argument("--symbolic", required=True, type=Path)
-    parser.add_argument("--data", default="grid_20_balanced.csv")
-    parser.add_argument("--samples", default=None, help="e.g. 0-4 or 0,2,5-7")
-    parser.add_argument("--include-partial", action="store_true", help="include symbolic samples that did not finish")
-    parser.add_argument("--title", default=None)
-    parser.add_argument("--out", type=Path, default=Path("viz/figures/comparison.png"))
-    args = parser.parse_args()
+    cfg = plot_config(PlotConfig, "plot_comparison")
+    legacy_dir, symbolic_dir, out = Path(cfg.legacy), Path(cfg.symbolic), Path(cfg.out)
+    facts = run_facts(symbolic_dir)
 
-    legacy = load_legacy(args.legacy, args.data)
-    symbolic = load_symbolic(args.symbolic, legacy["size"].to_dict(), args.include_partial)
+    legacy = load_legacy(legacy_dir)
+    symbolic = load_symbolic(symbolic_dir, legacy["size"].to_dict(), cfg.include_partial)
     common = sorted(set(legacy.index) & set(symbolic.index))
-    wanted = parse_samples(args.samples)
+    wanted = parse_samples(cfg.samples)
     if wanted is not None:
         common = [s for s in common if s in wanted]
     if not common:
         raise SystemExit("no samples present in both runs")
-    legacy, symbolic = add_summary_metrics(legacy.loc[common]), add_summary_metrics(symbolic.loc[common])
+    legacy = add_summary_metrics(legacy.loc[common], legacy_dir)
+    symbolic = add_summary_metrics(symbolic.loc[common], symbolic_dir)
     reqs = requirement_names(legacy)
 
     has_tokens = symbolic.output_tokens.notna().all() and legacy.output_tokens.notna().all()
@@ -98,7 +96,7 @@ def main():
             return g[col].mean()
     else:
         labels = [f"#{s}\n{int(legacy.loc[s, 'size'])}x{int(legacy.loc[s, 'size'])}"
-                  + ("" if symbolic.loc[s, "complete"] else f"\n(partial: {int(symbolic.loc[s, 'attempts'])}/5)")
+                  + ("" if symbolic.loc[s, "complete"] else f"\n(partial: {int(symbolic.loc[s, 'attempts'])}/{facts.max_rounds})")
                   for s in common]
         leg_g, sym_g = legacy, symbolic
         unit, fmt_met = "per grid", "{:.0f}"
@@ -123,7 +121,7 @@ def main():
     style(axes[1], f"Shortfall below thresholds, {unit} (lower is better)", "probability")
 
     paired_bars(axes[2], labels, agg(leg_g, "time_s") / 60, agg(sym_g, "time_s") / 60, "{:.1f}")
-    style(axes[2], f"Wall time (5 attempts), {unit}", "minutes")
+    style(axes[2], f"Wall time ({facts.max_rounds} attempts), {unit}", "minutes")
 
     if has_tokens:
         paired_bars(axes[3], labels, agg(leg_g, "output_tokens") / 1000, agg(sym_g, "output_tokens") / 1000, "{:.1f}k")
@@ -141,16 +139,16 @@ def main():
     handles, names = [handles[i] for i in order], [names[i] for i in order]
     fig.legend(handles, names, loc="upper center", ncol=3, frameon=False, fontsize=10, labelcolor=INK,
                bbox_to_anchor=(0.5, 0.955))
-    title = args.title or (f"Legacy vs symbolic policies: qwen3:14b, {len(common)} gridworlds"
+    title = cfg.title or (f"Legacy vs symbolic policies: {short_model(facts.model)}, {len(common)} gridworlds"
                            + (", grouped by grid size" if len(common) > 8 else ""))
     fig.suptitle(title, x=0.012, ha="left", y=0.99, fontsize=13, color=INK, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.925), h_pad=3, w_pad=2.5)
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.out, dpi=160, facecolor=SURFACE)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=160, facecolor=SURFACE)
     table = pd.concat({"legacy": legacy, "symbolic": symbolic}, names=["approach"])
-    table.to_csv(args.out.with_suffix(".csv"))
-    print(args.out)
+    table.to_csv(out.with_suffix(".csv"))
+    print(out)
 
 
 if __name__ == "__main__":

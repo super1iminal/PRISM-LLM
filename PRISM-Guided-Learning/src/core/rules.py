@@ -15,6 +15,7 @@ trailing "-> <action>" repeating the rule's own action.
 """
 import itertools
 import json
+import operator
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -212,6 +213,11 @@ def _type_of(expr: Expr, variables: Dict[str, Variable], text: str) -> str:
     return "bool"
 
 
+# The other binary operators (& | =>) short-circuit, so `evaluate` handles them itself
+_BINARY_OPS = {"+": operator.add, "-": operator.sub, "=": operator.eq, "!=": operator.ne,
+               "<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge}
+
+
 def evaluate(expr: Expr, state: Dict[str, Value]) -> Value:
     if isinstance(expr, Const):
         return expr.value
@@ -227,9 +233,7 @@ def evaluate(expr: Expr, state: Dict[str, Value]) -> Value:
         return bool(evaluate(expr.left, state)) or bool(evaluate(expr.right, state))
     if op == "=>":
         return (not evaluate(expr.left, state)) or bool(evaluate(expr.right, state))
-    a, b = evaluate(expr.left, state), evaluate(expr.right, state)
-    return {"+": lambda: a + b, "-": lambda: a - b, "=": lambda: a == b, "!=": lambda: a != b,
-            "<": lambda: a < b, "<=": lambda: a <= b, ">": lambda: a > b, ">=": lambda: a >= b}[op]()
+    return _BINARY_OPS[op](evaluate(expr.left, state), evaluate(expr.right, state))
 
 
 def to_prism(expr: Expr) -> str:
@@ -335,7 +339,7 @@ class SymbolicPolicy:
                 overlaps[i].update(matching[:a])
         return [sorted(o) for o in overlaps]
 
-    def to_prism_module(self, max_enumeration: int = 200_000) -> str:
+    def to_prism_module(self, max_enumeration: int) -> str:
         """A variable-free PRISM module that synchronizes on every action label.
 
         Action `a` is enabled iff the first matching rule chooses `a`, or no rule matches.

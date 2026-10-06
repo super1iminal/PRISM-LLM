@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from config import PrismConfig
@@ -34,6 +35,11 @@ class PrismResult:
 
     def index_of(self) -> Dict[StateKey, int]:
         return {s: i for i, s in enumerate(self.states)}
+
+    @cached_property
+    def positions(self) -> Dict[str, int]:
+        """Variable name -> its position in every state tuple."""
+        return {name: i for i, name in enumerate(self.variables)}
 
 
 def _parse_value(text: str):
@@ -119,15 +125,13 @@ def _error_excerpt(stdout: str) -> str:
 class PrismRunner:
     """Thin wrapper around the PRISM command line (explicit engine)."""
 
-    def __init__(self, prism_path: Optional[str] = None, extra_args: Sequence[str] = (),
-                 config: Optional[PrismConfig] = None):
-        config = config or PrismConfig()
+    def __init__(self, config: PrismConfig, extra_args: Sequence[str] = (), prism_path: Optional[str] = None):
+        """`extra_args` are appended to every model-checking call (not to `check`)."""
         self.prism_path = prism_path or get_prism_path()
         self.extra_args = list(extra_args)
         self.java_max_mem = config.java_max_mem
         self.max_iters = config.max_iters
         self.timeout = config.timeout_s
-        self.multi_engine = config.multi_engine
         self.multi_args = [f"-{config.multi_engine}"] + ([f"-{config.multi_method}"] if config.multi_method else [])
         self.method_args = [f"-{config.method}"] if config.method else []
         self.fallback_args = [[f"-{m}"] for m in config.fallback_methods] if config.method else []
@@ -139,7 +143,8 @@ class PrismRunner:
         `prism.multi_method` (lp: exact, where value iteration can fail on periodic chains). Returns None
         (undecided) when LP cannot handle the query.
         """
-        stdout = self._check(model, prop, self.multi_args)
+        with tempfile.TemporaryDirectory(prefix="prism_") as tmp:
+            stdout = self._call(self._command(*self._write_inputs(tmp, model, [prop]), self.multi_args))
         if "not currently supported with linear programming" in stdout:
             # e.g. step-bounded objectives (UUV's deadline). PRISM's value-iteration alternative is
             # approximate and wrongly answers "no" at tight thresholds, so report "undecided".
@@ -149,19 +154,6 @@ class PrismRunner:
             raise PrismError(_error_excerpt(stdout))
         return m.group(1) == "true"
 
-    def _check(self, model: str, prop: str, engine_args: List[str]) -> str:
-        with tempfile.TemporaryDirectory(prefix="prism_") as tmp:
-            model_path = os.path.join(tmp, "model.prism")
-            props_path = os.path.join(tmp, "props.props")
-            with open(model_path, "w", encoding="utf-8") as f:
-                f.write(model)
-            with open(props_path, "w", encoding="utf-8") as f:
-                f.write(prop.rstrip(";") + ";\n")
-            cmd = [self.prism_path, model_path, props_path, *engine_args, "-javamaxmem",
-                   self.java_max_mem, "-maxiters", str(self.max_iters)]
-            return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                  timeout=self.timeout).stdout
-
     def run(self, model: str, properties: Sequence[str], export_transitions: bool = False) -> PrismResult:
         """Check `properties` (one per entry) on `model`.
 
@@ -169,25 +161,15 @@ class PrismRunner:
         states are always exported; transitions (with action labels) only if requested.
         """
         with tempfile.TemporaryDirectory(prefix="prism_") as tmp:
-            model_path = os.path.join(tmp, "model.prism")
-            props_path = os.path.join(tmp, "props.props")
-            states_path = os.path.join(tmp, "states.sta")
-            trans_path = os.path.join(tmp, "trans.tra")
-            labels_path = os.path.join(tmp, "labels.lab")
-            with open(model_path, "w", encoding="utf-8") as f:
-                f.write(model)
-            with open(props_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(p.rstrip(";") + ";" for p in properties) + "\n")
-
-            cmd = [self.prism_path, model_path, props_path, "-explicit", "-javamaxmem", self.java_max_mem,
-                   "-maxiters", str(self.max_iters), "-exportstates", states_path, "-exportlabels", labels_path]
+            states_path, trans_path, labels_path = (os.path.join(tmp, name)
+                                                    for name in ("states.sta", "trans.tra", "labels.lab"))
+            cmd = self._command(*self._write_inputs(tmp, model, properties), ["-explicit"])
+            cmd += ["-exportstates", states_path, "-exportlabels", labels_path]
             if export_transitions:
                 cmd += ["-exporttrans", trans_path]
             # Try the configured method, then the fallbacks, while PRISM reports non-convergence
             for method_args in [self.method_args] + self.fallback_args:
-                proc = subprocess.run(cmd + method_args + self.extra_args, stdout=subprocess.PIPE,
-                                      stderr=subprocess.STDOUT, text=True, timeout=self.timeout)
-                stdout = proc.stdout
+                stdout = self._call(cmd + method_args + self.extra_args)
                 if "did not converge" not in stdout:
                     break
             if "Error:" in stdout or not os.path.exists(states_path):
@@ -202,3 +184,21 @@ class PrismRunner:
             raise PrismError(f"models must have exactly one initial state (found {len(initial)})")
         return PrismResult(variables, states, initial_values, state_values, choices,
                            initial_state=initial[0], stdout=stdout)
+
+    @staticmethod
+    def _write_inputs(tmp: str, model: str, properties: Sequence[str]) -> Tuple[str, str]:
+        """Write the model and the properties file into `tmp`; returns their paths."""
+        model_path, props_path = os.path.join(tmp, "model.prism"), os.path.join(tmp, "props.props")
+        with open(model_path, "w", encoding="utf-8") as f:
+            f.write(model)
+        with open(props_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(p.rstrip(";") + ";" for p in properties) + "\n")
+        return model_path, props_path
+
+    def _command(self, model_path: str, props_path: str, engine_args: Sequence[str]) -> List[str]:
+        return [self.prism_path, model_path, props_path, *engine_args, "-javamaxmem", self.java_max_mem,
+                "-maxiters", str(self.max_iters)]
+
+    def _call(self, cmd: List[str]) -> str:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              timeout=self.timeout).stdout

@@ -1,17 +1,19 @@
 """The UUV domain reproduces the paper's results and its thresholds separate the reference policies."""
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from config import PrismConfig
+from config import load_config
 from core.domain import load_domain
 from core.prism import PrismRunner
 from core.rules import SymbolicPolicy
 from core.verifier import PolicyVerifier
 
 ROOT = Path(__file__).resolve().parent.parent
+CFG = load_config()
 
 pytestmark = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
 
@@ -37,7 +39,7 @@ def test_bare_mdp_matches_paper(domain, sample):
     instance = domain.load_instances("uuv_paper.csv")[sample]
     # PRISM's default solver, as the paper used (Gauss-Seidel lands ~3 higher on the slowly
     # converging Caribbean max-energy reward: 4726.0 vs the reported 4723.29)
-    values = PrismRunner(config=PrismConfig(method="")).run(domain.model(instance), PAPER_PROPS).initial_values
+    values = PrismRunner(replace(CFG.prism, method="")).run(domain.model(instance), PAPER_PROPS).initial_values
     for value, expected in zip(values, PAPER[instance.data["name"]]):
         assert round(value, 2) == pytest.approx(expected)
 
@@ -45,7 +47,7 @@ def test_bare_mdp_matches_paper(domain, sample):
 @pytest.mark.parametrize("sample", [0, 1])
 def test_thresholds_separate_reference_policies(domain, sample):
     instance = domain.load_instances("uuv_paper.csv")[sample]
-    verifier = PolicyVerifier(domain, instance)
+    verifier = PolicyVerifier(domain, instance, CFG)
     spec = verifier.spec
 
     def passes(rules):
@@ -63,7 +65,7 @@ def test_thresholds_separate_reference_policies(domain, sample):
 def test_energy_requirement(domain, sample):
     """Expected energy until done: best/worst over all controllers are the paper's Table 2 min/max."""
     instance = domain.load_instances("uuv_paper.csv")[sample]
-    verifier = PolicyVerifier(domain, instance)
+    verifier = PolicyVerifier(domain, instance, CFG)
     energy = {r.name: r for r in verifier.spec.requirements}["energy_budget"]
     assert (energy.reward, energy.bound, energy.best_op(), energy.worst_op()) ==         ("energy", "<=", 'R{"energy"}min', 'R{"energy"}max')
     assert energy.bounded() == f'R{{"energy"}}<={energy.threshold} [ F "done" ]'
@@ -75,7 +77,7 @@ def test_energy_requirement(domain, sample):
 
 def test_requirement_prompt_text(domain):
     instance = domain.load_instances("uuv_paper.csv")[0]
-    bounds = {r.name: r.bound_text() for r in PolicyVerifier(domain, instance).spec.requirements}
+    bounds = {r.name: r.bound_text() for r in PolicyVerifier(domain, instance, CFG).spec.requirements}
     assert bounds["done_in_time"] == "Probability must be >= 0.8"
     assert bounds["energy_budget"] == "Expected energy must be <= 26.5"
 
@@ -83,7 +85,7 @@ def test_requirement_prompt_text(domain):
 def test_forced_states_are_not_situations(domain):
     """Rules for the search phase alone cover the policy: following, found and done are forced."""
     instance = domain.load_instances("uuv_paper.csv")[0]
-    verifier = PolicyVerifier(domain, instance)
+    verifier = PolicyVerifier(domain, instance, CFG)
     spec = verifier.spec
     search_only = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),
                                           [("s = 11 | s <= 3 | (s >= 6 & s <= 8)", "high")])

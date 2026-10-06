@@ -80,6 +80,11 @@ class Requirement:
         return f"{what} must be {self.bound} {self.threshold}"
 
 
+def failing(requirements: Sequence[Requirement], values: Dict[str, float]) -> List[Requirement]:
+    """The requirements whose value in `values` (requirement name -> value) misses the threshold."""
+    return [r for r in requirements if not r.satisfied(values[r.name])]
+
+
 @dataclass
 class Spec:
     variables: List[Variable]          # policy-visible state variables

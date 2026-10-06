@@ -1,32 +1,40 @@
 """Draw the planned ablation grids (conditions x factors) for docs/ablations.md.
 
-Usage (from PRISM-Guided-Learning/): python viz/plot_ablation_grid.py
-Writes docs/ablation_run.png and docs/ablation_not_run.png at the repo root.
-Edit the ROWS tables below when the plan changes.
+Usage (from PRISM-Guided-Learning/): python viz/plot_ablation_grid.py configs/plot/ablation_grid.yaml
+Settings: the plot config (GPU-hour estimates, output files). Seeds come from configs/ablation/, grids,
+rounds and model from configs/run/ (the defaults, and the D7 and R4 conditions), the badge families from
+configs/plot/ablation_summary.yaml. Edit the row tables below when the plan changes.
 """
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import yaml  # noqa: E402
 from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 
-SURFACE, INK, INK_2, INK_3, RULE = "#fcfcfb", "#0b0b0b", "#52514e", "#8a8984", "#e4e3df"
-# Badge colours by ablation family, the same as the results charts (viz/ablation_summary.py)
-FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback content": "#1baf7a",
-                 "Blame signal": "#eda100", "Rounds budget": "#e87ba4", "Legacy variants": "#4a3aa7"}
-FAMILY_OF = {"B1": "Baselines", "B2": "Baselines", "R1": "Retry sweep", "R2": "Retry sweep", "R3": "Retry sweep",
-             "R4": "Retry sweep", "R5": "Retry sweep", "D7": "Rounds budget", "S1": "Feedback content", "S4": "Feedback content",
-             "S5": "Blame signal", "V1": "Blame signal", "V2": "Blame signal", "L1": "Legacy variants",
-             "L2": "Legacy variants"}
+from loaders import short_model  # noqa: E402
+from config import load_config, load_file, plot_config  # noqa: E402
+from core.domain import load_domain  # noqa: E402
+from core.retry import RetryPolicy  # noqa: E402
+from run_ablation import DEFAULT_CONFIG as ABLATION_CONFIG, AblationConfig  # noqa: E402
+from theme import FAMILY_COLORS, GRID as RULE, INK, INK_2, SURFACE  # noqa: E402
+
+INK_3 = "#8a8984"
 CHANGED_FILL, CHANGED_INK = "#fde7dc", "#9a3412"   # differs from the row's reference
 REF_FILL = "#f1f0ec"
-DOCS = Path(__file__).resolve().parents[2] / "docs"
 
-SEEDS = 2
-H_LEGACY, H_SYMBOLIC = 1.15, 1.0  # GPU hours per 20-grid run (2 workers): legacy measured with the obstacle
-                                   # hidden; symbolic measured with it visible (B2, R1, R2)
-H_LEGACY_VISIBLE = 4.5             # estimate: legacy writes one action per (cell, obstacle phase); mean cycle 3.9
+
+@dataclass
+class PlotConfig:
+    """configs/plot/ablation_grid.yaml documents each key."""
+    script: str
+    gpu_hours: Dict[str, float]
+    families_from: str
+    out_run: str
+    out_not_run: str
 
 FACTORS = ["Policy form", "Feedback", "Retry trigger", "Prompt examples", "Blame signal"]
 LEGACY_REF = ["per-state", "probabilities +\nprevious policy", "never", "2 worked examples", "—"]
@@ -50,53 +58,58 @@ def leg(**changes):
     return values
 
 
-# Row: (id, name, family, values, question, seeds, gpu hours or None, is_reference)
-RUN = [
-    ("group", "Reference"),
-    ("B2", "Symbolic defaults", "symbolic", SYMBOLIC_REF, "Main method; reference for every row below", SEEDS,
-     SEEDS * H_SYMBOLIC, True),
-    ("group", "Retry sweep  (vs. symbolic defaults; Marsha's suggestion)"),
-    ("R1", "Never restart", "symbolic", sym(retry="never"), "Is feedback alone enough?", SEEDS, SEEDS * H_SYMBOLIC,
-     False),
-    ("R2", "Restart after 1 stall", "symbolic", sym(retry="after 1 stall"), "Restart sooner when stuck?", SEEDS,
-     SEEDS * H_SYMBOLIC, False),
-    ("R3", "Restart every 3rd round", "symbolic", sym(retry="every 3rd round"),
-     "Scheduled restarts instead of stalls?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("R4", "Restart on small gain", "symbolic", sym(retry="gain < ε"), "Restart when progress is slow, not zero?",
-     SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("R5", "Always restart", "symbolic", sym(feedback="none", retry="every round", blame="—"),
-     "Is feedback better than resampling at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("group", "Feedback content  (vs. symbolic defaults)"),
-    ("S1", "Results table only", "symbolic", sym(feedback="probabilities +\nprevious rules", blame="—"),
-     "Does blame feedback help, beyond the table?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("S4", "No examples", "symbolic", sym(examples="none"), "Prompt confound, symbolic side", SEEDS,
-     SEEDS * H_SYMBOLIC, False),
-    ("group", "Blame signal  (vs. symbolic defaults)"),
-    ("S5", "Regret blame", "symbolic", sym(blame="one-step regret"), "Does local blame beat mass?", SEEDS,
-     SEEDS * H_SYMBOLIC, False),
-    ("V1", "Random blame", "symbolic", sym(blame="random rules"), "Does blame need to point at the right rules?",
-     SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("V2", "No blame section", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
-     "Does a blame hint help at all?", SEEDS, SEEDS * H_SYMBOLIC, False),
-    ("group", "Rounds budget  (vs. restart on slow progress, the new default)"),
-    ("D7", "New default, 7 rounds", "symbolic", sym(retry="gain < ε"), "Do more rounds keep paying off?", SEEDS,
-     SEEDS * H_SYMBOLIC * 7 / 5, False),
-    ("group", "Free  (from the runs above)"),
-    ("F1", "Rounds budget 1–5", "both", ["—"] * 5, "Success vs budget (pass@k-style curves)", None, 0.0, False),
-]
-
-NOT_RUN = [
-    ("group", "Legacy  (stopped Oct 3: lower priority than the symbolic results)"),
-    ("B1", "Legacy baseline", "legacy", LEGACY_REF, "Main comparison vs. symbolic", SEEDS,
-     SEEDS * H_LEGACY_VISIBLE, True),
-    ("L1", "Legacy + blind restart", "legacy", leg(retry="after 2 stalls"), "Does restarting alone close the gap?",
-     SEEDS, SEEDS * H_LEGACY_VISIBLE, False),
-    ("L2", "Legacy, no examples", "legacy", leg(examples="none"), "Prompt confound, legacy side", SEEDS,
-     SEEDS * H_LEGACY_VISIBLE, False),
-]
+def run_rows(seeds: int, hours: Dict[str, float], rounds: int, d7_rounds: int) -> list:
+    """Rows of the grid of conditions that ran:
+    (id, name, family, values, question, seeds, GPU hours or None, is_reference)."""
+    return [
+        ("group", "Reference"),
+        ("B2", "Symbolic reference", "symbolic", SYMBOLIC_REF, "Main method; reference for every row below", seeds,
+         seeds * hours["symbolic"], True),
+        ("group", "Retry sweep  (vs. the symbolic reference; Marsha's suggestion)"),
+        ("R1", "Never restart", "symbolic", sym(retry="never"), "Is feedback alone enough?", seeds, seeds * hours["symbolic"],
+         False),
+        ("R2", "Restart after 1 stall", "symbolic", sym(retry="after 1 stall"), "Restart sooner when stuck?", seeds,
+         seeds * hours["symbolic"], False),
+        ("R3", "Restart every 3rd round", "symbolic", sym(retry="every 3rd round"),
+         "Scheduled restarts instead of stalls?", seeds, seeds * hours["symbolic"], False),
+        ("R4", "Restart on small gain", "symbolic", sym(retry="gain < ε"), "Restart when progress is slow, not zero?",
+         seeds, seeds * hours["symbolic"], False),
+        ("R5", "Always restart", "symbolic", sym(feedback="none", retry="every round", blame="—"),
+         "Is feedback better than resampling at all?", seeds, seeds * hours["symbolic"], False),
+        ("group", "Feedback content  (vs. the symbolic reference)"),
+        ("S1", "Results table only", "symbolic", sym(feedback="probabilities +\nprevious rules", blame="—"),
+         "Does blame feedback help, beyond the table?", seeds, seeds * hours["symbolic"], False),
+        ("S4", "No examples", "symbolic", sym(examples="none"), "Prompt confound, symbolic side", seeds,
+         seeds * hours["symbolic"], False),
+        ("group", "Blame signal  (vs. the symbolic reference)"),
+        ("S5", "Regret blame", "symbolic", sym(blame="one-step regret"), "Does local blame beat mass?", seeds,
+         seeds * hours["symbolic"], False),
+        ("V1", "Random blame", "symbolic", sym(blame="random rules"), "Does blame need to point at the right rules?",
+         seeds, seeds * hours["symbolic"], False),
+        ("V2", "No blame section", "symbolic", sym(feedback="table +\nREFINE / EXTEND", blame="—"),
+         "Does a blame hint help at all?", seeds, seeds * hours["symbolic"], False),
+        ("group", "Rounds budget  (vs. R4: restart on slow progress, the default retry)"),
+        ("D7", "Default retry, 7 rounds", "symbolic", sym(retry="gain < ε"), "Do more rounds keep paying off?", seeds,
+         seeds * hours["symbolic"] * d7_rounds / rounds, False),
+        ("group", "Free  (from the runs above)"),
+        ("F1", f"Rounds budget 1–{rounds}", "both", ["—"] * 5, "Success vs budget (pass@k-style curves)", None, 0.0, False),
+    ]
 
 
-def draw(rows, title, subtitle, notes, out):
+def not_run_rows(seeds: int, hours: Dict[str, float]) -> list:
+    """Rows of the grid of conditions that did not run (same shape as run_rows)."""
+    return [
+        ("group", "Legacy  (not run: lower priority than the symbolic results)"),
+        ("B1", "Legacy baseline", "legacy", LEGACY_REF, "Main comparison vs. symbolic", seeds,
+         seeds * hours["legacy_visible"], True),
+        ("L1", "Legacy + blind restart", "legacy", leg(retry="after 2 stalls"), "Does restarting alone close the gap?",
+         seeds, seeds * hours["legacy_visible"], False),
+        ("L2", "Legacy, no examples", "legacy", leg(examples="none"), "Prompt confound, legacy side", seeds,
+         seeds * hours["legacy_visible"], False),
+    ]
+
+
+def draw(rows, title, subtitle, notes, out, families):
     row_h, head_h, group_h = 0.62, 0.55, 0.42
     n_rows = sum(1 for r in rows if r[0] != "group")
     n_groups = sum(1 for r in rows if r[0] == "group")
@@ -135,7 +148,7 @@ def draw(rows, title, subtitle, notes, out):
         y0, y1, mid = y - row_h, y, y - row_h / 2
         if is_ref:
             ax.add_patch(Rectangle((left, y0), xs[-1] - left, row_h, color=REF_FILL, lw=0, zorder=0))
-        color = FAMILY_COLORS.get(FAMILY_OF.get(rid), INK_3)
+        color = FAMILY_COLORS.get(families.get(rid), INK_3)
         ax.add_patch(FancyBboxPatch((xs[0] + 0.08, y0 + 0.16), xs[1] - xs[0] - 0.16, row_h - 0.32,
                                     boxstyle="round,pad=0,rounding_size=0.06", color=color, lw=0))
         ax.text((xs[0] + xs[1]) / 2, mid, rid, color="white", fontsize=9, fontweight="bold", ha="center", va="center")
@@ -178,19 +191,32 @@ def draw(rows, title, subtitle, notes, out):
 
 
 def main():
-    DOCS.mkdir(exist_ok=True)
-    common = (f"Each condition: 20 gridworlds × {SEEDS} seeds, 5 rounds, qwen3:14b, obstacle phase visible to rules. "
-              "Shaded cells differ from the row's reference.")
-    draw(RUN, "Ablations run (Oct 3)", common, [
-        f"GPU hours: about {H_SYMBOLIC} h per 20-grid symbolic run (measured). Symbolic rows include the joint best-case "
-        "branch. R4's ε is the minimum drop in total worst-case shortfall that counts as progress (0.05).",
+    cfg = plot_config(PlotConfig, "plot_ablation_grid")
+    hours = cfg.gpu_hours
+    run = load_config()
+    seeds = len(load_file(ABLATION_CONFIG, AblationConfig).seeds)
+    grids = len(load_domain(run.domain.name).load_instances(run.domain.dataset))
+    rounds, d7_rounds = run.planner.max_rounds, load_config("D7").planner.max_rounds
+    gain = RetryPolicy.parse(load_config("R4").planner.retry).value
+    conditions = yaml.safe_load(Path(cfg.families_from).read_text(encoding="utf-8"))["conditions"]
+    families = {c: meta["family"] for c, meta in conditions.items()}
+    out_run, out_not_run = Path(cfg.out_run), Path(cfg.out_not_run)
+    out_run.parent.mkdir(exist_ok=True)
+    out_not_run.parent.mkdir(exist_ok=True)
+
+    common = (f"Each condition: {grids} gridworlds × {seeds} seeds, {rounds} rounds, {short_model(run.llm.model)}, "
+              "obstacle phase visible to rules. Shaded cells differ from the row's reference.")
+    draw(run_rows(seeds, hours, rounds, d7_rounds), "Ablations run", common, [
+        f"GPU hours: about {hours['symbolic']} h per {grids}-grid symbolic run (measured). Symbolic rows include the "
+        f"joint best-case branch. R4's ε is the minimum drop in total worst-case shortfall that counts as progress "
+        f"({gain:g}).",
         "S4 drops the example block, including the catch-all example rule (the instruction stays). V1 keeps the prompt's "
-        "shape but blames random rules. Also run: U1, symbolic defaults on UUV with the energy budget.",
-    ], DOCS / "ablation_run.png")
-    draw(NOT_RUN, "Ablations not run", common, [
-        f"GPU hours per legacy run: {H_LEGACY_VISIBLE} h (estimate: {H_LEGACY} h measured with the obstacle hidden, "
-        "× mean cycle length 3.9). Also not run: a stronger model on a subset.",
-    ], DOCS / "ablation_not_run.png")
+        "shape but blames random rules. Also run: U1, the symbolic reference on UUV with the energy budget.",
+    ], out_run, families)
+    draw(not_run_rows(seeds, hours), "Ablations not run", common, [
+        f"GPU hours per legacy run: {hours['legacy_visible']} h (estimate: {hours['legacy']} h measured with the "
+        "obstacle hidden, × mean cycle length 3.9). Also not run: a stronger model on a subset.",
+    ], out_not_run, families)
 
 if __name__ == "__main__":
     main()

@@ -1,16 +1,15 @@
 """Compare legacy against one or more symbolic runs (e.g. prompt ablations), by grid size.
 
 Usage (from PRISM-Guided-Learning/):
-    python viz/plot_runs.py --legacy out/results/legacy_grid20 \
-        --symbolic "catch-all asked=out/results/symbolic_grid20_capped" \
-        --symbolic "no catch-all=out/results/symbolic_grid20_nocatchall" \
-        --out viz/figures/catchall_ablation.png
+    python viz/plot_runs.py configs/plot/catchall_ablation.yaml
+Settings: the plot config (PlotConfig below). Model and round budget come from the runs.
 
 Writes the figure, a CSV of per-grid numbers, and a markdown table (same stem).
 Symbolic probabilities are worst case; black ticks mark the best case.
 """
-import argparse
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -18,25 +17,24 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names  # noqa: E402
-from legacy.requirements import get_threshold_for_key  # noqa: E402
+from loaders import add_summary_metrics, load_legacy, load_symbolic, requirement_names, short_model  # noqa: E402
+from config import plot_config  # noqa: E402
+from results_io import SYMBOLIC_RESULTS, met_and_shortfall, requirements_by_sample, run_facts  # noqa: E402
+from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 # Reference categorical palette, slots 1-3 (validated all-pairs in light and dark)
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
-SURFACE, INK, INK_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 MODES = ["first", "retry", "refine", "extend"]  # "retry" = blind retry (initial prompt after round 1)
 
 
-def style(ax, title, ylabel):
-    ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=10)
-    ax.set_ylabel(ylabel, color=INK_2, fontsize=9)
-    ax.set_facecolor(SURFACE)
-    ax.grid(axis="y", color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.tick_params(colors=INK_2, labelsize=9, length=0)
+@dataclass
+class PlotConfig:
+    """A configs/plot/*.yaml file for this script (configs/plot/catchall_ablation.yaml documents each key)."""
+    script: str
+    legacy: str
+    symbolic: Dict[str, str]
+    title: Optional[str]
+    out: str
 
 
 def grouped_bars(ax, labels, series, fmt, ticks=None, colors=None):
@@ -64,14 +62,15 @@ def grouped_bars(ax, labels, series, fmt, ticks=None, colors=None):
 
 def symbolic_rounds(run_dir: Path) -> pd.DataFrame:
     """Per-round rows with mode, coverage and whether the round improved the kept policy."""
-    df = pd.read_parquet(run_dir / "SYMBOLIC_results.parquet").reset_index().sort_values(["sample_id", "iteration"])
+    df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index().sort_values(["sample_id", "iteration"])
     reqs = [c[len("prob_worst_"):] for c in df.columns if c.startswith("prob_worst_")]
-    thr = {r: get_threshold_for_key(r) for r in reqs}
-    df["key"] = list(zip(
-        sum((df[f"prob_worst_{r}"] < thr[r]).astype(int) for r in reqs),
-        sum((df[f"prob_best_{r}"] < thr[r]).astype(int) for r in reqs),
-        sum((thr[r] - df[f"prob_worst_{r}"]).clip(lower=0) for r in reqs),
-        sum((thr[r] - df[f"prob_best_{r}"]).clip(lower=0) for r in reqs)))
+    by_sample = requirements_by_sample(run_dir)
+
+    def key(row):   # the planner's keep-best score: failures, then shortfalls (worst, best)
+        worst = met_and_shortfall(by_sample[row.sample_id], {r: row[f"prob_worst_{r}"] for r in reqs})
+        best = met_and_shortfall(by_sample[row.sample_id], {r: row[f"prob_best_{r}"] for r in reqs})
+        return len(reqs) - worst[0], len(reqs) - best[0], worst[1], best[1]
+    df["key"] = [key(row) for _, row in df.iterrows()]
     improved = []
     for _, g in df.groupby("sample_id"):
         best = None
@@ -85,24 +84,19 @@ def symbolic_rounds(run_dir: Path) -> pd.DataFrame:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--legacy", required=True, type=Path)
-    parser.add_argument("--symbolic", action="append", required=True, help="label=path, repeatable (max 2)")
-    parser.add_argument("--data", default="grid_20_balanced.csv")
-    parser.add_argument("--title", default=None)
-    parser.add_argument("--out", type=Path, default=Path("viz/figures/runs.png"))
-    args = parser.parse_args()
-    if len(args.symbolic) > 2:
+    cfg = plot_config(PlotConfig, "plot_runs")
+    if len(cfg.symbolic) > 2:
         raise SystemExit("at most two symbolic runs (three series stay distinguishable)")
+    legacy_dir, out = Path(cfg.legacy), Path(cfg.out)
+    facts = [run_facts(Path(path)) for path in cfg.symbolic.values()]
 
-    legacy = load_legacy(args.legacy, args.data)
+    legacy = load_legacy(legacy_dir)
     runs = []
-    for spec in args.symbolic:
-        label, _, path = spec.partition("=")
+    for label, path in cfg.symbolic.items():
         runs.append((label, Path(path), load_symbolic(Path(path), legacy["size"].to_dict())))
     common = sorted(set(legacy.index).intersection(*[set(r[2].index) for r in runs]))
-    legacy = add_summary_metrics(legacy.loc[common])
-    runs = [(label, path, add_summary_metrics(df.loc[common])) for label, path, df in runs]
+    legacy = add_summary_metrics(legacy.loc[common], legacy_dir)
+    runs = [(label, path, add_summary_metrics(df.loc[common], path)) for label, path, df in runs]
     rounds = {label: symbolic_rounds(path) for label, path, _ in runs}
     for r in rounds.values():
         r["size"] = r.sample_id.map(legacy["size"])
@@ -132,7 +126,7 @@ def main():
     grouped_bars(ax["tokens"], labels, [(n, by_size(f, "output_tokens") / 1000) for n, f in zip(names, frames)], "{:.1f}")
     style(ax["tokens"], "LLM output tokens, mean per grid", "thousand tokens")
     grouped_bars(ax["time"], labels, [(n, by_size(f, "time_s") / 60) for n, f in zip(names, frames)], "{:.1f}")
-    style(ax["time"], "Wall time (5 rounds), mean per grid", "minutes")
+    style(ax["time"], f"Wall time ({max(f.max_rounds for f in facts)} rounds), mean per grid", "minutes")
 
     grouped_bars(ax["req"], [r.replace("_", " ").replace("avoid moving ", "avoid ") for r in reqs],
                  [(n, [f[f"p_{r}"].mean() for r in reqs]) for n, f in zip(names, frames)], "{:.2f}",
@@ -168,15 +162,16 @@ def main():
     order = sorted(range(len(hl)), key=lambda i: "best" in hl[i])
     fig.legend([handles[i] for i in order], [hl[i] for i in order], loc="upper center", ncol=4, frameon=False,
                fontsize=10, labelcolor=INK, bbox_to_anchor=(0.5, 0.965))
-    fig.suptitle(args.title or f"Legacy vs symbolic runs: qwen3:14b, {len(common)} gridworlds, grouped by grid size",
+    models = " / ".join(dict.fromkeys(short_model(f.model) for f in facts))
+    fig.suptitle(cfg.title or f"Legacy vs symbolic runs: {models}, {len(common)} gridworlds, grouped by grid size",
                  x=0.012, ha="left", y=0.995, fontsize=13, color=INK, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.94), h_pad=3, w_pad=2.5)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.out, dpi=150, facecolor=SURFACE)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
 
     # Per-grid CSV and a markdown summary
-    pd.concat({n: f for n, f in zip(names, frames)}, names=["run"]).to_csv(args.out.with_suffix(".csv"))
-    lines = [f"# {args.title or 'Legacy vs symbolic runs'}", "", "| metric | " + " | ".join(names) + " |",
+    pd.concat({n: f for n, f in zip(names, frames)}, names=["run"]).to_csv(out.with_suffix(".csv"))
+    lines = [f"# {cfg.title or 'Legacy vs symbolic runs'}", "", "| metric | " + " | ".join(names) + " |",
              "|---|" + "---|" * len(names)]
 
     def row(metric, values):
@@ -197,9 +192,9 @@ def main():
         f"{int((rounds[l].uncovered_situations > 0).sum())}/{len(rounds[l])}" for l, _, _ in runs])
     row("rules per round, mean", ["n/a"] + [f"{rounds[l].num_rules.mean():.1f}" for l, _, _ in runs])
     row("invalid answers, total", ["n/a"] + [f"{int(rounds[l].invalid_answers.sum())}" for l, _, _ in runs])
-    args.out.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
-    print(args.out)
+    print(out)
 
 
 if __name__ == "__main__":

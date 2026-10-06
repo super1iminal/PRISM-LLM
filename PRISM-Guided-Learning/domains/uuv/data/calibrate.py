@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
+from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
@@ -23,7 +24,7 @@ REFERENCE = json.loads((Path(__file__).parent / "reference_policies.json").read_
 def main(dataset: str = "uuv_paper.csv") -> None:
     domain = load_domain("uuv")
     for instance in domain.load_instances(dataset):
-        verifier = PolicyVerifier(domain, instance)
+        verifier = PolicyVerifier(domain, instance, load_config())
         spec = verifier.spec
         props = [f"{op}=? [ {r.formula} ]" for r in spec.requirements for op in (r.best_op(), r.worst_op())]
         bounds = verifier.runner.run(verifier.model, props).initial_values

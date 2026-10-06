@@ -1,10 +1,13 @@
-"""Phase A: config, retry policies, joint best case, obstacle visibility."""
+"""Run config, retry policies, obstacle visibility and the joint best-case branch."""
 import json
 import shutil
+from dataclasses import MISSING, fields, is_dataclass
 
 import pytest
+import yaml
 
-from config import conditions, load_config
+import config
+from config import Config, conditions, load_config
 from core.domain import load_domain
 from core.retry import RetryPolicy
 from core.rules import SymbolicPolicy
@@ -14,17 +17,44 @@ needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on
 
 
 def test_every_condition_loads_and_round_trips():
-    for name in conditions():
+    names = conditions()   # one file per condition in configs/run/conditions/
+    assert {"B1", "B2", "R1", "R2", "R3", "R4", "R5", "S1", "S4", "S5", "V1", "V2", "L1", "L2", "D7", "U1",
+            "pre_phase_a"} <= set(names)
+    for name in names:
         cfg = load_config(name, ["llm.seed=3"])
         assert cfg.condition == name and cfg.llm.seed == 3
         json.dumps(cfg.to_dict())   # what run dirs record
+    with pytest.raises(ValueError, match="unknown condition"):
+        load_config("no_such_condition")
 
 
 @pytest.mark.parametrize("override", ["planner.retyr=never", "nosuch.key=1", "planner.retry=bogus",
-                                      "planner.branch=sideways", "approach=rl"])
+                                      "planner.branch=sideways", "approach=rl", "feedback.horizon=0",
+                                      "feedback.horizon=deadline", "feedback.horizon=true",
+                                      "feedback.horizon_by_domain={uuv: domain}"])
 def test_bad_config_is_rejected(override):
     with pytest.raises(ValueError):
         load_config(overrides=[override])
+
+
+def test_defaults_live_only_in_default_yaml():
+    """No setting has a second default in Python (only `condition`, which is a record, not a setting)."""
+    def defaults(cls, path=""):
+        for f in fields(cls):
+            if is_dataclass(f.type):
+                yield from defaults(f.type, f"{path}{f.name}.")
+            elif f.default is not MISSING or f.default_factory is not MISSING:
+                yield path + f.name
+    assert list(defaults(Config)) == ["condition"]
+
+
+def test_key_missing_from_default_yaml_is_an_error(tmp_path, monkeypatch):
+    data = yaml.safe_load((config.RUN_CONFIG_DIR / "default.yaml").read_text(encoding="utf-8"))
+    del data["planner"]["max_fixups"]
+    (tmp_path / "default.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setattr(config, "RUN_CONFIG_DIR", tmp_path)
+    with pytest.raises(ValueError, match=r"missing config key\(s\) \['planner.max_fixups'\]"):
+        load_config()
 
 
 @pytest.mark.parametrize("spec,next_round,stall,gain,expected", [
@@ -52,7 +82,7 @@ def test_obstacle_phase_visibility():
 @needs_prism
 def test_joint_best_case_query():
     domain = load_domain("gridworld", ["obs_idx"])
-    verifier = PolicyVerifier(domain, domain.load_instances("grid_20_balanced.csv")[0])
+    verifier = PolicyVerifier(domain, domain.load_instances("grid_20_balanced.csv")[0], load_config())
     spec = verifier.spec
     assert verifier.jointly_feasible() is True                      # bare MDP: solvable
     complete = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),

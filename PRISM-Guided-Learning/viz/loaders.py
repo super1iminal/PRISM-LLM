@@ -19,24 +19,30 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from compare import _legacy_kept  # noqa: E402  (exact legacy keep-best rule)
 from core.domain import load_domain  # noqa: E402
-from legacy.requirements import get_threshold_for_key  # noqa: E402
+from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
+                        requirements_by_sample, run_facts)
+
+
+
+def short_model(model: str) -> str:
+    """The model name without its quantization tag, for titles (qwen3:14b-q4_K_M -> qwen3:14b)."""
+    return re.sub(r"-q\d\w*$", "", model)
 
 _RESULTS = re.compile(r"(\w+): best=([\d.]+) worst=([\d.]+)")
 _TIMESTAMP = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d+)")
 _INSTANCE = re.compile(r"Instance (\d+): success=(\w+) iterations=(\d+) time=([\d.]+)s")
 
 
-def load_legacy(run_dir: Path, dataset: str = "grid_20_balanced.csv") -> pd.DataFrame:
-    instances = load_domain("gridworld").load_instances(dataset)
-    df = pd.read_parquet(run_dir / "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet").reset_index()
+def load_legacy(run_dir: Path) -> pd.DataFrame:
+    instances = load_domain("gridworld").load_instances(run_facts(run_dir).dataset)
+    df = pd.read_parquet(run_dir / LEGACY_RESULTS).reset_index()
     final = df[df.is_final].set_index("sample_id")
     rows = {}
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
         rec = json.loads(path.read_text(encoding="utf-8"))
         sid = rec["sample_id"]
-        probs = _legacy_kept(rec, instances[sid])
+        probs = legacy_kept(rec, instances[sid])
         f = final.loc[sid]
         rows[sid] = {"approach": "legacy", "size": int(f["size"]), "complete": True,
                      "attempts": int(df[df.sample_id == sid].iteration.max()), "time_s": f["total_time"],
@@ -45,7 +51,7 @@ def load_legacy(run_dir: Path, dataset: str = "grid_20_balanced.csv") -> pd.Data
 
 
 def load_symbolic(run_dir: Path, sizes: Optional[dict] = None, include_partial: bool = False) -> pd.DataFrame:
-    parquet = run_dir / "SYMBOLIC_results.parquet"
+    parquet = run_dir / SYMBOLIC_RESULTS
     if parquet.exists():
         df = pd.read_parquet(parquet).reset_index()
         final = df[df.is_final].set_index("sample_id")
@@ -102,12 +108,17 @@ def requirement_names(df: pd.DataFrame) -> list:
     return [c[2:] for c in df.columns if c.startswith("p_") and not c.startswith("p_best_")]
 
 
-def add_summary_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """requirements met and total shortfall below thresholds (worst case for symbolic)."""
+def add_summary_metrics(df: pd.DataFrame, run_dir: Path) -> pd.DataFrame:
+    """Requirements met and total shortfall below thresholds (worst case for symbolic), each sample
+    against its own instance's requirements in `run_dir`'s domain and dataset."""
     reqs = requirement_names(df)
+    by_sample = requirements_by_sample(run_dir)
     df = df.copy()
-    df["met"] = sum((df[f"p_{r}"] >= get_threshold_for_key(r)).astype(int) for r in reqs)
-    df["shortfall"] = sum((get_threshold_for_key(r) - df[f"p_{r}"]).clip(lower=0) for r in reqs)
+
+    def column(prefix, index):
+        return [met_and_shortfall(by_sample[sid], {r: row[f"{prefix}{r}"] for r in reqs})[index]
+                for sid, row in df.iterrows()]
+    df["met"], df["shortfall"] = column("p_", 0), column("p_", 1)
     if all(f"p_best_{r}" in df for r in reqs):
-        df["met_best"] = sum((df[f"p_best_{r}"] >= get_threshold_for_key(r)).astype(int) for r in reqs)
+        df["met_best"] = column("p_best_", 0)
     return df
