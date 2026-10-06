@@ -214,3 +214,21 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
     - The three steps cost $0.003.
   - OpenRouter runs are a condition of their own, not comparable with the local runs (Asher: fine): providers serve FP8/BF16 weights, not `q4_K_M`, and hosted seeds are not guaranteed to reproduce samples. Name the model, provider and quantization in their results.
   - `providers: []` lets OpenRouter route each request to any provider, so experiments pin one. DeepInfra (fp8) passed the smoke test; NextBit (int4, closer to the local 4-bit weights) is the other provider of `qwen/qwen3-14b` that supports every parameter sent.
+
+## Sonnet vs qwen (grid_20_balanced, R4's settings)
+- **What varied:** only the model (Asher). `sonnet5`: Claude Sonnet 5, thinking off as for qwen. `sonnet5_5`: Claude Sonnet 5.5, thinking on (its endpoints refuse to turn it off) and a 16k output cap, since the cap covers thinking and answer. Both on OpenRouter with Anthropic's endpoint pinned, one unseeded run each (no Sonnet endpoint accepts a seed), against R4 and B2 (qwen3:14b, 2 seeds each). Page: `out/results/sonnet_vs_qwen/SUMMARY.md` (`configs/plot/sonnet_vs_qwen.yaml`).
+- **Results** (worst case; solved of the 19 solvable grids):
+
+  | | solved | req. met | Δ vs R4 [95% CI] | after 1 round |
+  |---|---|---|---|---|
+  | B2 (qwen) | 0/19 | 4.45 | | 2.98 |
+  | R4 (qwen) | 0/19 | 4.95 | | 3.00 |
+  | Sonnet 5 | 5/19 | 7.10 | +2.15 [+1.50, +2.77] | 6.10 |
+  | Sonnet 5.5 | 19/19 | 8.95 | +4.00 [+3.62, +4.38] | 8.55 |
+
+  - Sonnet 5.5 meets every requirement on every solvable grid, 15 of them in the first round. On grid 17 it meets 8 of 9, the most any controller can (its `complete_sequence` ceiling is 0.70 against 0.80).
+  - The sequence requirements separate the models. `complete_sequence` is met on 0% of grids by qwen, 30% by Sonnet 5 and 95% by Sonnet 5.5 (every grid but 17).
+  - Policies stay small: Sonnet 5.5's final rule sets have 11–35 rules (median 20), against 14–112 for R4.
+- **Checks:** each run's `config.json` matches its condition file; no errors or invalid answers; every final policy covers every reachable situation; the exact check (interval iteration) changes no verdict.
+- **Costs** (per grid): Sonnet 5 15.2k input / 3.8k output tokens, Sonnet 5.5 4.5k / 5.9k (mostly thinking; it stops early when solved), qwen 13–17k / 6–7k. Tokenizers differ. $1.02 and $1.37 per 20-grid run; 7 and 10 minutes, with concurrent hosted requests, so not comparable with local timings.
+- **Reading:** with a strong model the loop reaches the ceiling, so qwen's results are limited by the model, not by the loop or the verification. Sonnet 5 without thinking is already far ahead of qwen; thinking (with the newer version) closes the rest. Confounds: Sonnet 5.5 differs in both version and thinking, and each Sonnet condition is a single unseeded run.
