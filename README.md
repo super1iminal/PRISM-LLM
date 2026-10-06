@@ -39,7 +39,7 @@ PRISM-Guided-Learning/
   out/results/       run outputs
 DECISIONS.md         design decisions to review
 docs/                semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids),
-                     openrouter.md (running on OpenRouter, and its smoke test), testing_openrouter.md (how it was tested)
+                     openrouter.md (running on OpenRouter, and its smoke test)
 ```
 
 ## Running (from `PRISM-Guided-Learning/`)
