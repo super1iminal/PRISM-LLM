@@ -212,5 +212,5 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
     - Thinking is off: 590–2,150 output tokens per call, as in the local runs, and the first round's prompt is 1,645 tokens (local: 1,649). DeepInfra accepts the strict schema.
     - About 75 tokens/s per request (local Ollama: ~59). Lockstep's two requests per batch run in parallel, so 2 grids take 125 s (local lockstep: 4:04); one grid with threads takes 93 s.
     - The three steps cost $0.003.
-  - **[REVIEW]** OpenRouter runs are a condition of their own: providers serve FP8/BF16 weights, not `q4_K_M`, and hosted seeds are not guaranteed to reproduce samples. Name the model, provider and quantization in their results.
-  - **[REVIEW]** `providers: []` lets OpenRouter route each request to any provider, so experiments pin one. DeepInfra (fp8) passed the smoke test; NextBit (int4, closer to the local 4-bit weights) is the other provider of `qwen/qwen3-14b` that supports every parameter sent.
+  - OpenRouter runs are a condition of their own, not comparable with the local runs (Asher: fine): providers serve FP8/BF16 weights, not `q4_K_M`, and hosted seeds are not guaranteed to reproduce samples. Name the model, provider and quantization in their results.
+  - `providers: []` lets OpenRouter route each request to any provider, so experiments pin one. DeepInfra (fp8) passed the smoke test; NextBit (int4, closer to the local 4-bit weights) is the other provider of `qwen/qwen3-14b` that supports every parameter sent.
