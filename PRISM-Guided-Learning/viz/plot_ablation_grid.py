@@ -212,7 +212,8 @@ def main():
         f"({gain:g}).",
         "S4 drops the example block, including the catch-all example rule (the instruction stays). V1 keeps the prompt's "
         "shape but blames random rules. Also run: U1, the symbolic reference on UUV with the energy budget.",
-        "Also run: sonnet5 and sonnet5_5, R4 with Claude Sonnet 5 and 5.5 instead of qwen (one unseeded run each).",
+        "Also run: sonnet5 and sonnet5_5, R4 with Claude Sonnet 5 and 5.5 instead of qwen, and U1_sonnet5_5 (one unseeded "
+        "run each).",
     ], out_run, families)
     draw(not_run_rows(seeds, hours), "Ablations not run", common, [
         f"GPU hours per legacy run: {hours['legacy_visible']} h (estimate: {hours['legacy']} h measured with the "

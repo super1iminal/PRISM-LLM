@@ -28,7 +28,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `approach` | `symbolic` | `symbolic` or `legacy` planner | B1 |
 | `domain.name` / `domain.dataset` | `gridworld` / `grid_20_balanced.csv` | case study and instances | — |
 | `domain.visible_extra` | `[obs_idx]` | extra state variables rules (and legacy) may read, if the model has them | `pre_phase_a` (hidden) |
-| `llm.model` | `qwen3:14b-q4_K_M` | model name for the backend: an Ollama tag, or an OpenRouter id such as `qwen/qwen3-14b` | `sonnet5`, `sonnet5_5` (Claude Sonnet on OpenRouter) |
+| `llm.model` | `qwen3:14b-q4_K_M` | model name for the backend: an Ollama tag, or an OpenRouter id such as `qwen/qwen3-14b` | `sonnet5`, `sonnet5_5`, `U1_sonnet5_5` (Claude Sonnet on OpenRouter) |
 | `llm.think` | `false` | thinking mode (OpenRouter: `reasoning.enabled`) | `sonnet5_5` (its endpoints refuse to turn it off) |
 | `llm.num_ctx` / `llm.num_predict` | 16384 / 8192 | context and output token limits (with thinking, the output limit covers thinking and answer) | `sonnet5_5` (16384 output) |
 | `llm.seed` | `null` | run seed (set per seed by `run_ablation.py`); each call uses a seed derived from it and the call's index within the instance | seeds 1, 2 |

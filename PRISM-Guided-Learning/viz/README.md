@@ -16,8 +16,8 @@ Facts about a run (dataset, model, round budget) are read from its `config.json`
 | `plot_comparison.py` | grid-by-grid legacy vs one symbolic run, plus a CSV | `grid20.yaml`, `grid20_default.yaml` |
 | `plot_runs.py` | legacy vs up to two symbolic runs (e.g. prompt ablations) by grid size, loop-mode usage and coverage; also a markdown table and a CSV | `catchall_ablation.yaml`, `catchall_ablation_full.yaml` |
 | `plot_budget.py` | success / requirements met / shortfall vs rounds budget k (ablation F1), replaying keep-best on the first k rounds; pools `seed_*` dirs | `budget_grid20.yaml`, `budget_grid20_default.yaml` |
-| `plot_domain.py` | any domain: final policies and the domain's reference policies against the range any controller achieves, per instance and requirement | `uuv.yaml` |
-| `plot_uuv_summary.py` | UUV: our policy vs the paper's controller (probabilities, policy size, the paper's Table 2 costs) | `uuv_summary.yaml` |
+| `plot_domain.py` | any domain: final policies and the domain's reference policies against the range any controller achieves, per instance and requirement | `uuv.yaml`, `uuv_sonnet.yaml` |
+| `plot_uuv_summary.py` | UUV: our policy vs the paper's controller (probabilities, policy size, the paper's Table 2 costs) | `uuv_summary.yaml`, `uuv_summary_sonnet.yaml` |
 | `ablation_summary.py` | a set of conditions under `out/results/ablations/` on one page (`SUMMARY.md` + figures, paired tests vs each reference): every ablation, or the model comparison. Rerun after each run | `ablation_summary.yaml`, `sonnet_vs_qwen.yaml` |
 | `plot_ablation_grid.py` | the ablation design grids in `docs/` (`ablation_run.png`, `ablation_not_run.png`). Edit its row tables when the plan changes | `ablation_grid.yaml` |
 | `../src/compare.py` | end-to-end legacy vs symbolic report (`report.md`, `per_sample.csv`) | `compare_grid20.yaml`, `compare_grid20_default.yaml` |
