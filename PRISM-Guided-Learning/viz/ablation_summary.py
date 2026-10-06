@@ -1,13 +1,15 @@
-"""One page with every ablation result so far: tables, paired tests and figures.
+"""One page with the results of a set of conditions: tables, paired tests and figures.
 
-Reads every finished run under <root>/<condition>/seed_<k>/ and rewrites <root>/summary/ (SUMMARY.md +
-PNGs). Safe to rerun at any time; unfinished runs are listed as pending.
+Reads every finished run under <root>/<condition>/seed_<k>/ and rewrites the `out` directory (SUMMARY.md +
+PNGs). Safe to rerun at any time; unfinished runs are listed as pending. configs/plot/ablation_summary.yaml
+covers the ablations; other configs compare other sets of conditions (e.g. models).
 
 Usage (from PRISM-Guided-Learning/): python viz/ablation_summary.py configs/plot/ablation_summary.yaml
 Settings: the plot config (PlotConfig below): which conditions, their families and references, the
 budget groups, the UUV section and the text. Grid counts, model and round budgets come from the runs.
 """
 import datetime
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +37,8 @@ class PlotConfig:
     """configs/plot/ablation_summary.yaml documents each key."""
     script: str
     root: str
+    out: str
+    heading: str
     conditions: Dict[str, Dict[str, Optional[str]]]
     reference_lines: Dict[str, str]
     budget_groups: Dict[str, List[str]]
@@ -279,19 +283,20 @@ def plot_budget(runs, out, cfg: PlotConfig):
     data = pd.concat(curves)
     summary = data.groupby(["condition", "k"]).met.mean().reset_index()
     groups = list(cfg.budget_groups.items())
-    fig, axes = plt.subplots(1, len(groups), figsize=(16, 4.4), facecolor=SURFACE, sharey=True)
-    for ax, (title, members) in zip(axes, groups):
+    fig, axes = plt.subplots(1, len(groups), figsize=(max(7.0, 16 * len(groups) / 3), 4.4), facecolor=SURFACE,
+                             sharey=True, squeeze=False)
+    for ax, (title, members) in zip(axes[0], groups):
         for i, condition in enumerate([m for m in members if m in set(summary.condition)]):
             d = summary[summary.condition == condition]
             ls = "--" if condition in cfg.reference_lines and members[0] != condition else "-"
             ax.plot(d.k, d.met, color=LINE_COLORS[i % len(LINE_COLORS)], lw=2, marker="o", ms=5, ls=ls,
-                    label=f"{condition} {cfg.conditions[condition]['change'].lower()}")
+                    label=f"{condition}: {cfg.conditions[condition]['change']}")
             ax.annotate(f"{d.met.iloc[-1]:.2f}", (d.k.iloc[-1], d.met.iloc[-1]), xytext=(5, 0),
                         textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
         style(ax, title, "requirements met (mean per grid)")
         ax.set_xticks(range(1, int(summary.k.max()) + 1))
         ax.set_xlabel("rounds budget k", color=INK_2, fontsize=9)
-        ax.legend(frameon=False, fontsize=7.5, loc="lower right")
+        ax.legend(frameon=False, fontsize=7.5, loc="best")
     fig.suptitle("Requirements met by the kept policy after k rounds (seeds pooled)", x=0.01, ha="left",
                  fontsize=13, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
@@ -363,10 +368,10 @@ def uuv_table(root: Path, condition: str) -> str:
             "|---|---|---|---|---|---|---|\n" + "\n".join(rows))
 
 
-def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch: Batch):
+def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch: Batch, config_path: str):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# Ablation results (auto-generated {now})", "", batch.text(cfg.intro), "",
-             "Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.", ""]
+    lines = [f"# {cfg.heading} (auto-generated {now})", "", batch.text(cfg.intro), "",
+             f"Regenerate: `python viz/ablation_summary.py {config_path}`.", ""]
     if pending:
         lines += ["**Pending runs:** " + ", ".join(pending), ""]
     lines += ["## Overview", "", "![conditions](conditions.png)", "",
@@ -374,13 +379,14 @@ def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch:
               "## Budget curves", "", "![budget](budget.png)", "",
               "## Loop mechanics (symbolic)", "", "![mechanics](mechanics.png)", "",
               "## Outcomes (per grid, seeds pooled)", "",
-              "| cond | change | seeds | req. met: mean (seed range) | median [IQR] | best case | "
+              "| cond | change | seeds | solved (of solvable) | req. met: mean (seed range) | median [IQR] | best case | "
               "shortfall: median [IQR] | uncovered % | vs | Δ met [95% CI] | p | feedback rounds improved |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in table.iterrows():
         improved = f"{r.feedback_improved:.0%}" if "feedback_improved" in r and pd.notna(r.feedback_improved) else ""
         diff = f"{r['diff']:+.2f} {r.ci}" if r.vs else ""
-        lines.append(f"| {r.condition} | {r.change} | {r.seeds} | {r.met:.2f} ({r.met_seed_min:.2f} to "
+        lines.append(f"| {r.condition} | {r.change} | {r.seeds} | {r.solved:g}/{len(batch.solvable)} | "
+                     f"{r.met:.2f} ({r.met_seed_min:.2f} to "
                      f"{r.met_seed_max:.2f}) | {r.met_median:.0f} [{r.met_q1:.0f} to {r.met_q3:.0f}] | {r.met_best:.2f} | "
                      f"{r.short_median:.2f} [{r.short_q1:.2f} to {r.short_q3:.2f}] | {r.uncovered:.0f} | {r.vs} | "
                      f"{diff} | {'' if pd.isna(r.p) else f'{r.p:.3f}'} | {improved} |")
@@ -399,10 +405,11 @@ def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch:
     (out_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main():
-    cfg = plot_config(PlotConfig, "ablation_summary")
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    cfg = plot_config(PlotConfig, "ablation_summary", argv)
     root = Path(cfg.root)
-    out_dir = root / "summary"
+    out_dir = Path(cfg.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     runs, pending = finished_runs(root, cfg.conditions)
@@ -426,7 +433,7 @@ def main():
     if cfg.uuv:
         plot_uuv(root, cfg.uuv["condition"], out_dir / "uuv.png")
         uuv = uuv_table(root, cfg.uuv["condition"])
-    write_markdown(out_dir, table, budget, pending, uuv, cfg, batch)
+    write_markdown(out_dir, table, budget, pending, uuv, cfg, batch, Path(argv[0]).as_posix())
     print(out_dir / "SUMMARY.md")
 
 

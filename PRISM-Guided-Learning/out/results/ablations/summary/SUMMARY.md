@@ -1,4 +1,4 @@
-# Ablation results (auto-generated 2026-10-05 18:31)
+# Ablation results (auto-generated 2026-10-06 05:21)
 
 Gridworld, 20 grids (19 solvable), qwen3:14b, 5 rounds, obstacle phase visible to rules and legacy. Symbolic numbers are worst case. Paired tests compare per-grid means (seeds averaged) against the reference with a sign-flip permutation test; with 20 grids and 2 seeds, treat p > 0.05 as noise.
 
@@ -22,20 +22,20 @@ Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.
 
 ## Outcomes (per grid, seeds pooled)
 
-| cond | change | seeds | req. met: mean (seed range) | median [IQR] | best case | shortfall: median [IQR] | uncovered % | vs | Δ met [95% CI] | p | feedback rounds improved |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| B2 | Symbolic reference (restart after 2 stalls) | 2 | 4.45 (4.20 to 4.70) | 4 [4 to 5] | 4.75 | 2.25 [1.40 to 3.46] | 3 |  |  |  | 33% |
-| R1 | Never restart | 2 | 4.12 (3.95 to 4.30) | 4 [3 to 5] | 4.62 | 2.90 [1.72 to 3.88] | 6 | B2 | -0.33 [-0.65, +0.03] | 0.102 | 26% |
-| R2 | Restart after 1 stall | 2 | 4.72 (4.40 to 5.05) | 4 [4 to 6] | 4.80 | 2.33 [1.66 to 3.09] | 1 | B2 | +0.28 [-0.20, +0.75] | 0.319 | 33% |
-| R3 | Restart every 3rd round | 2 | 4.65 (4.60 to 4.70) | 4 [4 to 5] | 4.67 | 2.22 [1.47 to 3.35] | 2 | B2 | +0.20 [-0.03, +0.45] | 0.172 | 33% |
-| R4 | Restart on slow progress (the default) | 2 | 4.95 (4.80 to 5.10) | 5 [4 to 6] | 5.03 | 2.27 [1.66 to 3.09] | 1 | B2 | +0.50 [+0.05, +0.93] | 0.055 | 35% |
-| R5 | Always restart (no feedback) | 2 | 4.72 (4.65 to 4.80) | 5 [4 to 6] | 4.78 | 2.29 [1.90 to 3.18] | 2 | B2 | +0.28 [-0.20, +0.78] | 0.342 |  |
-| D7 | Restart on slow progress, 7 rounds | 2 | 5.20 (4.95 to 5.45) | 5 [4 to 6] | 5.30 | 1.96 [1.13 to 2.48] | 1 | R4 | +0.25 [-0.03, +0.53] | 0.123 | 35% |
-| S1 | Results table only | 2 | 4.08 (3.75 to 4.40) | 4 [3 to 5] | 4.53 | 2.58 [2.03 to 3.57] | 4 | B2 | -0.38 [-0.82, +0.07] | 0.171 | 20% |
-| S4 | No examples in the prompt | 2 | 4.67 (4.65 to 4.70) | 5 [4 to 6] | 4.80 | 2.54 [2.02 to 3.54] | 5 | B2 | +0.23 [-0.28, +0.78] | 0.479 | 39% |
-| S5 | Blame by one-step regret | 2 | 4.58 (4.40 to 4.75) | 4 [4 to 5] | 4.58 | 2.75 [1.69 to 3.71] | 1 | B2 | +0.12 [-0.33, +0.57] | 0.683 | 23% |
-| V1 | Blame on random rules/states | 2 | 4.17 (4.15 to 4.20) | 4 [3 to 5] | 4.50 | 2.88 [1.70 to 3.86] | 4 | B2 | -0.28 [-0.75, +0.17] | 0.319 | 32% |
-| V2 | No blame section | 2 | 4.40 (4.15 to 4.65) | 4 [4 to 5] | 4.88 | 2.32 [1.59 to 3.85] | 8 | B2 | -0.05 [-0.65, +0.50] | 0.931 | 26% |
+| cond | change | seeds | solved (of solvable) | req. met: mean (seed range) | median [IQR] | best case | shortfall: median [IQR] | uncovered % | vs | Δ met [95% CI] | p | feedback rounds improved |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| B2 | Symbolic reference (restart after 2 stalls) | 2 | 0/19 | 4.45 (4.20 to 4.70) | 4 [4 to 5] | 4.75 | 2.25 [1.40 to 3.46] | 3 |  |  |  | 33% |
+| R1 | Never restart | 2 | 0/19 | 4.12 (3.95 to 4.30) | 4 [3 to 5] | 4.62 | 2.90 [1.72 to 3.88] | 6 | B2 | -0.33 [-0.65, +0.03] | 0.102 | 26% |
+| R2 | Restart after 1 stall | 2 | 0/19 | 4.72 (4.40 to 5.05) | 4 [4 to 6] | 4.80 | 2.33 [1.66 to 3.09] | 1 | B2 | +0.28 [-0.20, +0.75] | 0.319 | 33% |
+| R3 | Restart every 3rd round | 2 | 0/19 | 4.65 (4.60 to 4.70) | 4 [4 to 5] | 4.67 | 2.22 [1.47 to 3.35] | 2 | B2 | +0.20 [-0.03, +0.45] | 0.172 | 33% |
+| R4 | Restart on slow progress (the default) | 2 | 0/19 | 4.95 (4.80 to 5.10) | 5 [4 to 6] | 5.03 | 2.27 [1.66 to 3.09] | 1 | B2 | +0.50 [+0.05, +0.93] | 0.055 | 35% |
+| R5 | Always restart (no feedback) | 2 | 0/19 | 4.72 (4.65 to 4.80) | 5 [4 to 6] | 4.78 | 2.29 [1.90 to 3.18] | 2 | B2 | +0.28 [-0.20, +0.78] | 0.342 |  |
+| D7 | Restart on slow progress, 7 rounds | 2 | 0/19 | 5.20 (4.95 to 5.45) | 5 [4 to 6] | 5.30 | 1.96 [1.13 to 2.48] | 1 | R4 | +0.25 [-0.03, +0.53] | 0.123 | 35% |
+| S1 | Results table only | 2 | 0/19 | 4.08 (3.75 to 4.40) | 4 [3 to 5] | 4.53 | 2.58 [2.03 to 3.57] | 4 | B2 | -0.38 [-0.82, +0.07] | 0.171 | 20% |
+| S4 | No examples in the prompt | 2 | 0/19 | 4.67 (4.65 to 4.70) | 5 [4 to 6] | 4.80 | 2.54 [2.02 to 3.54] | 5 | B2 | +0.23 [-0.28, +0.78] | 0.479 | 39% |
+| S5 | Blame by one-step regret | 2 | 0/19 | 4.58 (4.40 to 4.75) | 4 [4 to 5] | 4.58 | 2.75 [1.69 to 3.71] | 1 | B2 | +0.12 [-0.33, +0.57] | 0.683 | 23% |
+| V1 | Blame on random rules/states | 2 | 0/19 | 4.17 (4.15 to 4.20) | 4 [3 to 5] | 4.50 | 2.88 [1.70 to 3.86] | 4 | B2 | -0.28 [-0.75, +0.17] | 0.319 | 32% |
+| V2 | No blame section | 2 | 0/19 | 4.40 (4.15 to 4.65) | 4 [4 to 5] | 4.88 | 2.32 [1.59 to 3.85] | 8 | B2 | -0.05 [-0.65, +0.50] | 0.931 | 26% |
 
 ## Costs (mean per grid)
 
