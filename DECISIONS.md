@@ -29,6 +29,22 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - At horizon 25 that is better than 1–2–3–Go!'s tree (0.869) and than Sonnet 5.5's best base-vocabulary rule set (0.990). The other rule sets transfer less far (from 8, 10, 12: 0.5511 only up to 10; 0.78 from 12).
 - **Pac-Man, Sonnet 5.5, general vocabulary** (`sonnet5_5_rl_pacman`, one run): solved horizons 8, 10, 12 (base vocabulary: 8–14). **Its horizon-10 rule set (6 rules: `!wall & !nearer_g0 & !nearer_g1` -> each direction in turn, then `wall -> any`, `true -> any`) holds the optimum on horizons 8–18**, so a rule set written for 10 moves is certified for 12, 14, 16 and 18, including 16, which Sonnet could not solve directly with either vocabulary. It reaches 0.639 at horizon 20 and 0.763 at 25, against 1–2–3–Go!'s 0.869 at 25. The horizon-12 rule set behaves the same.
 - **Reading (Pac-Man):** general rules carry across horizons much further than base-vocabulary rules (which fail from 16 on, 0.99 at 25), with one model call per instance and no rule changes. Not yet certified beyond 18 against the 0.56 threshold; one run per condition.
+- **Gridworld, general vocabulary on `grid_20_large`** (one unseeded run per condition, restart on slow progress; page `out/results/rule_language_grid/`, config `configs/plot/rule_language_grid.yaml`). Feature sets: v1 = `wall`, `hazard`, `toward`; v2 adds `obstacle` (the moving obstacle on the target cell after the move) and `risky` (a slip could land on a hazard); `+ closer` adds the shortest-path feature. Against the base vocabulary (`haiku_large_R4`, 2 runs: 12/20 solved, 8.18 met):
+  - Haiku v1: 6/20 solved, 6.56 met (−1.53, p = 0.013). Haiku v1 + closer: 9/20, 7.90 (−0.28, p = 0.26). Haiku v2: 3/20, 6.39 (−1.83, p = 0.005). Haiku v2 + closer: 9/20, 7.95 (−0.26, p = 0.33). Exploratory tests.
+  - Sonnet 5.5 v1 (`sonnet5_5_rl_grid_large`, not on the page: different prices): **19/20 solved**.
+  - Five Haiku grids (v1: 14, 18; v2: 9, 19; v2 + closer: 19) ended with an error: their joint LP query outlived `prism.timeout_s`, which did not take effect on Windows (fixed, "Solvers, joint queries and seeds"). They count as unsolved and are left out of the means and tests.
+- **Gridworld transfer** (`transfer.py`, each run's final rules frozen and certified on all 20 grids; `<run>/transfer_grid_20_large.csv`):
+
+  | run | certified on own grid | on the other grids | best single rule set | grids any rule set certifies |
+  |---|---|---|---|---|
+  | Sonnet 5.5 v1 | 19/20 | 9/380 (2%) | 3 | 19 |
+  | Haiku v1 | 6/18 | 2/342 (1%) | 3 | 7 |
+  | Haiku v2 | 3/18 | 3/342 (1%) | 3 | 5 |
+  | Haiku v1 + closer | 9/20 | 138/380 (36%) | 9 | 9 |
+  | Haiku v2 + closer | 9/19 | 132/361 (37%) | 9 | 9 |
+
+  - Without `closer`, rule sets are specific to their grid even though they name no coordinates: Sonnet's pass their own grid and almost nothing else. With `closer`, Haiku writes generic "move closer" rule sets that all pass the same 9 grids, exactly the ones it solved, and none of the others. The hand-written template certifies 10/20 (positioning checks, above).
+- **Reading (gridworld):** rules written for one grid do not transfer: they overfit to it, or (with `closer`) are generic and only solve the grids a generic policy solves. This is the case for **multi-instance training** (one rule set verified on several training grids per round, solved only when it passes all of them, then frozen and certified on held-out and larger grids), the next experiment. For the Oct 10 checkpoint (top): transfer holds on Pac-Man, not yet on gridworld.
 
 ## Positioning checks before the transfer experiment (Oct 8)
 Details in `docs/positioning.md` (the related-work survey's phase 2; the survey is `docs/related_work_survey.md`).
