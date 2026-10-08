@@ -42,14 +42,13 @@ def test_crash_range_over_controllers(domain):
 
 
 def test_decisions_only_at_crossings(domain):
-    module = type(domain).context.__globals__
     verifier = PolicyVerifier(domain, instance(10), CFG)
     v = verifier.verify(verifier.empty_policy())
     pos = v.result.positions
     cells = {(s[pos["xP"]], s[pos["yP"]]) for s in v.result.states}
     deciding = {(s[pos["xP"]], s[pos["yP"]]) for s, d in zip(v.result.states, v.decisions) if d}
     assert cells <= set(domain.walkable())
-    assert deciding <= set(module["CROSSINGS"]) and len(deciding) > 1
+    assert deciding <= set(domain.crossings()) and len(deciding) > 1
 
 
 def test_thresholds_separate_reference_policies(domain):

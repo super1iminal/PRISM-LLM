@@ -7,7 +7,8 @@ paper's managing subsystem: while searching, it picks the altitude (low, med, hi
 visibility allows. Everything else is forced, exactly as in the paper.
 
 Dataset rows (CSV): name, min_visib, max_visib, current_prob, inspect, deadline,
-safe_threshold, on_time_threshold.
+safe_threshold, on_time_threshold, and optionally energy_threshold and fail_scale (every thruster-failure
+probability times this factor; default 1, the paper's values).
 """
 from pathlib import Path
 from typing import Any, Dict, List
@@ -38,6 +39,20 @@ STATES = {
 FOLLOW = {"p_follow": 0.92, "p_lost": 0.05, "p_fail": 0.03}
 
 
+def scaled_failures(rows: List[Dict[str, Any]], absorbing: str, k: float) -> List[Dict[str, Any]]:
+    """`rows` with every `p_fail` times `k`; the probability `absorbing` (staying in the same state) takes up the
+    difference. k = 1 returns the rows unchanged."""
+    if k == 1:
+        return rows
+    out = [dict(r) for r in rows]
+    for r in out:
+        r[absorbing] = round(r[absorbing] - (k - 1) * r["p_fail"], 10)
+        r["p_fail"] = round(k * r["p_fail"], 10)
+        if r[absorbing] < 0:
+            raise ValueError(f"fail_scale {k} makes {absorbing} negative")
+    return out
+
+
 class UUV(Domain):
 
     def load_instances(self, dataset: str) -> List[Instance]:
@@ -57,6 +72,8 @@ class UUV(Domain):
                 # Optional expected-energy budget (blank or missing column: no energy requirement)
                 "energy_threshold": (float(row["energy_threshold"]) if "energy_threshold" in row
                                      and pd.notna(row["energy_threshold"]) else None),
+                "fail_scale": (float(row["fail_scale"]) if "fail_scale" in row
+                               and pd.notna(row["fail_scale"]) else 1.0),
             }))
         return instances
 
@@ -72,9 +89,9 @@ class UUV(Domain):
         visib = list(range(d["min_visib"], d["max_visib"] + 1))
         d.update({
             "infl_tf": INFL_TF,
-            "altitudes": ALTITUDES,
+            "altitudes": scaled_failures(ALTITUDES, "p_stay", d.get("fail_scale", 1.0)),
             "states": STATES,
-            "follow": FOLLOW,
+            "follow": scaled_failures([FOLLOW], "p_follow", d.get("fail_scale", 1.0))[0],
             "init_visib": int(span / 2 + 0.5),   # PRISM's round((max_visib-min_visib)/2)
             "visib_bands": [
                 {"name": "poor", "levels": [v for v in visib if v < med_visib], "allowed": ["low"]},
