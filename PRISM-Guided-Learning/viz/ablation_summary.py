@@ -238,7 +238,7 @@ def _tests(table, planned, conditions) -> list:
     (label, diff, lo, hi, p text, colour) each."""
     color = {c: FAMILY_COLORS[m["family"]] for c, m in conditions.items()}
     if len(planned):
-        return [(f"{r.condition} vs {r.reference}, {r.at}", r["diff"], r.lo, r.hi, f"p={r.p:.3f}, Holm {r.p_holm:.3f}",
+        return [(f"{r.condition} vs {r.reference}, {r['at']}", r["diff"], r.lo, r.hi, f"p={r.p:.3f}, Holm {r.p_holm:.3f}",
                  color[r.condition]) for _, r in planned.iterrows()]
     return [(f"{r.condition} vs {r.vs}", r["diff"], *[float(v) for v in r.ci.strip("[]").split(",")], f"p={r.p:.2f}",
              color[r.condition]) for _, r in table[table.vs != ""].iterrows()]
@@ -365,9 +365,9 @@ def plot_budget(curves, out, cfg: PlotConfig):
                 ax.legend(frameon=False, fontsize=7.5, loc="best")
             ax.set_xlabel(xlabel, color=INK_2, fontsize=9)
     fig.suptitle("Requirements met by the kept policy after k rounds (seeds pooled)" +
-                 ("; below, each k at the mean spend through round k" if cfg.cost else ""), x=0.01, ha="left",
+                 ("\nbelow: each round budget k at the mean spend through round k" if cfg.cost else ""), x=0.01, ha="left",
                  fontsize=13, fontweight="bold", color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.92 if len(xs) == 1 else 0.95))
+    fig.tight_layout(rect=(0, 0, 1, 0.92 if len(xs) == 1 else 0.93))
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
     return summary.pivot(index="condition", columns="k", values="met")
@@ -450,7 +450,7 @@ def write_markdown(out_dir, table, budget, planned, pending, uuv, cfg: PlotConfi
                   "against the reference given, on each grid, the condition's mean spend there"
                   + (f" ({cfg.cost['label']})." if cfg.cost else "."), "",
                   "| comparison | at | grids | Δ met [95% CI] | p | p (Holm) |", "|---|---|---|---|---|---|"]
-        lines += [f"| {r.condition} vs {r.reference} | {r.at} | {r.n} | {r['diff']:+.2f} [{r.lo:+.2f}, {r.hi:+.2f}] | "
+        lines += [f"| {r.condition} vs {r.reference} | {r['at']} | {r.n} | {r['diff']:+.2f} [{r.lo:+.2f}, {r.hi:+.2f}] | "
                   f"{r.p:.3f} | {r.p_holm:.3f} |" for _, r in planned.iterrows()]
         lines.append("")
     lines += ["## Overview", "", "![conditions](conditions.png)", "",

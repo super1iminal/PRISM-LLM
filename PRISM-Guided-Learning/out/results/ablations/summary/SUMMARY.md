@@ -1,4 +1,4 @@
-# Ablation results (auto-generated 2026-10-08 04:25)
+# Ablation results (auto-generated 2026-10-08 07:39)
 
 Gridworld, 20 grids (19 solvable), qwen3:14b, 5 rounds, obstacle phase visible to rules and legacy. Symbolic numbers are worst case. Paired tests compare per-grid means (seeds averaged) against the reference with a sign-flip permutation test. These tests are exploratory: there are many of them and no correction for multiple comparisons, so a single p near 0.05 is what chance alone would give.
 

@@ -294,4 +294,17 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
   3. restart after 2 stalls vs pure resampling at equal cost: on each grid, pure resampling gets the feedback condition's mean spend on that grid, cost at Haiku 5.5's prices ($0.10/M input, $0.50/M output tokens); every run keeps at least its first round, whose prompt is the same in every condition;
   4. restart on slow progress vs pure resampling at equal cost.
 - Everything else (solved counts, rounds to solve, the two feedback conditions against each other) is exploratory.
+- **Results (Oct 8): feedback beats pure resampling, in all four planned comparisons** (requirements met per grid, Holm-corrected over the four):
+
+  | comparison | Δ met [95% CI] | p (Holm) |
+  |---|---|---|
+  | restart after 2 stalls vs pure resampling, 5 rounds | +1.68 [+1.00, +2.40] | < 0.001 |
+  | restart on slow progress vs pure resampling, 5 rounds | +1.43 [+0.80, +2.10] | 0.001 |
+  | restart after 2 stalls vs pure resampling, equal cost | +1.43 [+0.88, +2.00] | 0.001 |
+  | restart on slow progress vs pure resampling, equal cost | +1.27 [+0.62, +1.98] | 0.002 |
+
+  - Final (full budget): restart after 2 stalls 8.43 met, 14/20 solved; restart on slow progress 8.18, 12/20; pure resampling with 10 rounds 7.30, 5.5/20.
+  - Round 1 is the same prompt in every condition: 4.78–5.22, so about ±0.2 is noise. The feedback conditions jump in round 2 (7.10–7.30) while resampling reaches 5.97; resampling's 10th round (7.30) does not reach the feedback conditions' 2nd.
+  - Cost per grid: $0.015–0.016 (feedback), $0.021 (resampling, 10 rounds); about $1 for the six runs.
+  - **Reading:** with qwen on small grids, resampling was ahead; with a stronger model on harder grids, quantitative feedback helps clearly, at equal rounds and at equal cost. Exploratory: restart after 2 stalls vs restart on slow progress (8.43 vs 8.18) is not a planned comparison.
 - Page: `out/results/haiku_large/SUMMARY.md` (`configs/plot/haiku_large.yaml`). The plan first called restart after 2 stalls "the default loop"; the default retry is restart on slow progress, so the names above were corrected after the commit that fixed the plan (the comparisons are unchanged).
