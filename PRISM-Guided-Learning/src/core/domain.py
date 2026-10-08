@@ -191,7 +191,7 @@ def load_domain(name: str, visible_extra: Sequence[str] = ()) -> Domain:
 
 # ---------------------------------------------------------------- model parsing helpers
 
-_CONST_RE = re.compile(r"^\s*const\s+int\s+(\w+)\s*=\s*([^;]+);", re.M)
+_CONST_RE = re.compile(r"^\s*const\s+(?:int\s+)?(\w+)\s*=\s*([^;]+);", re.M)   # untyped constants are int
 _INT_VAR_RE = re.compile(r"^\s*(\w+)\s*:\s*\[([^\]]+?)\.\.([^\]]+?)\]", re.M)
 _BOOL_VAR_RE = re.compile(r"^\s*(\w+)\s*:\s*bool\b", re.M)
 

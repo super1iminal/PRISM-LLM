@@ -13,7 +13,7 @@ A rule set is an ordered list `R = ⟨(c_1, a_1), …, (c_n, a_n)⟩`, where eac
 1. **Deciding rule:** `first(v) = min{ j : v ⊨ c_j }`, or `⊥` if no rule matches. First match wins, so overlapping rules never produce nondeterminism.
 2. **Allowed actions:** `Allow(s) = {a_first(obs(s))}` if `first(obs(s)) ≠ ⊥`, else all of `A`.
 3. **Induced MDP** `M_R`: same states and transitions as `M`, but at each `s` only the choices whose label is in `Allow(s)` or not in `A`.
-4. **Decision states:** `s` is a decision state if its choices in `M` differ (forced states, where every choice has the same successor distribution, are excluded). It is **uncovered** if it is a decision state and `first(obs(s)) = ⊥`. Coverage counts distinct `obs` values over the reachable decision states of `M_R`.
+4. **Decision states:** `s` is a decision state if its choices in `M` that carry a policy action differ (forced states are excluded: those where these choices all have the same successor distribution, including states with at most one of them; other choices, such as forced moves under non-policy labels or unlabelled environment nondeterminism, are not the policy's to make and stay unrestricted). It is **uncovered** if it is a decision state and `first(obs(s)) = ⊥`. Coverage counts distinct `obs` values over the reachable decision states of `M_R`.
 
 Domains must keep every policy action enabled in every decision state (gridworld and UUV do), so restricting `Allow(s)` never deadlocks.
 

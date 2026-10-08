@@ -135,16 +135,21 @@ class PolicyVerifier:
         return self._optimum
 
     def forced_states(self) -> Set[StateKey]:
-        """States of the bare MDP where every choice has the same successor distribution, cached.
+        """States of the bare MDP where the policy cannot change anything, cached: among the choices
+        labelled with a policy action, fewer than two distinct successor distributions.
 
-        No policy can change anything there, so they are not decision points: they do not count as
-        situations and are left out of the feedback.
+        Other choices are not the policy's to make: forced moves under other labels, or unlabelled
+        nondeterminism such as Pac-Man's idle step once both ghosts are gone. These states are not
+        decision points: they do not count as situations and are left out of the feedback.
         """
         if self._forced is None:
             result = self._optimum[2] if self._optimum else self.runner.run(self.model, [], export_transitions=True)
+            actions = set(self.spec.actions)
             self._forced = set()
             for state, choices in zip(result.states, result.choices):
-                if len({tuple(sorted((t, round(p, 12)) for t, p in c.successors)) for c in choices}) <= 1:
+                controlled = {tuple(sorted((t, round(p, 12)) for t, p in c.successors))
+                              for c in choices if c.action in actions}
+                if len(controlled) <= 1:
                     self._forced.add(state)
         return self._forced
 

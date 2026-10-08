@@ -65,4 +65,18 @@ The policy plays the paper's managing subsystem: while searching, it picks the a
 (`low`/`med`/`high`) within what the water visibility allows. All other transitions are forced
 (`[step]`, which the policy module does not synchronize on). The bare MDP reproduces every number the
 paper reports (`tests/test_uuv.py`). `data/uuv_paper.csv` holds the paper's two scenarios, and
-`data/calibrate.py` prints the achievable range of each requirement and some reference policies.
+`src/calibrate.py --domain uuv --data uuv_paper.csv` prints the achievable range of each requirement and the
+reference policies in `data/reference_policies.json`.
+
+## pacman
+
+Pac-Man from the Quantitative Verification Benchmark Set (`benchmarks/mdp/pacman`, version 2; Junges and
+Könighofer, from "Safe Reinforcement Learning via Probabilistic Shields", arXiv:1807.06096). `model.prism.j2` is
+the benchmark's `pacman.nm` unchanged except for the planning horizon `MAXSTEPS`, which each instance sets
+(`data/pacman.csv`). Pac-Man decides only at the eight crossings; corridor and corner moves are forced (`[p]`),
+and once both ghosts are gone an unlabelled idle step competes with `[p]`, which is environment nondeterminism
+rather than a decision. Requirement: crash probability ≤ 0.56; the optimum is 0.5511 at every horizon, while
+the worst controller reaches 0.88 (8 moves) and 1.0 (12+). Every simple reference policy fails from 12 moves on
+(`src/calibrate.py --domain pacman --data pacman.csv`). The bare MDP reproduces the benchmark's published
+value and state count for `MAXSTEPS = 5` (`tests/test_pacman.py`). States: 6.9k (10 moves), 97k (15),
+883k (20), 3.7M (25).
