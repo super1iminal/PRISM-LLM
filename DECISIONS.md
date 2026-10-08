@@ -13,6 +13,16 @@ Paper target: **SEAMS 2027** (research track Oct 23; check the official site) or
 - **On hold** until Asher's related-work survey is done.
 - An **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). Reward requirements close a gap in *our core*, not in PRISM, so they don't support an expressiveness argument by themselves.
 
+## Positioning checks before the transfer experiment (Oct 8)
+Details in `docs/positioning.md` (the related-work survey's phase 2; the survey is `docs/related_work_survey.md`).
+- **The position is an intersection.** No work combines LLM-written rules, a stochastic model with several thresholds, exact certification on every instance (held-out and larger ones included) and quantitative feedback; every neighbour has two or three of these. The closest is **1–2–3–Go!** (VMCAI 2025): trees over raw state variables, learned from small instances, certified per larger instance; single reachability objective; parameters can't appear in predicates; no loop, no LLM.
+- **The rule-list form is not ours:** Fern, Yoon and Givan (JAIR 2006) learned first-match decision lists for stochastic PPDDL domains on small instances, judged by simulation.
+- **Hand-written template on gridworld** (`domains/gridworld/data/template_policy.py`; one goal-relative, wall-avoiding rule list for every grid): certifies 10/20 grids of `grid_20_balanced` and 10/20 of `grid_20_large`, against 16/19 and 14/20 for Haiku 5.5's per-instance rules. On 2–3 grids per set it is trapped for good (memoryless navigation in a pocket); the other failures are sequence requirements (slips into future goals) and the moving obstacle. Transfer on gridworld is neither trivial nor hopeless.
+- **The UUV failure-rate family is trivial** (`domains/uuv/data/failure_sweep.py`): with each member's thresholds keeping the paper scenario's slack, the paper's `stay` controller meets every requirement for failure rates 0.5×–3× in both scenarios, and `always_med` covers every North Sea member.
+- **Wording:** "certified on every instance we check" and "sound" (every allowed policy meets every threshold), never "maximally permissive" (CAV 2026: strong safety and strong permissiveness can't both hold for probabilistic safety).
+- **[REVIEW]** Transfer design: expose instance constants (goal coordinates, grid size) and generic sensors (`wall_up`) to the rule language so the LLM writes the relative conditions itself; no shortest-path feature (it would make the policy trivial); compare with 1–2–3–Go! on threshold satisfaction per instance.
+- **[REVIEW]** UUV: drop the failure-rate family, or find one where no simple policy passes (vary visibility ranges, deadlines, inspection lengths), checked with `failure_sweep.py`-style PRISM runs before any LLM run.
+
 ## Setup (answers from kickoff)
 - The symbolic approach makes **one LLM call over the whole state space** (no per-goal decomposition). Rules may refer to progress variables such as `g1`.
 - Rule overlap: **ordered decision list, first match wins**.
