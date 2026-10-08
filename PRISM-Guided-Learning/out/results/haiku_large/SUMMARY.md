@@ -1,4 +1,4 @@
-# Haiku ablation on grid_20_large (auto-generated 2026-10-08 07:39)
+# Haiku ablation on grid_20_large (auto-generated 2026-10-08 09:20)
 
 Gridworld, 20 grids of sizes 9 to 13 (20 solvable), anthropic/claude-haiku-5.5, thinking on, obstacle phase visible to the rules. Two unseeded runs per condition on OpenRouter, Anthropic's endpoint (no Claude endpoint accepts a seed). Symbolic numbers are worst case; the main table reports the exact check's values, the budget curves and planned comparisons the loop's (replayed per round). The main table is each condition's full budget: 5 rounds, or 10 for pure resampling.
 
@@ -41,11 +41,11 @@ Fixed before the runs. Requirements met by the kept policy (worst case, the loop
 
 ## Costs (mean per grid)
 
-| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | spend (USD at Haiku 5.5 prices) |
-|---|---|---|---|---|---|
-| haiku_large_R4 | 16.3k | 26.0k | 8 | 2.8 | 0.0146 |
-| haiku_large_B2 | 17.3k | 27.9k | 6 | 2.8 | 0.0157 |
-| haiku_large_R5 | 24.2k | 38.0k | 20 | 3.8 | 0.0214 |
+| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | rules (final policy) | spend (USD at Haiku 5.5 prices) |
+|---|---|---|---|---|---|---|
+| haiku_large_R4 | 16.3k | 26.0k | 8 | 2.8 | 32.0 | 0.0146 |
+| haiku_large_B2 | 17.3k | 27.9k | 6 | 2.8 | 32.5 | 0.0157 |
+| haiku_large_R5 | 24.2k | 38.0k | 20 | 3.8 | 23.4 | 0.0214 |
 
 ## Requirements met after k rounds
 

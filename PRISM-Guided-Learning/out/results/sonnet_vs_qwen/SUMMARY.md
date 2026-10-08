@@ -1,4 +1,4 @@
-# Claude vs qwen (auto-generated 2026-10-08 04:13)
+# Claude vs qwen (auto-generated 2026-10-08 09:20)
 
 Gridworld, 20 grids (19 solvable), 5 rounds, obstacle phase visible to the rules. Models: qwen3:14b / anthropic/claude-sonnet-5 / anthropic/claude-sonnet-5.5 / anthropic/claude-haiku-5.5. The qwen conditions have 2 seeds each (local Ollama, q4_K_M, thinking off). Each Claude condition is one unseeded run on OpenRouter, Anthropic's endpoint (no Claude endpoint accepts a seed): Sonnet 5 with thinking off, Sonnet 5.5 with thinking on (its endpoints refuse to turn it off) and a 16k output cap, Haiku 5.5 with Sonnet 5.5's settings. Symbolic numbers are worst case; the Claude runs report the exact check's values (interval iteration), the qwen runs the loop's. Paired tests compare per-grid means against R4 with a sign-flip permutation test; with one Claude run per grid, treat p > 0.05 as noise.
 
@@ -32,13 +32,13 @@ Regenerate: `python viz/ablation_summary.py configs/plot/sonnet_vs_qwen.yaml`.
 
 ## Costs (mean per grid)
 
-| cond | input tokens | output tokens | PRISM time (s) | wall time (min) |
-|---|---|---|---|---|
-| B2 | 17.0k | 7.0k | 9 | 3.7 |
-| R4 | 13.0k | 6.2k | 9 | 3.2 |
-| sonnet5 | 15.2k | 3.8k | 8 | 0.7 |
-| sonnet5_5 | 4.5k | 5.9k | 2 | 1.0 |
-| haiku5_5 | 10.5k | 18.2k | 3 | 1.8 |
+| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | rules (final policy) |
+|---|---|---|---|---|---|
+| B2 | 17.0k | 7.0k | 9 | 3.7 | 42.8 |
+| R4 | 13.0k | 6.2k | 9 | 3.2 | 39.0 |
+| sonnet5 | 15.2k | 3.8k | 8 | 0.7 | 28.6 |
+| sonnet5_5 | 4.5k | 5.9k | 2 | 1.0 | 21.6 |
+| haiku5_5 | 10.5k | 18.2k | 3 | 1.8 | 24.5 |
 
 ## Requirements met after k rounds
 
