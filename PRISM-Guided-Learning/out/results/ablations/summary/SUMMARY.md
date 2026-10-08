@@ -1,4 +1,4 @@
-# Ablation results (auto-generated 2026-10-08 08:27)
+# Ablation results (auto-generated 2026-10-08 09:20)
 
 Gridworld, 20 grids (19 solvable), qwen3:14b, 5 rounds, obstacle phase visible to rules and legacy. Symbolic numbers are worst case. Paired tests compare per-grid means (seeds averaged) against the reference with a sign-flip permutation test. These tests are exploratory: there are many of them and no correction for multiple comparisons, so a single p near 0.05 is what chance alone would give.
 
@@ -40,21 +40,21 @@ Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.
 
 ## Costs (mean per grid)
 
-| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | spend (tokens, input + output) |
-|---|---|---|---|---|---|
-| B2 | 17.0k | 7.0k | 9 | 3.7 | 23,969 |
-| R1 | 18.3k | 6.8k | 8 | 3.6 | 25,176 |
-| R2 | 13.7k | 6.4k | 10 | 3.3 | 20,102 |
-| R3 | 15.8k | 6.3k | 10 | 3.4 | 22,084 |
-| R4 | 13.0k | 6.2k | 9 | 3.2 | 19,219 |
-| R5 | 8.8k | 6.2k | 7 | 3.1 | 15,081 |
-| D7 | 17.5k | 9.1k | 14 | 4.7 | 26,580 |
-| S1 | 14.0k | 7.2k | 7 | 3.6 | 21,172 |
-| S4 | 15.7k | 6.0k | 7 | 3.1 | 21,691 |
-| S5 | 16.2k | 6.7k | 8 | 3.4 | 22,856 |
-| V1 | 16.7k | 6.1k | 8 | 3.1 | 22,743 |
-| V2 | 14.0k | 7.2k | 7 | 3.7 | 21,210 |
-| B1 | 101.5k | 50.0k | 8 | 25.7 | 151,490 |
+| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | rules (final policy) | spend (tokens, input + output) |
+|---|---|---|---|---|---|---|
+| B2 | 17.0k | 7.0k | 9 | 3.7 | 42.8 | 23,969 |
+| R1 | 18.3k | 6.8k | 8 | 3.6 | 45.3 | 25,176 |
+| R2 | 13.7k | 6.4k | 10 | 3.3 | 37.0 | 20,102 |
+| R3 | 15.8k | 6.3k | 10 | 3.4 | 38.0 | 22,084 |
+| R4 | 13.0k | 6.2k | 9 | 3.2 | 39.0 | 19,219 |
+| R5 | 8.8k | 6.2k | 7 | 3.1 | 32.4 | 15,081 |
+| D7 | 17.5k | 9.1k | 14 | 4.7 | 37.0 | 26,580 |
+| S1 | 14.0k | 7.2k | 7 | 3.6 | 43.1 | 21,172 |
+| S4 | 15.7k | 6.0k | 7 | 3.1 | 38.0 | 21,691 |
+| S5 | 16.2k | 6.7k | 8 | 3.4 | 38.1 | 22,856 |
+| V1 | 16.7k | 6.1k | 8 | 3.1 | 38.1 | 22,743 |
+| V2 | 14.0k | 7.2k | 7 | 3.7 | 42.4 | 21,210 |
+| B1 | 101.5k | 50.0k | 8 | 25.7 |  | 151,490 |
 
 ## Requirements met after k rounds
 

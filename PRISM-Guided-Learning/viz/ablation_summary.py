@@ -114,9 +114,9 @@ def load_run(condition: str, run_dir: Path, solvable: set) -> pd.DataFrame:
     df["prism_s"] = (per.prism_time.sum() + (per.joint_time.sum() if "joint_time" in raw else 0)
                      if "prism_time" in raw else np.nan)
     if legacy:
-        df["met_best"], df["uncovered_pct"] = df["met"], 0.0
+        df["met_best"], df["uncovered_pct"], df["rules"] = df["met"], 0.0, np.nan
     else:
-        df["uncovered_pct"] = kept_coverage(run_dir)
+        df["uncovered_pct"], df["rules"] = kept_coverage(run_dir), per.final_num_rules.first()
     df["solved"] = df["met"] == len([c for c in df.columns if c.startswith("p_") and not c.startswith("p_best_")])
     df["solvable"] = [sid in solvable for sid in df.index]
     df["condition"], df["seed"], df["approach"] = condition, run_dir.name, "legacy" if legacy else "symbolic"
@@ -203,6 +203,7 @@ def condition_table(data: pd.DataFrame, extra: dict, conditions) -> pd.DataFrame
             "solved": per_seed.apply(lambda g: int((g.solved & g.solvable).sum())).mean(),
             "met": d.met.mean(), "met_seed_min": per_seed.met.mean().min(), "met_seed_max": per_seed.met.mean().max(),
             "met_best": d.met_best.mean(), "shortfall": d.shortfall.mean(), "uncovered": d.uncovered_pct.mean(),
+            "rules": d.rules.mean(),
             "met_median": d.met.median(), "met_q1": d.met.quantile(0.25), "met_q3": d.met.quantile(0.75),
             "short_median": d.shortfall.median(), "short_q1": d.shortfall.quantile(0.25),
             "short_q3": d.shortfall.quantile(0.75), "input_k": d.input_tokens.mean() / 1000,
@@ -229,8 +230,23 @@ def _bar_panel(ax, table, data, col, title, ylabel, fmt, reference_lines):
     for ref, ls in reference_lines.items():
         if ref in set(table.condition):
             ax.axhline(table[table.condition == ref][col].iloc[0], color=INK_2, lw=0.9, ls=ls, zorder=0)
-    ax.set_xticks(x, table.condition)
+    ax.set_xticks(x, wrap(table.condition))
     style(ax, title, ylabel)
+
+
+def wrap(names, width: int = 14) -> List[str]:
+    """Tick labels: condition names longer than `width` broken into lines at underscores."""
+    labels = []
+    for name in names:
+        lines = [""]
+        for part in name.split("_"):
+            if lines[-1] and len(lines[-1]) + 1 + len(part) > width:
+                lines[-1] += "_"
+                lines.append(part)
+            else:
+                lines[-1] = f"{lines[-1]}_{part}" if lines[-1] else part
+        labels.append("\n".join(lines))
+    return labels
 
 
 def _tests(table, planned, conditions) -> list:
@@ -281,8 +297,9 @@ def plot_mechanics(table, data, out):
     legacy = set(data[data.approach == "legacy"].condition)
     t = table[~table.condition.isin(legacy)].reset_index(drop=True)
     panels = [("uncovered", "Rule coverage: uncovered situations, kept policy", "% of reachable", "{:.0f}%"),
+              ("rules", "Rules in the final policy", "mean per grid", "{:.1f}"),
               ("feedback_improved", "Feedback rounds that improved the policy", "share", "{:.0%}")]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 3.8), facecolor=SURFACE)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 3.8), facecolor=SURFACE)
     for ax, (col, title, ylabel, fmt) in zip(axes, panels):
         x = np.arange(len(t))
         values = t[col].fillna(0) if col in t else np.zeros(len(t))
@@ -290,7 +307,7 @@ def plot_mechanics(table, data, out):
         for i, v in enumerate(values):
             ax.annotate(fmt.format(v), (i, v), ha="center", va="bottom", xytext=(0, 2), textcoords="offset points",
                         fontsize=7, color=INK_2)
-        ax.set_xticks(x, t.condition)
+        ax.set_xticks(x, wrap(t.condition))
         style(ax, title, ylabel)
     fig.suptitle("Symbolic loop mechanics by condition", x=0.01, ha="left", fontsize=13, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.9))
@@ -319,7 +336,7 @@ def plot_costs(table, data, out, num_reqs):
             ax.errorbar(i, med, yerr=[[med - q1], [q3 - med]], color=INK, capsize=4, lw=1)
             ax.annotate(fmt.format(med), (i, q3), ha="center", va="bottom", xytext=(0, 2),
                         textcoords="offset points", fontsize=7, color=INK_2)
-        ax.set_xticks(x, t.condition)
+        ax.set_xticks(x, wrap(t.condition))
         style(ax, title, ylabel)
     fig.suptitle("Per grid, all seeds pooled: bars = median, whiskers = interquartile range", x=0.01, ha="left",
                  fontsize=13, fontweight="bold", color=INK)
@@ -475,10 +492,10 @@ def write_markdown(out_dir, table, budget, planned, pending, uuv, cfg: PlotConfi
         v = 1000 * (r.input_k * cfg.cost["input"] + r.tokens_k * cfg.cost["output"])
         return f" {v:,.0f} |" if v >= 100 else f" {v:.3g} |"
     lines += ["", "## Costs (mean per grid)", "",
-              "| cond | input tokens | output tokens | PRISM time (s) | wall time (min) |" +
-              (f" spend ({cfg.cost['label']}) |" if cfg.cost else ""), "|---|---|---|---|---|" + ("---|" if cfg.cost else "")]
-    lines += [f"| {r.condition} | {r.input_k:.1f}k | {r.tokens_k:.1f}k | {r.prism_s:.0f} | {r.minutes:.1f} |" + spend(r)
-              for _, r in table.iterrows()]
+              "| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | rules (final policy) |" +
+              (f" spend ({cfg.cost['label']}) |" if cfg.cost else ""), "|---|---|---|---|---|---|" + ("---|" if cfg.cost else "")]
+    lines += [f"| {r.condition} | {r.input_k:.1f}k | {r.tokens_k:.1f}k | {r.prism_s:.0f} | {r.minutes:.1f} | "
+              f"{'' if pd.isna(r.rules) else f'{r.rules:.1f}'} |" + spend(r) for _, r in table.iterrows()]
     ks = list(budget.columns)
     lines += ["", "## Requirements met after k rounds", "", "| cond | " + " | ".join(f"k={k}" for k in ks) + " |",
               "|---|" + "---|" * len(ks)]
