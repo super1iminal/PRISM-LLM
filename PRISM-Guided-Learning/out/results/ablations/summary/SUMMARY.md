@@ -1,10 +1,8 @@
-# Ablation results (auto-generated 2026-10-08 07:39)
+# Ablation results (auto-generated 2026-10-08 08:27)
 
 Gridworld, 20 grids (19 solvable), qwen3:14b, 5 rounds, obstacle phase visible to rules and legacy. Symbolic numbers are worst case. Paired tests compare per-grid means (seeds averaged) against the reference with a sign-flip permutation test. These tests are exploratory: there are many of them and no correction for multiple comparisons, so a single p near 0.05 is what chance alone would give.
 
 Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.
-
-**Pending runs:** B1/seed_1
 
 ## Overview
 
@@ -38,6 +36,7 @@ Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.
 | S5 | Blame by one-step regret | 2 | 0/19 | 4.58 (4.40 to 4.75) | 4 [4 to 5] | 4.58 | 2.75 [1.69 to 3.71] | 1 | B2 | +0.12 [-0.33, +0.57] | 0.683 | 23% |
 | V1 | Blame on random rules/states | 2 | 0/19 | 4.17 (4.15 to 4.20) | 4 [3 to 5] | 4.50 | 2.88 [1.70 to 3.86] | 4 | B2 | -0.28 [-0.75, +0.17] | 0.319 | 32% |
 | V2 | No blame section | 2 | 0/19 | 4.40 (4.15 to 4.65) | 4 [4 to 5] | 4.88 | 2.32 [1.59 to 3.85] | 8 | B2 | -0.05 [-0.65, +0.50] | 0.931 | 26% |
+| B1 | Legacy per-state | 1 | 0/19 | 4.85 (4.85 to 4.85) | 5 [4 to 6] | 4.85 | 2.22 [1.96 to 3.25] | 0 | B2 | +0.40 [-0.17, +0.97] | 0.237 |  |
 
 ## Costs (mean per grid)
 
@@ -55,6 +54,7 @@ Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.
 | S5 | 16.2k | 6.7k | 8 | 3.4 | 22,856 |
 | V1 | 16.7k | 6.1k | 8 | 3.1 | 22,743 |
 | V2 | 14.0k | 7.2k | 7 | 3.7 | 21,210 |
+| B1 | 101.5k | 50.0k | 8 | 25.7 | 151,490 |
 
 ## Requirements met after k rounds
 
@@ -72,6 +72,7 @@ Regenerate: `python viz/ablation_summary.py configs/plot/ablation_summary.yaml`.
 | S5 | 3.17 | 3.85 | 4.08 | 4.40 | 4.58 |  |  |
 | V1 | 2.83 | 3.27 | 3.50 | 3.90 | 4.17 |  |  |
 | V2 | 3.00 | 3.88 | 3.98 | 4.22 | 4.40 |  |  |
+| B1 | 4.70 | 4.80 | 4.85 | 4.85 | 4.85 |  |  |
 
 ## UUV (U1: the symbolic reference on the paper's two scenarios, with the energy budget)
 

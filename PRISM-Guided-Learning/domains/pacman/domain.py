@@ -22,6 +22,7 @@ CROSSINGS = [(3, 1), (6, 1), (8, 1), (3, 4), (5, 4), (6, 4), (8, 4), (10, 4)]
 START = (1, 1)
 GHOST_START = (3, 4)
 DIRECTIONS = {0: "right", 1: "up", 2: "left", 3: "down"}   # the model's dP/dG codes
+HEADINGS = ("dP", "dG0", "dG1")
 
 
 class PacMan(Domain):
@@ -60,14 +61,18 @@ class PacMan(Domain):
         return "+" if (x, y) in CROSSINGS else "."
 
     @staticmethod
+    def crossings() -> List[tuple]:
+        """The cells where Pac-Man chooses a direction."""
+        return list(CROSSINGS)
+
+    @staticmethod
     def walkable() -> List[tuple]:
         """Every cell Pac-Man or a ghost can occupy."""
         return [(x + 1, y) for y, row in ROWS.items() for x, c in enumerate(row) if c == "."]
 
     def format_state(self, valuation: Dict[str, Any]) -> str:
         """Rule syntax, with heading names added."""
-        return " & ".join(f"{k}={v}" + (f" ({DIRECTIONS[v]})" if k.startswith("d") and v in DIRECTIONS else "")
-                          for k, v in valuation.items())
+        return " & ".join(f"{k}={v}" + (f" ({DIRECTIONS[v]})" if k in HEADINGS else "") for k, v in valuation.items())
 
 
 # ---------------------------------------------------------------- extended rule vocabulary
