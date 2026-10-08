@@ -2,15 +2,16 @@
 
 Design decisions and results, to review together. Each entry has the decision and why. Items marked **[REVIEW]** are the ones I'm least sure about.
 
-Paper target: **SEAMS 2027** (research track Oct 23; check the official site), with ICAPS (Dec 7 abstract) as the fallback. Write first, then finish. Rajan helps with implementation.
+Paper target: **SEAMS 2027** (research track Oct 23; check the official site) or **ICAPS 2027** (Dec 7 abstract), decided at Marsha's **Oct 10 checkpoint**: if rules transfer on gridworld with a stronger model and relative features, SEAMS; if not, ICAPS, where generalized policies are a core topic. Write first, then finish. Rajan helps with implementation.
 
-## 📌 OPEN: the story. Why an LLM, if PRISM can already synthesize the policy?
-Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha with the ceilings and the experiment designs). None of the runs settles it. The ceilings make the question sharper: PRISM's optimum is 1.0 on almost every gridworld requirement.
-- **Expressiveness gaps (Aren).** Find a problem whose requirements or structure PRISM can't express, or can only express approximately or through a very complicated encoding (his example: unrolling recursion into a finite model). Marsha added data structures, time, and other language features. The challenge is a problem that needs the LLM's expressiveness *and* benefits from PRISM's guarantees. Our spec is one-to-one with PRISM. Candidate: the UUV paper's full three-phase mission (we model one phase). Keeps the pipeline (the LLM writes policies) but needs a new problem.
-- **Model engineering (Marsha).** Start from the problem description, not a PRISM model (Aren: our inputs are "designed to fit PRISM"). The LLM builds the model, PRISM's counterexamples drive revisions, and the result should be analyzable *and* reasonable, not "correct but abstracted into uselessness". The chain of revisions doubles as a justification of the model. The LLM then produces models, not policies.
-- A third candidate from our notes: **restricted observation** (memoryless policies over what the agent can see are hard to synthesize; PRISM's POMDP engine rejected our obstacle requirements).
-- Marsha and Aren asked for ~3 paragraphs plus early evidence.
-- An **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). Reward requirements close a gap in *our core*, not in PRISM, so they don't support the expressiveness argument by themselves.
+## Story: Option A, narrowed (Marsha, Oct 8 email)
+- **Committed to Option A; Option B (model engineering) is parked.** B has the attribution problem (if the LLM writes model and policy, we can't tell which failed, and there is no ground truth), would compete with LLM-as-domain-generator work at ICAPS, and would split effort across two unfinished papers.
+- **The claim:** one readable controller for a parametric family of instances, with probabilistic guarantees checked per instance: "certified on every instance we check, including held-out larger ones", not correctness for all sizes. "PRISM and related work handle one instance at a time" won't survive review (families of MDPs, multi-environment MDPs, LLM-written generalized policies exist). Large instances alone aren't a gap either: checking a policy on a big model costs about as much as synthesizing the optimum on it.
+- **Main design step: relative features.** Rules over absolute coordinates (`x = 1 & y = 2 -> left`) can't transfer; rules need features such as the direction to the next goal or an adjacent obstacle.
+- **Experiments:** gridworld: generate rules on a few grids, freeze them, verify on held-out and larger grids (up to about 20x20). UUV: one rule set for both North Sea and Caribbean, plus a sweep over failure rates ("one certified controller across changing conditions, without re-synthesis on board"). No ATC (no PRISM model, too little time). Baselines: the per-instance PRISM optimum, and a strategy synthesized on one instance applied to the others.
+- **Motivation (SEAMS):** adaptive systems that need a certified controller as conditions change, not agents misusing tools.
+- **On hold** until Asher's related-work survey is done.
+- An **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). Reward requirements close a gap in *our core*, not in PRISM, so they don't support an expressiveness argument by themselves.
 
 ## Setup (answers from kickoff)
 - The symbolic approach makes **one LLM call over the whole state space** (no per-goal decomposition). Rules may refer to progress variables such as `g1`.
@@ -22,6 +23,7 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 - This branch holds the symbolic approach and one baseline. The predecessor's other planners (Vanilla, VanillaPlus, Feedback, FeedbackMinus, RL), their plotting scripts and the predecessor paper's code are on `main`.
 - The baseline is FeedbackSimplified in `src/legacy/` (gridworld only): the predecessor's planner plus instrumentation (per-iteration policies, raw outputs, tokens) and the obstacle-visibility switch (`domain.visible_extra`).
 - `grid_20_balanced.csv` = the first 4 grids of each size (4–8) from `grid_50_balanced.csv`, so it is balanced by size.
+- `grid_20_large.csv` = the first 4 grids of each size 9–13 from `grid_100_balanced.csv` (same generator; its sizes 4–8 start with exactly `grid_20_balanced`'s grids). Made because Sonnet 5.5 reaches the ceiling on `grid_20_balanced`, leaving no headroom for the ablations.
 
 ## Generalization: inputs (what a case study provides)
 - A case study is a directory `domains/<name>/` with a `Domain` subclass (instance loading and template context) plus Jinja2 templates. See `domains/README.md`.
@@ -111,7 +113,17 @@ Asher has to pick one for the one-pager ("Why LLM > Synthesis", due to Marsha wi
 Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`), and:
 - The story is open (pinned at the top). Generalization and readability are "a nice bonus", not the reason.
 - **V^opt stays in the loop**; regret is an ablation (S5), not a replacement. Ceilings are "foundational", not an experiment.
-- **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV). Rule transfer (5×5 → 8×8) is dropped.
+- **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV). Rule transfer was dropped here; the Oct 8 email reverses this, and transfer is now the main experiment (Story, top).
+
+## Oct 8 email (Marsha): the ablation results and what to rerun
+- **What the results don't show yet.** Feedback is not shown to beat restarting: pure resampling (R5) meets 4.72 requirements vs 4.45 for the default loop (B2), with about half the input tokens (8.3k vs 16.8k median). A success-vs-budget curve that rises every round is guaranteed by keep-best (any sampler that keeps its best attempt is monotone), so it is not evidence that feedback helps; pure resampling's curve has to be on the same plot. With 10 comparisons and 2 seeds, one p ≈ 0.05 is what chance gives, and nothing survives a multiple-comparison correction. Withdrawn: "restarting matters a lot", "feedback quality matters", "the budget curve is the first direct evidence that feedback helps".
+- **The rerun:** only the default loop, restart on slow progress (R4), pure resampling and legacy, on a stronger model. Asher's plan:
+  - **Headroom:** Sonnet 5.5 solves every solvable `grid_20_balanced` grid, 15 in round 1, where all retry policies send the same prompt. It also solves 13x13 grids from `grid_20_large`; Haiku 5.5 leaves some headroom on `grid_20_balanced` (results below, "Headroom for the rerun"). Model and dataset still open.
+  - **Two runs per condition**, not 5. Claude endpoints take no seed, so repeats are unseeded (`run_ablation.py --unseeded N`, `seed_none_<k>/`).
+  - **Legacy on qwen only** (on a hosted model it would be expensive: one call per goal and obstacle phase per round).
+  - Run after the rule vocabulary (relative features, Story) is settled, so the ablation tests the configuration the paper uses.
+  - **[REVIEW]** Compare at equal iterations (Asher's preference) or equal tokens (Marsha's).
+- **Marsha's legacy check:** the legacy run so far (`legacy_grid20`) is from the old setup with the obstacle phase hidden (`pre_phase_a`). Its budget curve (4.30) against symbolic's (5.25) compares two runs in that same setup, so that pairing is matched; legacy beside the ablation conditions (obstacle visible) is not. **B1** (legacy, obstacle visible, qwen, seeds 1 and 2) started Oct 8. Some hosted-model runs and PRISM-only ceilings overlap it on the CPU (not the GPU), so its first hour's wall times may read slightly high; tokens are unaffected.
 
 ## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
 - `out/results/comparison_grid20/report.md`, `viz/figures/grid20.png`. Symbolic numbers come from the **capped** run (`symbolic_grid20_capped`).
@@ -157,7 +169,7 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
 
 ## Batch 2 settings
 - **UUV mass horizon = the mission deadline** (Asher): U1's run config (`configs/run/conditions/U1.yaml`) sets `feedback.horizon: domain`, which asks `Domain.horizon(instance)`: North Sea 30, Caribbean 70. The run config never names a domain; each kind of run has its own condition file.
-- **Story:** A (expressiveness), maybe B later. Nothing story-specific is implemented until there's a domain.
+- **Story:** A, narrowed by the Oct 8 email (top); B parked.
 - **S1 (table feedback):** after a failure, every round shows the results table and the previous rules and asks for a complete new list. No blame, no REFINE/EXTEND framing, no appending. Retry as in B2.
 - **S5 (regret blame):** one-step regret of the rule's action on the best-case values, with Q from the bare MDP. Successors the policy never reaches take their optimum value, which slightly favours deviating (a heuristic). Extend ranks uncovered states by the local gap best − worst, without occupancy. The prompt wording describes the signal it shows. **[REVIEW]**
 - **V1 (random blame)** is a placebo: same number of rules/states as B2, equal shares, and B2's wording. **V2** drops the blame section but keeps the framing.
@@ -216,7 +228,7 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
   - `providers: []` lets OpenRouter route each request to any provider, so experiments pin one. DeepInfra (fp8) passed the smoke test; NextBit (int4, closer to the local 4-bit weights) is the other provider of `qwen/qwen3-14b` that supports every parameter sent.
 
 ## Sonnet vs qwen (grid_20_balanced, R4's settings)
-- **What varied:** only the model (Asher). `sonnet5`: Claude Sonnet 5, thinking off as for qwen. `sonnet5_5`: Claude Sonnet 5.5, thinking on (its endpoints refuse to turn it off) and a 16k output cap, since the cap covers thinking and answer. Both on OpenRouter with Anthropic's endpoint pinned, one unseeded run each (no Sonnet endpoint accepts a seed), against R4 and B2 (qwen3:14b, 2 seeds each). Page: `out/results/sonnet_vs_qwen/SUMMARY.md` (`configs/plot/sonnet_vs_qwen.yaml`).
+- **What varied:** only the model (Asher). `sonnet5`: Claude Sonnet 5, thinking off as for qwen. `sonnet5_5`: Claude Sonnet 5.5, thinking on (its endpoints refuse to turn it off) and a 16k output cap, since the cap covers thinking and answer. Both on OpenRouter with Anthropic's endpoint pinned, one unseeded run each (no Sonnet endpoint accepts a seed), against R4 and B2 (qwen3:14b, 2 seeds each). Page: `out/results/sonnet_vs_qwen/SUMMARY.md` (`configs/plot/sonnet_vs_qwen.yaml`; it now has Haiku 5.5 too, below).
 - **Results** (worst case; solved of the 19 solvable grids):
 
   | | solved | req. met | Δ vs R4 [95% CI] | after 1 round |
@@ -241,3 +253,12 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
 - **Rules per decision situation:** UUV's rules see `s`, `alt` and `water_visib` only, so 162 and 295 situations stand for 5,580 and 29,244 states. Sonnet 5.5's 3 and 6 rules give 0.019 and 0.020; qwen's 25 give 0.15 and 0.085. The paper's controller has 1,620 and 8,850 strategy states.
 - 15.5k input / 7.5k output tokens per scenario; $0.21 for the run.
 - **Reading:** Sonnet 5.5's lead on gridworld does not carry over to the Caribbean, whose thresholds are calibrated so that only a scenario-aware policy like `stay` passes; the feedback did not lead it there. One run, so read with care.
+
+## Headroom for the rerun: Haiku 5.5 and 13x13 grids (Oct 8)
+- **Haiku 5.5 on `grid_20_balanced`** (`haiku5_5`: Sonnet 5.5's settings, only the model differs; one unseeded run, `seed_none_1`). On the Claude vs qwen page (`out/results/sonnet_vs_qwen/SUMMARY.md`, heading now "Claude vs qwen").
+  - Solved 16 of 19 solvable grids (Sonnet 5.5 19, Sonnet 5 5, qwen 0); requirements met 8.45 (Sonnet 5.5 8.95, Sonnet 5 7.10, R4 4.95). It misses grid 17 (unsolvable) and grids 10, 11 and 19.
+  - Only 7 grids are solved in round 1; after k rounds it meets 7.15, 7.85, 8.40, 8.45, 8.45. So the loop does work there, unlike with Sonnet 5.5 (8.55 after round 1).
+  - Final policies: 13–52 rules (median 21), every reachable situation covered. 4 invalid answers, all fixed by re-asks. The exact check changes no verdict.
+  - 10.5k input / 18.2k output tokens per grid (mostly thinking), about $0.20 for the run at $0.10/M input and $0.50/M output; 1.8 min per grid.
+- **Sonnet 5.5 smoke test on `grid_20_large`'s three 13x13 grids** (instances 16–18, those with the longest shortest paths: 30, 38 and 26 steps; `out/results/smoke/sonnet5_5_large13`, not committed): all three solved, in rounds 1, 2 and 2, with 24–35 rules over 374–1,734 situations. PRISM took 1–3 s per grid, so verification is cheap at this size. About $0.30.
+- **Reading:** sizes up to 13 leave Sonnet 5.5 no headroom. Headroom has to come from a weaker model (Haiku 5.5 has some on `grid_20_balanced`), much larger grids, or harder instances (more goals).

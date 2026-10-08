@@ -5,7 +5,7 @@ Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run 
 | Folder | Used by | Contents |
 |---|---|---|
 | `run/` | `run_symbolic.py`, `run_legacy.py`, `run_ablation.py`, `ceilings.py` | `default.yaml` (every key in the table below) and `conditions/<name>.yaml` |
-| `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides) |
+| `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides; `--unseeded N` runs N repeats without a seed instead) |
 | `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
 | `plot/` | `viz/` scripts, `compare.py` | one file per figure or report (no default): `script:` names the script it is for, then its runs, labels, title and output. Run `python viz/<script>.py configs/plot/<figure>.yaml` |
 
