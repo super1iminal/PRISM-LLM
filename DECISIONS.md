@@ -263,3 +263,12 @@ Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`
 - **Sonnet 5.5 smoke test on `grid_20_large`'s three 13x13 grids** (instances 16–18, those with the longest shortest paths: 30, 38 and 26 steps; `out/results/smoke/sonnet5_5_large13`, not committed): all three solved, in rounds 1, 2 and 2, with 24–35 rules over 374–1,734 situations. PRISM took 1–3 s per grid, so verification is cheap at this size. About $0.30.
 - **Ceilings of `grid_20_large`** (`out/results/ceilings/gridworld_grid_20_large.md`): all 20 grids are jointly solvable, and every requirement's optimum is 1.0. The joint queries (LP on the bare MDP) took 29 minutes for the 20 grids, mostly on the larger ones; the loop's per-round checks on the induced MDP stay at seconds.
 - **Reading:** sizes up to 13 leave Sonnet 5.5 no headroom. Headroom has to come from a weaker model (Haiku 5.5 has some on `grid_20_balanced`), much larger grids, or harder instances (more goals).
+
+## Haiku ablation on grid_20_large (planned Oct 8, written before the runs)
+- **Conditions** (Asher): Claude Haiku 5.5 with `haiku5_5`'s settings on `grid_20_large`, two unseeded runs each (`run_ablation.py ... --unseeded 2`): the default loop (`haiku_large_B2`, restart after 2 stalls), restart on slow progress (`haiku_large_R4`) and pure resampling with **10 rounds** (`haiku_large_R5`), so that it can be compared both at equal iterations and at equal cost. Rules over absolute coordinates (the current vocabulary). Legacy is not part of it (qwen, `grid_20_balanced`, running separately).
+- **Planned comparisons, fixed before the runs.** Metric: requirements met by the kept policy (worst case, the loop's values, replayed per round), per grid averaged over the two runs; paired sign-flip test over the 20 grids; **Holm correction over these four**:
+  1. default loop vs pure resampling at 5 rounds (equal iterations);
+  2. restart on slow progress vs pure resampling at 5 rounds;
+  3. default loop vs pure resampling at equal cost: on each grid, pure resampling gets the default loop's mean spend on that grid, cost at Haiku 5.5's prices ($0.10/M input, $0.50/M output tokens); every run keeps at least its first round, whose prompt is the same in every condition;
+  4. restart on slow progress vs pure resampling at equal cost.
+- Everything else (solved counts, rounds to solve, the two feedback conditions against each other) is exploratory.
