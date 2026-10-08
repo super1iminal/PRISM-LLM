@@ -121,6 +121,16 @@ Details in `docs/positioning.md` (the related-work survey's phase 2; the survey 
   - The model parser reads untyped constants (`const xSize = 11;`, PRISM's default int), which the benchmark file uses.
   - **Decision states count only choices labelled with a policy action.** Once both ghosts are gone, the arbiter's unlabelled idle step competes with the forced `[p]` move. That is environment nondeterminism the policy cannot touch, but the old check (any two choices with different successors) counted it as a decision. Gridworld (every choice is a policy action) and UUV (forced states have only `[step]`) are unaffected. `docs/semantics.md` updated.
   - `src/calibrate.py --domain <name> --data <dataset>` replaces UUV's `domains/uuv/data/calibrate.py`; it reads each domain's `data/reference_policies.json`.
+- **LLM runs** (default settings, restart on slow progress; one unseeded run each; `haiku_pacman`, `sonnet5_5_pacman`):
+
+  | horizon | 8 | 10 | 12 | 14 | 16 |
+  |---|---|---|---|---|---|
+  | Haiku 5.5 | 0.5511 (1 round) | 0.5511 (1) | 0.8911 | 0.8911 | 0.8911 |
+  | Sonnet 5.5 | 0.5511 (1) | 0.5511 (1) | 0.5511 (1) | 0.5511 (5) | 0.8658 |
+
+  Worst-case crash probability of the final rules (≤ 0.56 passes; the optimum is 0.5511). Sonnet's passing rule sets have 1–6 rules. Haiku's failures equal the "keep heading" reference policy (0.8911). Costs: about $0.02 (Haiku) and $0.40 (Sonnet).
+- **Against the papers:** the QVBS optimum is 0.5511 at every horizon (Storm; our PRISM agrees). 1–2–3–Go! learns its tree from horizon 5, where every controller gives 0.5511, and reports 0.869 at horizon 25 and 0.99998 at 200 (Smart LSS 0.729 at 25; random policies 0.923).
+- **Transfer of Sonnet's rule sets across horizons** (`src/transfer.py` from branch `rule-language`; the map is fixed, so base-vocabulary rules mean the same at every horizon; `out/results/ablations/sonnet5_5_pacman/seed_none_1/transfer_pacman_transfer.csv`): the rule sets from horizons 8, 12 and 14 stay at 0.5511 on horizons 8–14, then fail from 16 on (0.91–0.99 at 16–20, 0.99 at 25). So they do not reach 1–2–3–Go!'s 0.869 at horizon 25.
 
 ## Forced states (core, motivated by UUV)
 - In UUV, the action has no effect in about 70% of states (following, found, done). Without special handling they would count as uncovered and appear in feedback.
