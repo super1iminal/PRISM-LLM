@@ -6,14 +6,15 @@ covers the ablations; other configs compare other sets of conditions (e.g. model
 
 Usage (from PRISM-Guided-Learning/): python viz/ablation_summary.py configs/plot/ablation_summary.yaml
 Settings: the plot config (PlotConfig below): which conditions, their families and references, the
-budget groups, the UUV section and the text. Grid counts, model and round budgets come from the runs.
+budget groups, the cost weights, the planned comparisons, the UUV section and the text. Grid counts, model
+and round budgets come from the runs.
 """
 import datetime
 import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import matplotlib
 matplotlib.use("Agg")
@@ -24,7 +25,7 @@ import pandas as pd  # noqa: E402
 from loaders import add_summary_metrics, load_legacy, load_symbolic, short_model  # noqa: E402
 from config import plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
-from plot_budget import legacy_curve, symbolic_curve  # noqa: E402
+from plot_budget import at_budget, legacy_curve, symbolic_curve, with_cost  # noqa: E402
 from results_io import LEGACY_RESULTS as LEGACY_FILE, SYMBOLIC_RESULTS as SYMBOLIC_FILE, run_facts  # noqa: E402
 from settings import RESULTS_PATH  # noqa: E402
 from theme import FAMILY_COLORS, INK, INK_2, GRID, SURFACE, style  # noqa: E402
@@ -42,6 +43,8 @@ class PlotConfig:
     conditions: Dict[str, Dict[str, Optional[str]]]
     reference_lines: Dict[str, str]
     budget_groups: Dict[str, List[str]]
+    cost: Optional[Dict[str, Any]]
+    planned: List[Dict[str, str]]
     uuv: Optional[Dict[str, str]]
     title: str
     intro: str
@@ -146,6 +149,47 @@ def paired(data: pd.DataFrame, condition: str, reference: str, col: str = "met",
             "p": p, "n": len(d)}
 
 
+def holm(p: np.ndarray) -> np.ndarray:
+    """Holm-adjusted p-values (step-down; controls the chance of any false positive among the comparisons)."""
+    adjusted, running = np.empty(len(p)), 0.0
+    for rank, i in enumerate(np.argsort(p)):
+        running = max(running, min(1.0, (len(p) - rank) * p[i]))
+        adjusted[i] = running
+    return adjusted
+
+
+def planned_table(curves: pd.DataFrame, cfg: PlotConfig) -> pd.DataFrame:
+    """The planned comparisons (cfg.planned): paired tests on requirements met per grid, Holm-corrected together.
+    `at: rounds:N` compares the kept policies after N rounds. `at: cost` compares the condition's whole run with
+    the reference at the same spend: on each grid, the reference gets the condition's mean spend there."""
+    rows = []
+    for c in cfg.planned:
+        cond, ref, at = c["condition"], c["reference"], c["at"]
+        a, b = curves[curves.condition == cond], curves[curves.condition == ref]
+        if not len(a) or not len(b):
+            continue
+        if at.startswith("rounds:"):
+            n = int(at.split(":")[1])
+            if min(a.k.max(), b.k.max()) < n:
+                raise SystemExit(f"planned comparison {cond} vs {ref} at {n} rounds: a run has fewer rounds")
+            values, label = pd.concat([a[a.k == n], b[b.k == n]]), f"{n} rounds"
+        elif at == "cost":
+            if not cfg.cost:
+                raise SystemExit("a planned comparison at equal cost needs `cost`")
+            final = a.loc[a.groupby(["seed", "sample_id"]).k.idxmax()]
+            budget = final.groupby("sample_id").cost.mean()
+            values, label = pd.concat([final, at_budget(b, budget, ("seed", "sample_id"))]), "equal cost"
+        else:
+            raise SystemExit(f"planned comparison {cond} vs {ref}: unknown `at` {at!r} (rounds:N or cost)")
+        test = paired(values, cond, ref)
+        if test:
+            rows.append({"condition": cond, "reference": ref, "at": label, **test})
+    table = pd.DataFrame(rows)
+    if len(table):
+        table["p_holm"] = holm(table.p.to_numpy())
+    return table
+
+
 def condition_table(data: pd.DataFrame, extra: dict, conditions) -> pd.DataFrame:
     rows = []
     for condition in [c for c in conditions if c in set(data.condition)]:
@@ -189,7 +233,18 @@ def _bar_panel(ax, table, data, col, title, ylabel, fmt, reference_lines):
     style(ax, title, ylabel)
 
 
-def plot_conditions(table, data, out, title, num_reqs, reference_lines):
+def _tests(table, planned, conditions) -> list:
+    """The paired tests to draw: the planned comparisons when there are any, else each condition vs its reference.
+    (label, diff, lo, hi, p text, colour) each."""
+    color = {c: FAMILY_COLORS[m["family"]] for c, m in conditions.items()}
+    if len(planned):
+        return [(f"{r.condition} vs {r.reference}, {r.at}", r["diff"], r.lo, r.hi, f"p={r.p:.3f}, Holm {r.p_holm:.3f}",
+                 color[r.condition]) for _, r in planned.iterrows()]
+    return [(f"{r.condition} vs {r.vs}", r["diff"], *[float(v) for v in r.ci.strip("[]").split(",")], f"p={r.p:.2f}",
+             color[r.condition]) for _, r in table[table.vs != ""].iterrows()]
+
+
+def plot_conditions(table, data, out, title, num_reqs, reference_lines, planned, conditions):
     fig, axes = plt.subplots(2, 2, figsize=(14, 8.5), facecolor=SURFACE)
     _bar_panel(axes[0, 0], table, data, "met", f"Requirements met (of {num_reqs}), worst case", "mean per grid",
                "{:.2f}", reference_lines)
@@ -198,17 +253,17 @@ def plot_conditions(table, data, out, title, num_reqs, reference_lines):
     _bar_panel(axes[1, 0], table, data, "met_best", "Requirements met, best case (uncovered states choose well)",
                "mean per grid", "{:.2f}", reference_lines)
     ax = axes[1, 1]
-    t = table[table.vs != ""].reset_index(drop=True)
-    y = np.arange(len(t))[::-1]
-    for yi, (_, r) in zip(y, t.iterrows()):
-        color = FAMILY_COLORS[r.family]
-        ax.plot([float(r.ci.strip("[]").split(",")[0]), float(r.ci.strip("[]").split(",")[1])], [yi, yi], color=color, lw=2)
-        ax.scatter([r["diff"]], [yi], color=color, s=40, zorder=3)
-        ax.annotate(f"p={r.p:.2f}", (r["diff"], yi), xytext=(0, 6), textcoords="offset points", ha="center",
-                    fontsize=7.5, color=INK_2)
+    tests = _tests(table, planned, conditions)
+    y = np.arange(len(tests))[::-1]
+    for yi, (_, diff, lo, hi, ptext, color) in zip(y, tests):
+        ax.plot([lo, hi], [yi, yi], color=color, lw=2)
+        ax.scatter([diff], [yi], color=color, s=40, zorder=3)
+        ax.annotate(ptext, (diff, yi), xytext=(0, 6), textcoords="offset points", ha="center", fontsize=7.5,
+                    color=INK_2)
     ax.axvline(0, color=INK_2, lw=0.9)
-    ax.set_yticks(y, [f"{c} vs {v}" for c, v in zip(t.condition, t.vs)])
-    style(ax, "Paired difference in requirements met (per grid)", "")
+    ax.set_yticks(y, [label for label, *_ in tests])
+    style(ax, "Planned comparisons: paired difference in requirements met (per grid)" if len(planned) else
+          "Paired difference in requirements met (per grid)", "")
     ax.grid(axis="x", color=GRID, lw=0.8)
     ax.set_xlabel("difference vs reference, 95% CI", color=INK_2, fontsize=9)
     families = [f for f in FAMILY_COLORS if f in set(table.family)]   # only those with results
@@ -273,33 +328,46 @@ def plot_costs(table, data, out, num_reqs):
     plt.close(fig)
 
 
-def plot_budget(runs, out, cfg: PlotConfig):
+def budget_curves(runs, cfg: PlotConfig) -> pd.DataFrame:
+    """Per run, sample and round budget k: the kept policy's metrics and the spend through round k (with `cost`)."""
     curves = []
     for condition, run_dir in runs:
         legacy = (run_dir / LEGACY_FILE).exists()
         rounds = run_facts(run_dir).max_rounds   # curves stop at the run's own budget
         rows = legacy_curve(run_dir, rounds) if legacy else symbolic_curve(run_dir, rounds)
         curves.append(pd.DataFrame(rows).assign(condition=condition, seed=run_dir.name))
-    data = pd.concat(curves)
-    summary = data.groupby(["condition", "k"]).met.mean().reset_index()
+    curves = pd.concat(curves, ignore_index=True)
+    return with_cost(curves, cfg.cost) if cfg.cost else curves
+
+
+def plot_budget(curves, out, cfg: PlotConfig):
+    summary = curves.groupby(["condition", "k"]).agg(
+        met=("met", "mean"), **({"cost": ("cost", "mean")} if cfg.cost else {})).reset_index()
     groups = list(cfg.budget_groups.items())
-    fig, axes = plt.subplots(1, len(groups), figsize=(max(7.0, 16 * len(groups) / 3), 4.4), facecolor=SURFACE,
-                             sharey=True, squeeze=False)
-    for ax, (title, members) in zip(axes[0], groups):
-        for i, condition in enumerate([m for m in members if m in set(summary.condition)]):
-            d = summary[summary.condition == condition]
-            ls = "--" if condition in cfg.reference_lines and members[0] != condition else "-"
-            ax.plot(d.k, d.met, color=LINE_COLORS[i % len(LINE_COLORS)], lw=2, marker="o", ms=5, ls=ls,
-                    label=f"{condition}: {cfg.conditions[condition]['change']}")
-            ax.annotate(f"{d.met.iloc[-1]:.2f}", (d.k.iloc[-1], d.met.iloc[-1]), xytext=(5, 0),
-                        textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
-        style(ax, title, "requirements met (mean per grid)")
-        ax.set_xticks(range(1, int(summary.k.max()) + 1))
-        ax.set_xlabel("rounds budget k", color=INK_2, fontsize=9)
-        ax.legend(frameon=False, fontsize=7.5, loc="best")
-    fig.suptitle("Requirements met by the kept policy after k rounds (seeds pooled)", x=0.01, ha="left",
+    xs = [("k", "rounds budget k")] + ([("cost", f"mean spend through round k ({cfg.cost['label']})")]
+                                       if cfg.cost else [])
+    fig, axes = plt.subplots(len(xs), len(groups), figsize=(max(7.0, 16 * len(groups) / 3), 4.4 * len(xs)),
+                             facecolor=SURFACE, sharey=True, squeeze=False)
+    for row, (x, xlabel) in zip(axes, xs):
+        for ax, (title, members) in zip(row, groups):
+            for i, condition in enumerate([m for m in members if m in set(summary.condition)]):
+                d = summary[summary.condition == condition].dropna(subset=[x])   # legacy has no spend per round
+                if not len(d):
+                    continue
+                ls = "--" if condition in cfg.reference_lines and members[0] != condition else "-"
+                ax.plot(d[x], d.met, color=LINE_COLORS[i % len(LINE_COLORS)], lw=2, marker="o", ms=5, ls=ls,
+                        label=f"{condition}: {cfg.conditions[condition]['change']}")
+                ax.annotate(f"{d.met.iloc[-1]:.2f}", (d[x].iloc[-1], d.met.iloc[-1]), xytext=(5, 0),
+                            textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
+            style(ax, title if x == "k" else f"{title}, by spend", "requirements met (mean per grid)")
+            if x == "k":
+                ax.set_xticks(range(1, int(summary.k.max()) + 1))
+                ax.legend(frameon=False, fontsize=7.5, loc="best")
+            ax.set_xlabel(xlabel, color=INK_2, fontsize=9)
+    fig.suptitle("Requirements met by the kept policy after k rounds (seeds pooled)" +
+                 ("; below, each k at the mean spend through round k" if cfg.cost else ""), x=0.01, ha="left",
                  fontsize=13, fontweight="bold", color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.tight_layout(rect=(0, 0, 1, 0.92 if len(xs) == 1 else 0.95))
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
     return summary.pivot(index="condition", columns="k", values="met")
@@ -368,12 +436,23 @@ def uuv_table(root: Path, condition: str) -> str:
             "|---|---|---|---|---|---|---|\n" + "\n".join(rows))
 
 
-def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch: Batch, config_path: str):
+def write_markdown(out_dir, table, budget, planned, pending, uuv, cfg: PlotConfig, batch: Batch, config_path: str):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"# {cfg.heading} (auto-generated {now})", "", batch.text(cfg.intro), "",
              f"Regenerate: `python viz/ablation_summary.py {config_path}`.", ""]
     if pending:
         lines += ["**Pending runs:** " + ", ".join(pending), ""]
+    if len(planned):
+        lines += ["## Planned comparisons", "",
+                  "Fixed before the runs. Requirements met by the kept policy (worst case, the loop's values), per grid "
+                  "averaged over runs; paired sign-flip test over the grids. p (Holm) corrects for all "
+                  f"{len(planned)} comparisons together; below 0.05 counts. \"equal cost\": the condition's whole run "
+                  "against the reference given, on each grid, the condition's mean spend there"
+                  + (f" ({cfg.cost['label']})." if cfg.cost else "."), "",
+                  "| comparison | at | grids | Δ met [95% CI] | p | p (Holm) |", "|---|---|---|---|---|---|"]
+        lines += [f"| {r.condition} vs {r.reference} | {r.at} | {r.n} | {r['diff']:+.2f} [{r.lo:+.2f}, {r.hi:+.2f}] | "
+                  f"{r.p:.3f} | {r.p_holm:.3f} |" for _, r in planned.iterrows()]
+        lines.append("")
     lines += ["## Overview", "", "![conditions](conditions.png)", "",
               "## Distributions and costs (medians, interquartile range)", "", "![costs](costs.png)", "",
               "## Budget curves", "", "![budget](budget.png)", "",
@@ -390,9 +469,15 @@ def write_markdown(out_dir, table, budget, pending, uuv, cfg: PlotConfig, batch:
                      f"{r.met_seed_max:.2f}) | {r.met_median:.0f} [{r.met_q1:.0f} to {r.met_q3:.0f}] | {r.met_best:.2f} | "
                      f"{r.short_median:.2f} [{r.short_q1:.2f} to {r.short_q3:.2f}] | {r.uncovered:.0f} | {r.vs} | "
                      f"{diff} | {'' if pd.isna(r.p) else f'{r.p:.3f}'} | {improved} |")
+    def spend(r):
+        if not cfg.cost:
+            return ""
+        v = 1000 * (r.input_k * cfg.cost["input"] + r.tokens_k * cfg.cost["output"])
+        return f" {v:,.0f} |" if v >= 100 else f" {v:.3g} |"
     lines += ["", "## Costs (mean per grid)", "",
-              "| cond | input tokens | output tokens | PRISM time (s) | wall time (min) |", "|---|---|---|---|---|"]
-    lines += [f"| {r.condition} | {r.input_k:.1f}k | {r.tokens_k:.1f}k | {r.prism_s:.0f} | {r.minutes:.1f} |"
+              "| cond | input tokens | output tokens | PRISM time (s) | wall time (min) |" +
+              (f" spend ({cfg.cost['label']}) |" if cfg.cost else ""), "|---|---|---|---|---|" + ("---|" if cfg.cost else "")]
+    lines += [f"| {r.condition} | {r.input_k:.1f}k | {r.tokens_k:.1f}k | {r.prism_s:.0f} | {r.minutes:.1f} |" + spend(r)
               for _, r in table.iterrows()]
     ks = list(budget.columns)
     lines += ["", "## Requirements met after k rounds", "", "| cond | " + " | ".join(f"k={k}" for k in ks) + " |",
@@ -425,15 +510,21 @@ def main(argv=None):
     table.to_csv(out_dir / "conditions.csv", index=False)
     data.to_csv(out_dir / "per_grid.csv", index=False)
 
-    plot_conditions(table, data, out_dir / "conditions.png", batch.text(cfg.title), num_reqs, cfg.reference_lines)
+    curves = budget_curves(runs, cfg)
+    planned = planned_table(curves, cfg)
+    if len(planned):
+        planned.to_csv(out_dir / "planned.csv", index=False)
+
+    plot_conditions(table, data, out_dir / "conditions.png", batch.text(cfg.title), num_reqs, cfg.reference_lines,
+                    planned, cfg.conditions)
     plot_mechanics(table, data, out_dir / "mechanics.png")
     plot_costs(table, data, out_dir / "costs.png", num_reqs)
-    budget = plot_budget(runs, out_dir / "budget.png", cfg)
+    budget = plot_budget(curves, out_dir / "budget.png", cfg)
     uuv = ""
     if cfg.uuv:
         plot_uuv(root, cfg.uuv["condition"], out_dir / "uuv.png")
         uuv = uuv_table(root, cfg.uuv["condition"])
-    write_markdown(out_dir, table, budget, pending, uuv, cfg, batch, Path(argv[0]).as_posix())
+    write_markdown(out_dir, table, budget, planned, pending, uuv, cfg, batch, Path(argv[0]).as_posix())
     print(out_dir / "SUMMARY.md")
 
 
