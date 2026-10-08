@@ -45,6 +45,7 @@ class PacMan(Domain):
             "ghost_start": GHOST_START,
             "directions": DIRECTIONS,
             "map_rows": [(y, "".join(self._symbol(x + 1, y, c) for x, c in enumerate(row))) for y, row in ROWS.items()],
+            **rule_vocabulary(d["max_steps"]),
         })
         return d
 
@@ -67,3 +68,29 @@ class PacMan(Domain):
         """Rule syntax, with heading names added."""
         return " & ".join(f"{k}={v}" + (f" ({DIRECTIONS[v]})" if k.startswith("d") and v in DIRECTIONS else "")
                           for k, v in valuation.items())
+
+
+# ---------------------------------------------------------------- extended rule vocabulary
+
+# At these crossings a direction is a wall: choosing it keeps Pac-Man in place (from the model's crossing commands)
+WALLS = {"right": [(10, 4)], "up": [(6, 4), (8, 4)], "left": [], "down": [(3, 1), (6, 1), (8, 1), (5, 4)]}
+TOWARDS = {"right": "xG{g} > xP", "left": "xG{g} < xP", "up": "yG{g} > yP", "down": "yG{g} < yP"}
+
+
+def rule_vocabulary(max_steps: int) -> Dict[str, Any]:
+    """Constant MAXSTEPS, the state feature moves_left and per-action features wall, nearer_g0, nearer_g1."""
+    def wall(a):
+        return " | ".join(f"(xP = {x} & yP = {y})" for x, y in WALLS[a]) or "false"
+
+    features = [
+        {"name": "moves_left", "description": "moves Pac-Man has left (MAXSTEPS - steps)", "expr": "MAXSTEPS - steps"},
+        {"name": "wall", "description": "true if this direction is a wall at Pac-Man's crossing (he would stay put)",
+         "per_action": {a: wall(a) for a in DIRECTIONS.values()}},
+    ]
+    for g in (0, 1):
+        features.append({"name": f"nearer_g{g}",
+                         "description": f"true if this direction goes towards ghost {g} (by its row or column), "
+                                        f"while the ghost is in the game",
+                         "per_action": {a: f"xG{g} > 0 & " + TOWARDS[a].format(g=g) for a in DIRECTIONS.values()}})
+    return {"rule_constants": [{"name": "MAXSTEPS", "value": max_steps, "description": "the game's length in moves"}],
+            "rule_features": features}

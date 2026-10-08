@@ -11,6 +11,7 @@ The other tools keep their settings in their own folders (configs/regression/, c
 configs/plot/) with their own schemas, loaded the same way by `load_file`.
 """
 import argparse
+import json
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
@@ -109,6 +110,9 @@ class PrismConfig:
 @dataclass
 class RulesConfig:
     max_enumeration: int
+    extended: bool                  # instance constants, domain features and `any` rules
+    general: bool                   # only the numbers 0 and 1 in conditions (with extended)
+    hidden_features: List[str]      # domain features left out of the vocabulary
 
 
 @dataclass
@@ -223,6 +227,16 @@ def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) 
     for text in overrides:
         data = _merge(data, _parse_override(text))
     cfg = _build(Config, data)
+    validate(cfg)
+    return cfg
+
+
+
+def load_run_config(run_dir) -> Config:
+    """The settings a finished run recorded in its config.json, over today's defaults (so keys added since the
+    run take their default values)."""
+    recorded = json.loads((Path(run_dir) / "config.json").read_text(encoding="utf-8"))
+    cfg = _build(Config, _merge(_read_yaml(RUN_CONFIG_DIR / "default.yaml"), recorded))
     validate(cfg)
     return cfg
 

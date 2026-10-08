@@ -57,6 +57,9 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `prism.exact_check` | `true` | re-verify the final policy with interval iteration; the run reports those values (the loop's are kept as `loop_best` / `loop_worst`). Seconds per policy, minutes on chains that leak probability slowly. Runs whose `config.json` has no `exact_check` report the loop's values | — |
 | `prism.exact_epsilon` / `exact_fallback_epsilon` / `exact_max_iters` | `"1e-9"` / `"1e-12"` / 100,000,000 | interval iteration's precision; Gauss-Seidel's where interval iteration does not converge; their iteration cap | — |
 | `rules.max_enumeration` | 200,000 | state-space size up to which first-match guards are simplified | — |
+| `rules.extended` | `false` | conditions may also use the domain's instance constants and features (`constants`, `features` in `spec.yaml.j2`), and rules the action `any` (allow every action whose condition holds); see `docs/semantics.md` | `rl_*` conditions |
+| `rules.general` | `false` | only the numbers 0 and 1 in conditions, so rules must name instance values and carry over to other instances (with `extended`) | `rl_*` conditions |
+| `rules.hidden_features` | `[]` | domain features left out of the vocabulary (gridworld: `[closer]` hides the shortest-path feature) | `rl_*` conditions |
 | `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
 | `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
 | `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |

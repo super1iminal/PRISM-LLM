@@ -6,10 +6,13 @@ A case study lives in `domains/<name>/` and consists of
     model.prism.j2       the MDP in PRISM syntax. Every policy action must be an action label
                          ([up], [down], ...) on the commands it controls
     spec.yaml.j2         policy-visible variables, actions and requirements (see `Spec`), plus
-                         optional_variables: descriptions for variables a config may make visible
+                         optional_variables: descriptions for variables a config may make visible,
+                         and optionally constants and features: the extended rule vocabulary
     description.md.j2    English description of the MDP for the prompt
     visual.txt.j2        visual representation of the state space for the prompt
     examples.md.j2       (optional) domain-specific rule examples for the prompt
+    examples_extended.md.j2
+                         (optional) examples for runs with the extended rule vocabulary
     initial.md.j2, refine.md.j2, extend.md.j2
                          (optional) override the core prompt templates in src/core/templates
 
@@ -25,7 +28,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import jinja2
 import yaml
 
-from core.rules import Value, Variable
+from core.rules import Constant, Feature, Value, Variable, Vocabulary
 from settings import DOMAINS_PATH
 
 CORE_TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -90,6 +93,16 @@ class Spec:
     variables: List[Variable]          # policy-visible state variables
     actions: Dict[str, str]            # action label -> English description
     requirements: List[Requirement]
+    constants: List[Constant] = field(default_factory=list)   # named instance values rules may use
+    features: List[Feature] = field(default_factory=list)     # conditions the domain computes for rules
+
+    def vocabulary(self, rules) -> Vocabulary:
+        """The vocabulary a run's `rules` config allows: with `rules.extended`, this instance's constants and
+        features (minus `rules.hidden_features`) and `any` rules; otherwise the base language."""
+        if not rules.extended:
+            return Vocabulary()
+        features = [f for f in self.features if f.name not in rules.hidden_features]
+        return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general)
 
 
 @dataclass
@@ -145,8 +158,12 @@ class Domain:
     def visual(self, instance: Instance) -> str:
         return self.render("visual.txt.j2", instance).rstrip()
 
-    def examples(self, instance: Instance) -> str:
-        return self.render("examples.md.j2", instance).strip() if self.has_template("examples.md.j2") else ""
+    def examples(self, instance: Instance, extended: bool = False) -> str:
+        """The domain's example rules; with `extended`, its examples_extended.md.j2 if it has one."""
+        for template in (["examples_extended.md.j2"] if extended else []) + ["examples.md.j2"]:
+            if self.has_template(template):
+                return self.render(template, instance).strip()
+        return ""
 
     def spec(self, instance: Instance) -> Spec:
         raw = yaml.safe_load(self.render("spec.yaml.j2", instance))
@@ -169,7 +186,10 @@ class Domain:
             variables.append(var)
         requirements = [Requirement(r["name"], r["formula"], float(r["threshold"]), r.get("bound", ">="),
                                     r.get("description", ""), r.get("reward")) for r in raw["requirements"]]
-        return Spec(variables, dict(raw["actions"]), requirements)
+        constants = [Constant(c["name"], int(c["value"]), c.get("description", "")) for c in raw.get("constants") or []]
+        features = [Feature(f["name"], f.get("description", ""), f.get("expr"), f.get("per_action"))
+                    for f in raw.get("features") or []]
+        return Spec(variables, dict(raw["actions"]), requirements, constants, features)
 
     def format_state(self, valuation: Dict[str, Value]) -> str:
         """How a (policy-variable) state is shown to the LLM; by default in rule syntax."""

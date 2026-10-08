@@ -12,6 +12,17 @@ Condition language (a small, PRISM-compatible expression subset):
     boolean       !  &  |  =>  and parentheses
 Common LLM spellings are accepted and normalized: ==, &&, ||, and, or, not, True, False, and a
 trailing "-> <action>" repeating the rule's own action.
+
+Extended vocabulary (`Vocabulary`, off unless a run enables it):
+    constants     named instance values (a goal's row, the horizon), replaced by their value
+    features      conditions the domain defines (sensors); a state feature is one expression, an
+                  action feature has one per action and means its value for the rule's action
+    `any`         a rule action that allows every action whose condition holds, with action
+                  features evaluated for each action; the rule decides a state if it allows at
+                  least one action there, and every allowed action stays enabled (the verifier's
+                  worst case covers all of them)
+    general mode  only the numbers 0 and 1 in conditions, so rules name instance values and carry
+                  over to other instances
 """
 import itertools
 import json
@@ -67,7 +78,88 @@ class Binary:
     right: "Expr"
 
 
-Expr = Union[Const, Var, Unary, Binary]
+@dataclass(frozen=True)
+class ActionRef:
+    name: str    # an action feature; bound to an action when its rule is compiled
+
+
+@dataclass(frozen=True)
+class FeatureCall:
+    """A feature's value (for `action`, if it is an action feature). Compiles to a named PRISM formula
+    and is evaluated once per state when a cache is given."""
+    name: str
+    action: Optional[str]
+    expr: "Expr" = field(compare=False, repr=False)
+
+    @property
+    def formula(self) -> str:
+        return f"feature_{self.name}" + (f"_{self.action}" if self.action else "")
+
+
+Expr = Union[Const, Var, Unary, Binary, ActionRef, FeatureCall]
+
+ANY = "any"    # rule action: allow every action whose condition holds
+
+
+@dataclass(frozen=True)
+class Constant:
+    """A named instance value conditions may use, e.g. a goal's row."""
+    name: str
+    value: int
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class Feature:
+    """A condition or value the domain computes for rules, like a sensor. A state feature has one
+    expression (`expr`); an action feature has one per action (`per_action`). Expressions are in the
+    rule language over the policy variables and constants."""
+    name: str
+    description: str = ""
+    expr: Optional[str] = None
+    per_action: Optional[Dict[str, str]] = None
+
+    @property
+    def is_action_feature(self) -> bool:
+        return self.per_action is not None
+
+
+@dataclass
+class Vocabulary:
+    """What conditions may refer to besides the policy variables. Empty by default: the base language."""
+    constants: List[Constant] = field(default_factory=list)
+    features: List[Feature] = field(default_factory=list)
+    allow_any: bool = False     # rules may use the action `any`
+    general: bool = False       # only the numbers 0 and 1 in conditions
+
+
+@dataclass
+class _Scope:
+    """Name resolution for one parse: variables, constant values, compiled features, literal limit."""
+    variables: Dict[str, Variable]
+    constants: Dict[str, int] = field(default_factory=dict)
+    state_features: Dict[str, "Expr"] = field(default_factory=dict)
+    action_features: Dict[str, Dict[str, "Expr"]] = field(default_factory=dict)
+    general: bool = False
+
+    @classmethod
+    def build(cls, variables: Sequence[Variable], actions: Sequence[str], vocab: Vocabulary) -> "_Scope":
+        """Compile the vocabulary's feature expressions (over variables and constants) for these actions."""
+        base = cls({v.name: v for v in variables}, {c.name: c.value for c in vocab.constants})
+        scope = cls(base.variables, base.constants, general=vocab.general)
+        for f in vocab.features:
+            if f.is_action_feature:
+                missing = [a for a in actions if a not in f.per_action]
+                if missing:
+                    raise RuleError(f"action feature {f.name!r} has no expression for {', '.join(missing)}")
+                scope.action_features[f.name] = {a: _parse(f.per_action[a], base) for a in actions}
+            else:
+                scope.state_features[f.name] = _parse(f.expr, base)
+        return scope
+
+    def names(self) -> List[str]:
+        return list(self.variables) + list(self.constants) + list(self.state_features) + list(self.action_features)
+
 
 _TOKEN_RE = re.compile(r"\s*(=>|<=|>=|!=|==|&&|\|\||[()!&|<>=+\-]|\d+|[A-Za-z_][A-Za-z_0-9]*)")
 _WORD_OPS = {"and": "&", "or": "|", "not": "!", "true": "true", "false": "false", "True": "true", "False": "false"}
@@ -91,8 +183,9 @@ def _tokenize(text: str) -> List[str]:
 
 class _Parser:
     # precedence (low -> high): =>, |, &, !, comparison, + -, unary -, atoms
-    def __init__(self, text: str):
+    def __init__(self, text: str, scope: Optional[_Scope] = None):
         self.text = text
+        self.scope = scope
         self.tokens = _tokenize(text)
         self.i = 0
 
@@ -172,34 +265,69 @@ class _Parser:
         if tok == "false":
             return Const(False)
         if tok.isdigit():
+            if self.scope is not None and self.scope.general and int(tok) > 1:
+                names = ", ".join(self.scope.constants) or "none"
+                raise RuleError(f"number {tok} is not allowed: conditions may only use the numbers 0 and 1, so that "
+                                f"the rules carry over to other instances; use the named constants ({names}) "
+                                f"or the features instead")
             return Const(int(tok))
         if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", tok):
-            return Var(tok)
+            return self._name(tok)
         raise RuleError(f"unexpected {tok!r} in condition {self.text!r}")
 
+    def _name(self, tok: str) -> "Expr":
+        scope = self.scope
+        if scope is None or tok in scope.variables:
+            return Var(tok)
+        if tok in scope.constants:
+            return Const(scope.constants[tok])
+        if tok in scope.state_features:
+            return FeatureCall(tok, None, scope.state_features[tok])
+        if tok in scope.action_features:
+            return ActionRef(tok)
+        return Var(tok)   # unknown: the type check reports it with the allowed names
 
-def parse_condition(text: str, variables: Dict[str, Variable]) -> Expr:
-    expr = _Parser(text).parse()
-    if _type_of(expr, variables, text) != "bool":
+
+def _parse(text: str, scope: _Scope) -> Expr:
+    expr = _Parser(text, scope).parse()
+    _type_of(expr, scope, text)
+    return expr
+
+
+def parse_condition(text: str, variables: Dict[str, Variable], scope: Optional[_Scope] = None) -> Expr:
+    """Parse and type-check a boolean condition over `variables` (and `scope`'s vocabulary, if given)."""
+    scope = scope or _Scope(variables)
+    expr = _Parser(text, scope).parse()
+    if _type_of(expr, scope, text) != "bool":
         raise RuleError(f"condition {text!r} is not a boolean expression")
     return expr
 
 
-def _type_of(expr: Expr, variables: Dict[str, Variable], text: str) -> str:
+def _type_of(expr: Expr, scope: _Scope, text: str) -> str:
+    variables = scope.variables
     if isinstance(expr, Const):
         return "bool" if isinstance(expr.value, bool) else "int"
     if isinstance(expr, Var):
         if expr.name not in variables:
+            names = scope.names()
+            kind = "variables" if len(names) == len(variables) else "names"
             raise RuleError(f"unknown variable {expr.name!r} in condition {text!r}; "
-                            f"allowed variables: {', '.join(variables)}")
+                            f"allowed {kind}: {', '.join(names)}")
         return variables[expr.name].type
+    if isinstance(expr, FeatureCall):
+        return _type_of(expr.expr, scope, text)
+    if isinstance(expr, ActionRef):
+        types = {_type_of(e, scope, text) for e in scope.action_features[expr.name].values()}
+        if len(types) != 1:
+            raise RuleError(f"action feature {expr.name!r} has expressions of different types")
+        return types.pop()
     if isinstance(expr, Unary):
-        t = _type_of(expr.arg, variables, text)
+        t = _type_of(expr.arg, scope, text)
         want = "bool" if expr.op == "!" else "int"
         if t != want:
             raise RuleError(f"operator {expr.op!r} needs a {want} operand in condition {text!r}")
         return want
-    lt, rt = _type_of(expr.left, variables, text), _type_of(expr.right, variables, text)
+    lt, rt = _type_of(expr.left, scope, text), _type_of(expr.right, scope, text)
     if expr.op in ("+", "-", "<", "<=", ">", ">="):
         if lt != "int" or rt != "int":
             raise RuleError(f"operator {expr.op!r} needs integer operands in condition {text!r}")
@@ -218,22 +346,59 @@ _BINARY_OPS = {"+": operator.add, "-": operator.sub, "=": operator.eq, "!=": ope
                "<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge}
 
 
-def evaluate(expr: Expr, state: Dict[str, Value]) -> Value:
+def evaluate(expr: Expr, state: Dict[str, Value], cache: Optional[Dict] = None) -> Value:
+    """Value of `expr` in `state`. With `cache` (one dict per state), each feature is computed once."""
     if isinstance(expr, Const):
         return expr.value
     if isinstance(expr, Var):
         return state[expr.name]
+    if isinstance(expr, FeatureCall):
+        if cache is None:
+            return evaluate(expr.expr, state)
+        key = (expr.name, expr.action)
+        if key not in cache:
+            cache[key] = evaluate(expr.expr, state)
+        return cache[key]
     if isinstance(expr, Unary):
-        v = evaluate(expr.arg, state)
+        v = evaluate(expr.arg, state, cache)
         return (not v) if expr.op == "!" else -v
     op = expr.op
     if op == "&":
-        return bool(evaluate(expr.left, state)) and bool(evaluate(expr.right, state))
+        return bool(evaluate(expr.left, state, cache)) and bool(evaluate(expr.right, state, cache))
     if op == "|":
-        return bool(evaluate(expr.left, state)) or bool(evaluate(expr.right, state))
+        return bool(evaluate(expr.left, state, cache)) or bool(evaluate(expr.right, state, cache))
     if op == "=>":
-        return (not evaluate(expr.left, state)) or bool(evaluate(expr.right, state))
-    return _BINARY_OPS[op](evaluate(expr.left, state), evaluate(expr.right, state))
+        return (not evaluate(expr.left, state, cache)) or bool(evaluate(expr.right, state, cache))
+    return _BINARY_OPS[op](evaluate(expr.left, state, cache), evaluate(expr.right, state, cache))
+
+
+def feature_calls(expr: Expr) -> List[FeatureCall]:
+    """The features `expr` uses (bound ones; action features must be bound first)."""
+    if isinstance(expr, FeatureCall):
+        return [expr]
+    if isinstance(expr, Unary):
+        return feature_calls(expr.arg)
+    if isinstance(expr, Binary):
+        return feature_calls(expr.left) + feature_calls(expr.right)
+    return []
+
+
+def bind(expr: Expr, action: str, scope: _Scope) -> Expr:
+    """`expr` with every action feature replaced by its expression for `action`."""
+    if isinstance(expr, ActionRef):
+        return FeatureCall(expr.name, action, scope.action_features[expr.name][action])
+    if isinstance(expr, Unary):
+        return Unary(expr.op, bind(expr.arg, action, scope))
+    if isinstance(expr, Binary):
+        return Binary(expr.op, bind(expr.left, action, scope), bind(expr.right, action, scope))
+    return expr
+
+
+def _any_of(exprs: List[Expr]) -> Expr:
+    out = exprs[0]
+    for e in exprs[1:]:
+        out = Binary("|", out, e)
+    return out
 
 
 def to_prism(expr: Expr) -> str:
@@ -241,6 +406,8 @@ def to_prism(expr: Expr) -> str:
         return str(expr.value).lower()
     if isinstance(expr, Var):
         return expr.name
+    if isinstance(expr, FeatureCall):
+        return expr.formula
     if isinstance(expr, Unary):
         return f"{expr.op}({to_prism(expr.arg)})"
     return f"({to_prism(expr.left)} {expr.op} {to_prism(expr.right)})"
@@ -261,8 +428,9 @@ def _strip_action_suffix(condition: str, action: str, actions: Sequence[str]) ->
 @dataclass
 class Rule:
     condition: str
-    action: str
-    expr: Expr = field(repr=False, compare=False, default=None)
+    action: str                 # a policy action, or ANY
+    expr: Expr = field(repr=False, compare=False, default=None)    # the rule decides a state where this holds
+    allows: Dict[str, Expr] = field(repr=False, compare=False, default_factory=dict)  # action -> when it is allowed
 
     def text(self) -> str:
         return f"{self.condition} -> {self.action}"
@@ -274,20 +442,26 @@ class SymbolicPolicy:
     variables: List[Variable]
     actions: List[str]
     rules: List[Rule] = field(default_factory=list)
+    vocabulary: Vocabulary = field(default_factory=Vocabulary)
 
     @classmethod
     def from_raw(cls, variables: Sequence[Variable], actions: Sequence[str],
-                 raw_rules: Iterable[Tuple[str, str]]) -> "SymbolicPolicy":
-        """Parse `(condition, action)` pairs; raises RuleError listing every bad rule."""
-        policy = cls(list(variables), list(actions))
-        var_map = {v.name: v for v in variables}
+                 raw_rules: Iterable[Tuple[str, str]], vocabulary: Optional[Vocabulary] = None) -> "SymbolicPolicy":
+        """Parse `(condition, action)` pairs, with `vocabulary`'s names if given; raises RuleError listing
+        every bad rule."""
+        vocabulary = vocabulary or Vocabulary()
+        policy = cls(list(variables), list(actions), vocabulary=vocabulary)
+        scope = _Scope.build(variables, actions, vocabulary)
+        allowed = list(actions) + ([ANY] if vocabulary.allow_any else [])
         errors = []
         for i, (condition, action) in enumerate(raw_rules, start=1):
             try:
-                if action not in actions:
-                    raise RuleError(f"unknown action {action!r}; allowed actions: {', '.join(actions)}")
-                condition = _strip_action_suffix(condition.strip(), action, actions)
-                policy.rules.append(Rule(condition, action, parse_condition(condition, var_map)))
+                if action not in allowed:
+                    raise RuleError(f"unknown action {action!r}; allowed actions: {', '.join(allowed)}")
+                condition = _strip_action_suffix(condition.strip(), action, allowed)
+                expr = parse_condition(condition, scope.variables, scope)
+                allows = {a: bind(expr, a, scope) for a in (actions if action == ANY else [action])}
+                policy.rules.append(Rule(condition, action, _any_of(list(allows.values())), allows))
             except RuleError as e:
                 errors.append(f"rule {i} ({condition} -> {action}): {e}")
         if errors:
@@ -296,12 +470,20 @@ class SymbolicPolicy:
 
     def extended(self, other: "SymbolicPolicy") -> "SymbolicPolicy":
         """This policy followed by `other`'s rules (they only apply where no existing rule matches)."""
-        return SymbolicPolicy(self.variables, self.actions, self.rules + other.rules)
+        return SymbolicPolicy(self.variables, self.actions, self.rules + other.rules, self.vocabulary)
+
+    def allowed(self, state: Dict[str, Value]) -> Optional[List[str]]:
+        """The actions the deciding rule allows in `state`, or None if no rule decides it."""
+        i = self.first_match(state)
+        if i is None:
+            return None
+        return [a for a, e in self.rules[i].allows.items() if evaluate(e, state)]
 
     def first_match(self, state: Dict[str, Value]) -> Optional[int]:
         """Index of the rule deciding `state` (policy variables only), or None if uncovered."""
+        cache: Dict = {}
         for i, rule in enumerate(self.rules):
-            if evaluate(rule.expr, state):
+            if evaluate(rule.expr, state, cache):
                 return i
         return None
 
@@ -333,27 +515,27 @@ class SymbolicPolicy:
         overlaps = [set() for _ in range(n)]
         names = [v.name for v in self.variables]
         for values in itertools.product(*(v.domain() for v in self.variables)):
-            state = dict(zip(names, values))
-            matching = [i for i, r in enumerate(self.rules) if evaluate(r.expr, state)]
+            state, cache = dict(zip(names, values)), {}
+            matching = [i for i, r in enumerate(self.rules) if evaluate(r.expr, state, cache)]
             for a, i in enumerate(matching):
                 overlaps[i].update(matching[:a])
         return [sorted(o) for o in overlaps]
 
     def to_prism_module(self, max_enumeration: int) -> str:
-        """A variable-free PRISM module that synchronizes on every action label.
+        """A variable-free PRISM module that synchronizes on every action label, preceded by a formula for
+        each feature the rules use.
 
-        Action `a` is enabled iff the first matching rule chooses `a`, or no rule matches.
+        Action `a` is enabled iff the first rule that decides the state allows `a`, or no rule decides it.
         """
         overlaps = self._overlaps(max_enumeration)
-        effective = []
-        for i, rule in enumerate(self.rules):
-            parts = [to_prism(rule.expr)] + [f"!{to_prism(self.rules[j].expr)}" for j in overlaps[i]]
-            effective.append(" & ".join(parts))
+        earlier = [[f"!{to_prism(self.rules[j].expr)}" for j in overlaps[i]] for i in range(len(self.rules))]
         covered = " | ".join(to_prism(r.expr) for r in self.rules) or "false"
 
-        lines = ["module policy"]
+        used = {f.formula: f for r in self.rules for e in r.allows.values() for f in feature_calls(e)}
+        lines = [f"formula {name} = {to_prism(f.expr)};" for name, f in sorted(used.items())] + ["module policy"]
         for action in self.actions:
-            chosen = [f"({effective[i]})" for i, r in enumerate(self.rules) if r.action == action]
+            chosen = ["(" + " & ".join([to_prism(r.allows[action])] + earlier[i]) + ")"
+                      for i, r in enumerate(self.rules) if action in r.allows]
             guard = " | ".join(chosen + [f"!({covered})"])
             lines.append(f"  [{action}] {guard} -> true;")
         lines.append("endmodule")

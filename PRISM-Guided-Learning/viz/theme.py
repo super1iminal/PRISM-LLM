@@ -4,7 +4,7 @@ SURFACE, INK, INK_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 # Ablation families (configs/plot/ablation_summary.yaml), the same colour in every ablation figure
 FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback content": "#1baf7a",
                  "Blame signal": "#eda100", "Rounds budget": "#e87ba4", "Legacy variants": "#4a3aa7",
-                 "Model": "#008300"}
+                 "Model": "#008300", "Rule vocabulary": "#e34948"}
 
 
 def style(ax, title, ylabel=None, pad=10):

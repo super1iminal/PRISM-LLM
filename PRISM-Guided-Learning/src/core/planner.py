@@ -32,7 +32,7 @@ from core.backends import LLMBackend
 from core.domain import Domain, Instance, Requirement, failing
 from core.prism import PrismError, PrismRunner
 from core.retry import RetryPolicy
-from core.rules import RuleError, SymbolicPolicy
+from core.rules import ANY, RuleError, SymbolicPolicy, Vocabulary
 from core.scheduler import drive
 from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.verifier import PolicyVerifier, Verification
@@ -42,8 +42,9 @@ Steps = Generator[LLMTask, LLMResult, T]   # yields LLM tasks, is sent their res
 
 
 def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
-    """JSON schema for the LLM's answer. The length bounds are enforced by constrained decoding,
-    which stops degenerate repetition loops from running into the token limit."""
+    """JSON schema for the LLM's answer; `actions` are the values a rule's action may take (with `any` for the
+    extended vocabulary). The length bounds are enforced by constrained decoding, which stops degenerate
+    repetition loops from running into the token limit."""
     rule = create_model(
         "Rule",
         condition=(str, Field(description="Boolean condition over the state variables",
@@ -71,6 +72,7 @@ class _Episode:
     context: Dict[str, Any]           # prompt context shared by every template
     log: Callable[[str], None]
     tasks: TaskFactory                # numbers the instance's LLM calls (their seeds)
+    vocabulary: Vocabulary            # what rule conditions may name besides the policy variables
 
     @property
     def requirements(self) -> List[Requirement]:
@@ -140,16 +142,20 @@ class SymbolicPlanner:
 
     # ---------------------------------------------------------------- prompting
 
-    def _prompt_context(self, instance: Instance, spec) -> Dict[str, Any]:
+    def _prompt_context(self, instance: Instance, spec, vocabulary: Vocabulary) -> Dict[str, Any]:
         prompt = self.config.prompt
         return {
             "description": self.domain.description(instance),
             "visual": self.domain.visual(instance),
-            "examples": self.domain.examples(instance) if prompt.examples else "",
+            "examples": self.domain.examples(instance, extended=vocabulary.allow_any) if prompt.examples else "",
             "catch_all_instruction": prompt.catch_all_instruction,
             "variables": spec.variables,
             "actions": spec.actions,
             "requirements": spec.requirements,
+            "constants": vocabulary.constants,
+            "features": vocabulary.features,
+            "any_action": vocabulary.allow_any,
+            "general": vocabulary.general,
         }
 
     def _results_context(self, policy: SymbolicPolicy, v: Verification, reqs: List[Requirement]) -> Dict[str, Any]:
@@ -180,7 +186,8 @@ class SymbolicPlanner:
             try:
                 parsed = ep.schema.model_validate_json(result.text)
                 answer.policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions),
-                                                        [(r.condition, r.action) for r in parsed.rules])
+                                                        [(r.condition, r.action) for r in parsed.rules],
+                                                        ep.vocabulary)
                 break
             except (ValidationError, RuleError) as e:
                 message = str(e)
@@ -266,9 +273,11 @@ class SymbolicPlanner:
         analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
                                 cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                 seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
-        schema = rule_schema(list(verifier.spec.actions), cfg.planner.max_rules, cfg.planner.max_condition_chars)
-        return _Episode(instance, verifier, analyzer, schema, self._prompt_context(instance, verifier.spec), log,
-                        TaskFactory(cfg.llm, instance.id))
+        vocabulary = verifier.spec.vocabulary(cfg.rules)
+        answers = list(verifier.spec.actions) + ([ANY] if vocabulary.allow_any else [])
+        schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars)
+        return _Episode(instance, verifier, analyzer, schema, self._prompt_context(instance, verifier.spec, vocabulary),
+                        log, TaskFactory(cfg.llm, instance.id), vocabulary)
 
     def _round(self, ep: _Episode, mode: str, prompt: str, attempt: int,
                kept: Optional[_Kept]) -> Steps[Tuple[SymbolicPolicy, Verification, _Answer]]:
@@ -300,7 +309,10 @@ class SymbolicPlanner:
         failing_best, failing_worst = failing(reqs, kept.v.best), failing(reqs, kept.v.worst)
         joint_conflict = (not failing_best and self.config.planner.branch == "joint"
                           and self._joint_conflict(ep, kept, record))
-        if failing_best or joint_conflict:
+        # Every situation covered, yet best and worst differ: rules allow several actions (`any`) and some of
+        # them are harmful. Appending rules cannot change covered states, so rewrite them.
+        open_choices = bool(failing_worst) and kept.v.uncovered_situations == 0
+        if failing_best or joint_conflict or open_choices:
             return "refine", self._refine_prompt(ep, kept, failing_best or failing_worst, joint_conflict, results)
         return "extend", self._extend_prompt(ep, kept, failing_worst, results)
 

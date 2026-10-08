@@ -11,6 +11,8 @@ particular domain. Everything domain-specific lives in these files:
 | `description.md.j2` | English description of the MDP for the prompt: states, dynamics, transition probabilities. |
 | `visual.txt.j2` | Visual representation of the state space for the prompt. |
 | `examples.md.j2` | *(optional)* Example rules in this domain's vocabulary. |
+| `examples_extended.md.j2` | *(optional)* Example rules for runs with the extended vocabulary (`rules.extended`): constants, features, `any`. |
+| `constants`, `features` in `spec.yaml.j2` | *(optional)* The extended rule vocabulary, used only with `rules.extended`: named instance values (`name`, `value`, `description`) and features the rules may use (`name`, `description`, and `expr` for a state feature or `per_action: {action: expr}` for an action feature; expressions in the rule language over the policy variables and constants). The shared partial `{% include "_vocabulary.yaml.j2" %}` renders them from the context keys `rule_constants` and `rule_features`. See `docs/semantics.md`. |
 | `initial.md.j2`, `refine.md.j2`, `extend.md.j2`, `_problem.md.j2`, … | *(optional)* Override the core prompt templates in `src/core/templates` for this domain only. |
 
 All templates are Jinja2 (`StrictUndefined`, `trim_blocks`, `lstrip_blocks`).

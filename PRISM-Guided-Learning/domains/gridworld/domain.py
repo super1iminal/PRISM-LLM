@@ -5,8 +5,9 @@ BFS_steps. Mirrors the legacy model in src/legacy/prism_model.py, but as a PRISM
 actions are left open for the policy.
 """
 import ast
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set, Tuple
 
 import pandas as pd
 
@@ -88,6 +89,7 @@ class GridWorld(Domain):
             "outcomes": {a: [(a, PROB_FORWARD), (SLIP_LEFT[a], PROB_SLIP_LEFT), (SLIP_RIGHT[a], PROB_SLIP_RIGHT)]
                          for a in MOVES},
             "requirements": self._requirements(goal_nums, bool(cycle)),
+            **rule_vocabulary(n, goals, d["static"], cycle, phase_visible="obs_idx" in self.visible_extra),
         }
 
     @staticmethod
@@ -123,3 +125,81 @@ class GridWorld(Domain):
                              "description": f"While heading to goal {k}, the agent never shares a cell "
                                             f"with the moving obstacle."})
         return reqs
+
+
+# ---------------------------------------------------------------- extended rule vocabulary
+
+Cell = Tuple[int, int]
+
+
+def _cells(cells, dr: int, dc: int) -> str:
+    """Condition: the move (dr, dc) from (x, y) lands on one of `cells`."""
+    return " | ".join(f"(x = {r - dr} & y = {c - dc})" for r, c in sorted(cells)) or "false"
+
+
+def _distances(n: int, target: Cell, blocked: Set[Cell]) -> Dict[Cell, int]:
+    """Shortest number of moves from each free cell to `target` through free cells (BFS)."""
+    dist, queue = {target: 0}, deque([target])
+    while queue:
+        r, c = queue.popleft()
+        for dr, dc in MOVES.values():
+            nxt = (r + dr, c + dc)
+            if 0 <= nxt[0] < n and 0 <= nxt[1] < n and nxt not in blocked and nxt not in dist:
+                dist[nxt] = dist[(r, c)] + 1
+                queue.append(nxt)
+    return dist
+
+
+def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_visible: bool = True) -> Dict[str, Any]:
+    """Constants (grid size, goal coordinates) and per-action features for the extended rule vocabulary.
+    Most features look at the move's intended target cell; `risky` looks at the cells a slip would reach, and
+    `obstacle` (only when the obstacle's phase obs_idx is visible) at where the moving obstacle will be."""
+    static, patrol = {tuple(c) for c in static}, {tuple(c) for c in cycle}
+    ks = [g["k"] for g in goals]
+    where = {g["k"]: (g["row"], g["col"]) for g in goals}
+    segment = {k: " & ".join([f"g{j}" for j in ks[:i]] + [f"!g{k}"]) for i, k in enumerate(ks)}
+    border = {"up": "x = 0", "down": "x = N - 1", "left": "y = 0", "right": "y = N - 1"}
+    toward = {"up": "G{k}R < x", "down": "G{k}R > x", "left": "G{k}C < y", "right": "G{k}C > y"}
+    features = {"wall": {}, "hazard": {}, "risky": {}, "toward": {}, "closer": {}}
+    if cycle and phase_visible:
+        features["obstacle"] = {}
+
+    def hazard(dr: int, dc: int) -> str:
+        later = [f"({segment[k]} & ({_cells([where[j] for j in ks[i + 1:]], dr, dc)}))"
+                 for i, k in enumerate(ks) if ks[i + 1:]]
+        return " | ".join([_cells(patrol, dr, dc)] + later)
+
+    for a, (dr, dc) in MOVES.items():
+        features["wall"][a] = f"{border[a]} | {_cells(static, dr, dc)}"
+        features["hazard"][a] = hazard(dr, dc)
+        features["risky"][a] = " | ".join(f"({hazard(*MOVES[side])})" for side in (SLIP_LEFT[a], SLIP_RIGHT[a]))
+        if "obstacle" in features:
+            features["obstacle"][a] = " | ".join(
+                f"(obs_idx = {i} & ({_cells([cycle[(i + 1) % len(cycle)]], dr, dc)}))" for i in range(len(cycle)))
+        features["toward"][a] = " | ".join(f"({segment[k]} & {toward[a].format(k=k)})" for k in ks)
+        closer = []
+        for i, k in enumerate(ks):
+            blocked = static | patrol | {where[j] for j in ks[i + 1:]}
+            dist = _distances(n, where[k], blocked)
+            cells = [(r, c) for (r, c), d in dist.items()
+                     if (r + dr, c + dc) in dist and dist[(r + dr, c + dc)] < d]
+            closer.append(f"({segment[k]} & ({' | '.join(f'(x = {r} & y = {c})' for r, c in sorted(cells)) or 'false'}))")
+        features["closer"][a] = " | ".join(closer)
+    descriptions = {
+        "wall": "true if the move would leave the grid or hit a static obstacle (the agent then stays where it is)",
+        "hazard": "true if the move's target cell is on the moving obstacle's patrol path, or is a goal that must "
+                  "not be entered yet",
+        "risky": "true if a slip of this move (to either side) could land on a hazard: the patrol path, or a goal "
+                 "that must not be entered yet",
+        "obstacle": "true if the moving obstacle will be on the move's target cell right after this move",
+        "toward": "true if the move goes towards the next goal not yet reached (fewer rows or columns away)",
+        "closer": "true if the move's target cell is closer to the next goal along a shortest path through free "
+                  "cells (avoiding static obstacles, the patrol path and later goals)",
+    }
+    constants = [{"name": "N", "value": n, "description": "grid size: rows and columns are 0..N-1"}]
+    for k in ks:
+        constants += [{"name": f"G{k}R", "value": where[k][0], "description": f"goal {k}'s row"},
+                      {"name": f"G{k}C", "value": where[k][1], "description": f"goal {k}'s column"}]
+    return {"rule_constants": constants,
+            "rule_features": [{"name": name, "description": descriptions[name], "per_action": per_action}
+                              for name, per_action in features.items()]}
