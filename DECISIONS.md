@@ -22,6 +22,11 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
 - **Loop:** when every situation is covered but the worst case still fails, the gap comes from `any` rules allowing harmful actions, so the next round refines (appending cannot change covered states). Impossible in the base language, where full coverage gives best = worst.
 - **Code:** `core/rules.py` (`Vocabulary`, `Constant`, `Feature`, `ActionRef`/`FeatureCall`, `bind`; `Rule.allows` per action), `Spec.vocabulary(rules config)`, the planner's schema adds `any`, `_problem.md.j2` renders the vocabulary, `_vocabulary.yaml.j2` is the shared spec partial, `Domain.examples(extended=)` picks `examples_extended.md.j2`, `config.load_run_config`. Config: `rules.extended`, `rules.general`, `rules.hidden_features`. Tests: `tests/test_vocabulary.py`.
 - **[REVIEW]** Gridworld's `closer` (shortest path through free cells) makes navigation easy; it is hidden in the main condition and available in an ablation. Pac-Man's `nearer_g*` look only at rows and columns, not at the maze.
+- **Pac-Man, Haiku 5.5, general vocabulary** (`haiku_rl_pacman`, one run; page `out/results/rule_language_pacman/`):
+  - Solved 3 of 5 horizons (8, 10, 14), against 2 with the base vocabulary (`haiku_pacman`).
+  - The horizon-14 rule set has 6 rules and names no positions: `!wall & !nearer_g0 & !nearer_g1 -> any`, `wall & !nearer_g0 & !nearer_g1 -> any`, `dP = 0 & !wall & !nearer_g0 -> right`, `!wall & !nearer_g0 -> any`, `!wall & !nearer_g1 -> any`, `true -> up`.
+  - **Transfer** (`transfer_pacman_transfer.csv`, horizons 8–25): frozen, that rule set holds the optimum 0.5511 on horizons 8–18, including 16 and 18, which neither Haiku solved directly nor Sonnet's base rules survive. It reaches 0.680 at 20 and 0.843 at 25 (not certified against 0.56).
+  - At horizon 25 that is better than 1–2–3–Go!'s tree (0.869) and than Sonnet 5.5's best base-vocabulary rule set (0.990). The other rule sets transfer less far (from 8, 10, 12: 0.5511 only up to 10; 0.78 from 12).
 
 ## Positioning checks before the transfer experiment (Oct 8)
 Details in `docs/positioning.md` (the related-work survey's phase 2; the survey is `docs/related_work_survey.md`).
