@@ -25,11 +25,13 @@ from core.verifier import PolicyVerifier
 
 
 def final_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
-    """Source sample id -> its final rules, from the run's outputs/sample_*.json."""
+    """Source sample id -> its final rules, from the run's outputs/sample_*.json. Instances that ended with an
+    error (no final rules) are skipped."""
     out = {}
     for path in sorted((run_dir / "outputs").glob("sample_*.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
-        out[int(path.stem.split("_")[1])] = [(r["condition"], r["action"]) for r in record["final_rules"]]
+        if "final_rules" in record:
+            out[int(path.stem.split("_")[1])] = [(r["condition"], r["action"]) for r in record["final_rules"]]
     return out
 
 
