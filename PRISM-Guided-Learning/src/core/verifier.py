@@ -114,12 +114,13 @@ class PolicyVerifier:
         meets all thresholds simultaneously. `None` asks the question of the bare MDP (the ceiling).
 
         "No" is exact; "yes" is optimistic for memoryless, observation-based completions. None means
-        undecided (PRISM's exact LP method does not support e.g. step-bounded requirements).
+        undecided (PRISM's exact LP method does not support e.g. step-bounded requirements, or the LP did not
+        finish within `prism.timeout_s`).
         """
         try:
             return self.runner.check(self.compose(policy), self.joint_query())
-        except PrismError:
-            return None   # e.g. objective kinds PRISM's multi-objective engine rejects: undecided
+        except (PrismError, subprocess.TimeoutExpired):
+            return None   # objective kinds PRISM's multi-objective engine rejects, or an LP that runs too long
 
     def optimum(self) -> Tuple[Dict[str, float], Dict[str, List[float]], PrismResult]:
         """Best achievable value of each requirement on the bare MDP (no policy), cached.

@@ -1,6 +1,7 @@
 """Run PRISM on an MDP and parse per-state results, reachable states and transitions."""
 import os
 import re
+import signal
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -200,5 +201,21 @@ class PrismRunner:
                 "-maxiters", str(self.max_iters)]
 
     def _call(self, cmd: List[str]) -> str:
-        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                              timeout=self.timeout).stdout
+        """PRISM's output. On timeout, kills the whole process tree and raises `subprocess.TimeoutExpired`."""
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              start_new_session=os.name != "nt") as proc:
+            try:
+                return proc.communicate(timeout=self.timeout)[0]
+            except subprocess.TimeoutExpired:
+                _kill_tree(proc)
+                proc.communicate()
+                raise
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill `proc` and its children. Killing only the child leaves PRISM's JVM running (prism.bat on Windows
+    starts it as a grandchild), and it keeps the output pipe open, so reading the output would block until it ends."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        os.killpg(proc.pid, signal.SIGKILL)

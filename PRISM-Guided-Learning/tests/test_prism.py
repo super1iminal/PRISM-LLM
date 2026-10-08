@@ -1,4 +1,9 @@
-"""PrismRunner without PRISM: input files, the command lines of check and run, and the solver fallback."""
+"""PrismRunner without PRISM: input files, the command lines of check and run, the solver fallback and timeouts."""
+import os
+import subprocess
+import sys
+import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -52,3 +57,20 @@ def test_run_falls_back_while_prism_does_not_converge(monkeypatch):
     first = runner.calls[0]
     assert first[3:8] == ["-explicit", "-javamaxmem", PRISM.java_max_mem, "-maxiters", str(PRISM.max_iters)]
     assert "-exporttrans" in first and first[-1] == "-x"   # extra args go last, on every attempt
+
+
+def test_timeout_kills_the_whole_process_tree(tmp_path):
+    """Like prism.bat starting the JVM, the script starts a grandchild that holds the output pipe open."""
+    sleeper = f'"{sys.executable}" -c "import time; time.sleep(60)"'
+    if os.name == "nt":
+        script = tmp_path / "prism.bat"
+        script.write_text(f"@{sleeper}\n", encoding="utf-8")
+    else:
+        script = tmp_path / "prism.sh"
+        script.write_text(f"#!/bin/sh\n{sleeper}\n", encoding="utf-8")
+        script.chmod(0o755)
+    runner = PrismRunner(replace(PRISM, timeout_s=1), prism_path=str(script))
+    start = time.time()
+    with pytest.raises(subprocess.TimeoutExpired):
+        runner._call([str(script)])
+    assert time.time() - start < 30
