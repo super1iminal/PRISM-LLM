@@ -64,6 +64,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
 | `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |
 | `run.workers` / `run.limit` | 2 / `null` | parallel instances (threads, or the lockstep batch size) / first N instances only | — |
+| `run.train_sets` | `[]` | symbolic only. Groups of instance ids (dataset rows): one rule set per group, written for and verified on every member each round, solved only when every member passes (`core/training.py`, "Training sets" in `semantics.md`). Certify the frozen rules on held-out instances with `src/transfer.py`. `[]`: one rule set per instance | — |
 | `run.scheduler` | `threads` | symbolic only. `threads`: each worker solves an instance and calls the LLM itself. `lockstep`: every step sends one task per active instance as one batch and logs it to `<run>/llm_tasks.jsonl`; with Ollama, batches only run in parallel if `OLLAMA_NUM_PARALLEL` ≥ `run.workers` | — |
 
 

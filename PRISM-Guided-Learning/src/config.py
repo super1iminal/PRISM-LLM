@@ -127,6 +127,7 @@ class RunConfig:
     workers: int                              # instances in flight (threads, or the lockstep batch size)
     limit: Optional[int]
     scheduler: str                            # threads (each worker calls the LLM itself) | lockstep (batched)
+    train_sets: List[List[int]]               # groups of instance ids, one rule set each; [] = one per instance
 
 
 @dataclass

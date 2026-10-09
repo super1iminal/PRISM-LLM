@@ -1,9 +1,12 @@
-"""Freeze each instance's final rules from a run and certify them, unchanged, on every instance of a dataset.
+"""Freeze each instance's (or training set's) final rules from a run and certify them, unchanged, on every
+instance of a dataset.
 
 With the general rule vocabulary (`rules.general`), conditions only name instance constants and domain
 features, so a rule set written for one instance means something on every other. This checks whether it
 still meets every requirement there, in the worst case, by exact model checking per target instance.
-Rules that do not parse on a target (e.g. a run without the general vocabulary) are reported as such.
+Rules that do not parse on a target (e.g. a run without the general vocabulary) are reported as such. Column
+`trained` marks the targets a rule set was written for (its own instance, or its training set's members) when
+the targets are the run's own dataset.
 
 Usage (from PRISM-Guided-Learning/):
     python src/transfer.py out/results/ablations/<condition>/<seed dir> [--data <dataset>] [--workers 4]
@@ -24,15 +27,23 @@ from core.rules import RuleError, SymbolicPolicy
 from core.verifier import PolicyVerifier
 
 
+def _records(run_dir: Path) -> Dict[int, dict]:
+    return {int(path.stem.split("_")[1]): json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((run_dir / "outputs").glob("sample_*.json"))}
+
+
+def training_instances(run_dir: Path) -> Dict[int, List[int]]:
+    """Source sample id -> the ids of the instances its rules were written for: a training set's members, or
+    the sample's own instance."""
+    return {sid: [int(m["instance"]) for m in record["members"]] if "members" in record else [sid]
+            for sid, record in _records(run_dir).items()}
+
+
 def final_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
     """Source sample id -> its final rules, from the run's outputs/sample_*.json. Instances that ended with an
     error (no final rules) are skipped."""
-    out = {}
-    for path in sorted((run_dir / "outputs").glob("sample_*.json")):
-        record = json.loads(path.read_text(encoding="utf-8"))
-        if "final_rules" in record:
-            out[int(path.stem.split("_")[1])] = [(r["condition"], r["action"]) for r in record["final_rules"]]
-    return out
+    return {sid: [(r["condition"], r["action"]) for r in record["final_rules"]]
+            for sid, record in _records(run_dir).items() if "final_rules" in record}
 
 
 def certify(domain, cfg, runner, target, sources) -> List[dict]:
@@ -72,6 +83,8 @@ def main():
         rows = [row for part in pool.map(lambda t: certify(domain, cfg, runner, t, sources), targets) for row in part]
 
     df = pd.DataFrame(rows).sort_values(["source", "target"])
+    trained = training_instances(args.run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
+    df["trained"] = [t in trained.get(s, []) for s, t in zip(df.source, df.target)]
     out = args.run_dir / f"transfer_{Path(dataset).stem}.csv"
     df.to_csv(out, index=False)
     certified = df.get("certified", pd.Series(False, index=df.index)).fillna(False).astype(bool)
@@ -79,8 +92,10 @@ def main():
     print(f"{len(sources)} rule sets x {len(targets)} targets ({dataset}); certified targets per source rule set:")
     print("  " + ", ".join(f"{s}: {int(n)}" for s, n in per_source.items()))
     covered = df[certified].target.nunique()
+    held_out = df[certified & ~df.trained].groupby("source").size().reindex(per_source.index, fill_value=0)
     print(f"best single rule set: source {per_source.idxmax()} certifies {int(per_source.max())}/{len(targets)}; "
           f"targets certified by at least one rule set: {covered}/{len(targets)}")
+    print("held-out targets certified per source rule set: " + ", ".join(f"{s}: {int(n)}" for s, n in held_out.items()))
     print(out)
 
 

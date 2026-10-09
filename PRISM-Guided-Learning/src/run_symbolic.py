@@ -4,7 +4,8 @@ Usage: python src/run_symbolic.py [--condition B2] [--set section.key=value ...]
        (shortcuts: --domain, --data, --workers, --max-attempts, --limit)
 Settings come from configs/ (see docs/config.md); the resolved config is saved as <run>/config.json.
 `run.scheduler` picks how instances share the LLM: worker threads, or lockstep batches (tasks logged to
-<run>/llm_tasks.jsonl).
+<run>/llm_tasks.jsonl). With `run.train_sets`, each unit of work is a training set (core/training.py): one rule
+set for several instances, one sample per set.
 """
 import argparse
 import datetime
@@ -23,6 +24,7 @@ from core.backends import make_backend
 from core.domain import Instance, load_domain
 from core.planner import SymbolicPlanner
 from core.scheduler import LockstepScheduler, failed_result
+from core.training import training_sets
 from logging_utils import close_logger, setup_logger
 from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
@@ -59,12 +61,15 @@ def main():
 
 
 def run(cfg: Config, run_dir: str) -> str:
-    """Solve every instance of `cfg.domain` with the symbolic planner; write results to `run_dir`."""
+    """Solve every instance (or training set) of `cfg.domain` with the symbolic planner; write results to `run_dir`."""
     os.makedirs(run_dir, exist_ok=True)
     with open(os.path.join(run_dir, "config.json"), "w", encoding="utf-8") as f:
         json.dump(cfg.to_dict(), f, indent=1)
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
-    instances = domain.load_instances(cfg.domain.dataset)[:cfg.run.limit]
+    instances = domain.load_instances(cfg.domain.dataset)
+    if cfg.run.train_sets:
+        instances = training_sets(instances, cfg.run.train_sets)
+    instances = instances[:cfg.run.limit]
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
     backend = make_backend(cfg.llm)

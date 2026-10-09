@@ -47,6 +47,16 @@ Appending only removes choices at states the existing rules leave uncovered, so 
 
 The loop is per instance and sees the LLM only through tasks and results (`src/core/tasks.py`). How instances are interleaved (`run.scheduler`: threads, or lockstep batches) does not change any instance's rounds: given the same answers, both give identical prompts, rule sets and values.
 
+### Training sets (`run.train_sets`)
+A training set is a list of instances `I_1 … I_m` of one domain that share the policy variables (by name and type), the actions and the requirement names; ranges, constants and thresholds may differ. One rule list `R` is written for all of them:
+- `R` is parsed separately for each `I_k` (with `I_k`'s constants), giving `R_k`, and each `R_k` is verified on `I_k`: values `b_i^k`, `w_i^k`. An answer that does not parse on some member is invalid.
+- **Done** iff every `w_i^k` passes, for every member. Keep-best scores `R` by the members' scores (as above), summed.
+- The branch and the feedback (results, blame, uncovered hotspots, the joint query) are those of the member with the worst score (the first on ties), the *focus*; the prompt also lists, per member, how many requirements hold in the worst case.
+- Reported values per requirement are the least favourable over the members (each member's own are kept too), and the exact check runs on each member.
+- The frozen `R` is then certified on held-out instances by `src/transfer.py` (`trained` marks the instances it was written for).
+
+A training set of one instance is exactly the per-instance loop above.
+
 ## PRISM encoding
 The planner adds one variable-free module that synchronizes on every label in `A`:
 
