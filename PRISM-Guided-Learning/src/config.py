@@ -227,7 +227,7 @@ def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) 
         data["condition"] = condition
     for text in overrides:
         data = _merge(data, _parse_override(text))
-    cfg = _build(Config, data)
+    cfg = _build(Config, _resolve_scheduler(data))
     validate(cfg)
     return cfg
 
@@ -237,9 +237,17 @@ def load_run_config(run_dir) -> Config:
     """The settings a finished run recorded in its config.json, over today's defaults (so keys added since the
     run take their default values)."""
     recorded = json.loads((Path(run_dir) / "config.json").read_text(encoding="utf-8"))
-    cfg = _build(Config, _merge(_read_yaml(RUN_CONFIG_DIR / "default.yaml"), recorded))
+    cfg = _build(Config, _resolve_scheduler(_merge(_read_yaml(RUN_CONFIG_DIR / "default.yaml"), recorded)))
     validate(cfg)
     return cfg
+
+
+def _resolve_scheduler(data: Dict[str, Any]) -> Dict[str, Any]:
+    """`run.scheduler: null` is the event scheduler for symbolic runs and threads for legacy runs (the only
+    scheduler legacy has)."""
+    if data["run"].get("scheduler") is None:
+        data["run"]["scheduler"] = "threads" if data.get("approach") == "legacy" else "event"
+    return data
 
 
 def validate(cfg: Config) -> None:

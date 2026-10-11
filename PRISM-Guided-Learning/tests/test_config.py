@@ -40,6 +40,13 @@ def test_bad_config_is_rejected(override):
         load_config(overrides=[override])
 
 
+def test_scheduler_defaults_to_event_for_symbolic_and_threads_for_legacy():
+    assert load_config().run.scheduler == "event"
+    assert load_config(overrides=["approach=legacy"]).run.scheduler == "threads"
+    assert load_config("L1").run.scheduler == "threads"
+    assert load_config(overrides=["run.scheduler=threads"]).run.scheduler == "threads"
+
+
 def test_lockstep_is_symbolic_only():
     assert load_config(overrides=["run.scheduler=lockstep"]).run.scheduler == "lockstep"
     with pytest.raises(ValueError, match="symbolic planner only"):

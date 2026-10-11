@@ -2,7 +2,7 @@
 
 `run.scheduler` decides how the instances of a run share the LLM and PRISM. All three run the same loop (`SymbolicPlanner.solve_steps`) and give the same per-instance results. They differ in speed, in what can run at the same time, and in what the task log records. This page explains the design and when to use which. How the change was tested: `docs/testing_scheduler.md`.
 
-| | `threads` (default) | `lockstep` | `event` |
+| | `threads` (default for legacy) | `lockstep` | `event` (default for symbolic) |
 |---|---|---|---|
 | Instances in flight | `run.workers` threads, one instance each | `run.workers` slots | `run.workers` slots |
 | Who runs planner code | each worker thread | the calling thread only | the calling thread only |
@@ -105,9 +105,9 @@ What lockstep adds is a fixed grouping into batches. That matters only for the m
 
 ## When to use which
 
-- **Hosted API (OpenRouter) or any backend that serves concurrent requests:** `event`. No waiting on the slowest reply, PRISM overlaps generation, and planner code is single-threaded.
+- **Hosted API (OpenRouter) or any backend that serves concurrent requests:** `event`, the default for symbolic runs (`run.scheduler: null`). No waiting on the slowest reply, PRISM overlaps generation, and planner code is single-threaded.
 - **A local engine that batches a list natively** (vLLM offline, `LLM.chat(list)`), or when fixed batches matter: `lockstep`.
-- **Legacy runs, and comparability with the runs so far:** `threads`, the default. Wall-clock times of the three schedulers are not comparable with each other; tokens are.
+- **Legacy runs (always), and comparability with the symbolic runs so far:** `threads`. Wall-clock times of the three schedulers are not comparable with each other; tokens are.
 
 `run.workers` is the number of slots for all three. Under `event` it is also the maximum number of concurrent LLM requests: keep it within the API's rate limit.
 
