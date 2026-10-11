@@ -11,7 +11,7 @@ from config import load_config
 from core.domain import Instance, load_domain
 from core.planner import SymbolicPlanner
 from core.training import training_sets
-from fakes import TINY_GRID, ScriptedBackend, answer
+from fakes import TINY_GRID, FakeBackend, ScriptedBackend, answer
 from results_io import SYMBOLIC_RESULTS
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
@@ -89,3 +89,34 @@ def test_run_with_train_sets_writes_one_sample_per_set(tmp_path, grids, monkeypa
     assert [m["instance"] for m in record["members"]] == ["0", "1"]
     assert "on instance 2" in (run_dir / "worker_set0.log").read_text(encoding="utf-8")
     shutil.rmtree(run_dir)
+
+
+@needs_prism
+def test_every_scheduler_gives_the_same_training_results(tmp_path, grids, monkeypatch):
+    """Two training sets in flight at once: lockstep and the event scheduler (PRISM as background processes,
+    answers arriving out of order) write the same rounds as worker threads, and log every task."""
+    by_round = {1: RIGHT, 2: BOTH}   # round 1 fails on row 1, round 2 solves both rows
+    monkeypatch.setattr(run_symbolic, "make_backend", lambda config: FakeBackend(
+        lambda task: by_round.get(task.meta.get("round"), answer()), delay=0.05))
+    frames, samples = {}, {}
+    for scheduler in ("threads", "lockstep", "event"):
+        cfg = load_config(overrides=[f"domain.dataset={grids.as_posix()}", "run.workers=2", "planner.max_rounds=2",
+                                     "llm.seed=1", "run.train_sets=[[0, 1], [1, 0]]", f"run.scheduler={scheduler}"])
+        run_dir = tmp_path / scheduler
+        run_symbolic.run(cfg, str(run_dir))
+        frames[scheduler] = pd.read_parquet(run_dir / SYMBOLIC_RESULTS)
+        samples[scheduler] = [json.loads((run_dir / "outputs" / f"sample_00{k}.json").read_text(encoding="utf-8"))
+                              for k in range(2)]
+        if scheduler != "threads":
+            tasks = (run_dir / "llm_tasks.jsonl").read_text(encoding="utf-8").splitlines()
+            assert len(tasks) == frames[scheduler]["iter_llm_calls"].sum()
+    assert frames["threads"].reset_index().instance.unique().tolist() == ["set0", "set1"]
+    assert frames["threads"].reset_index().success.unique().tolist() == [True]
+    assert [len(sample["iterations"]) for sample in samples["threads"]] == [2, 2]   # a refine round on each set
+    timing = [c for c in frames["threads"].columns if c.endswith("_time")]
+    for scheduler in ("lockstep", "event"):
+        pd.testing.assert_frame_equal(frames["threads"].drop(columns=timing), frames[scheduler].drop(columns=timing))
+        for got, want in zip(samples[scheduler], samples["threads"]):
+            assert [it["prompt"] for it in got["iterations"]] == [it["prompt"] for it in want["iterations"]]
+            assert [it["members"] for it in got["iterations"]] == [it["members"] for it in want["iterations"]]
+            assert got["members"] == want["members"]
