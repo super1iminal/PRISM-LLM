@@ -36,3 +36,28 @@ def test_failing_respects_each_bound():
     assert failing([reach, energy], {"reach": 0.8, "energy": 50.0}) == []   # thresholds are inclusive
     assert failing([reach, energy], {"reach": 0.79, "energy": 50.5}) == [reach, energy]
     assert failing([energy, reach], {"reach": 0.5, "energy": 10.0}) == [reach]
+
+
+@needs_prism
+def test_a_prism_timeout_moves_the_exact_check_to_its_fallback_solver(tiny_grid):
+    """A timeout reaches the verifier as subprocess.TimeoutExpired thrown into its generator, at the point
+    where subprocess.run used to raise it, so the exact check still falls back to Gauss-Seidel."""
+    import subprocess
+
+    from core.prism import run_call
+    domain = load_domain("gridworld", ["obs_idx"])
+    verifier = PolicyVerifier(domain, domain.load_instances(str(tiny_grid))[0], load_config())
+    policy = verifier.empty_policy()
+    steps, timed_out = verifier.verify_exact_steps(policy), []
+    try:
+        call = next(steps)
+        while True:
+            if "-intervaliter" in call.cmd:
+                timed_out.append(call)
+                call = steps.throw(subprocess.TimeoutExpired(list(call.cmd), call.timeout))
+            else:
+                call = steps.send(run_call(call))
+    except StopIteration as done:
+        exact, solver = done.value
+    assert len(timed_out) == 1 and solver == "Gauss-Seidel 1e-12"
+    assert exact.worst == pytest.approx(verifier.verify_exact(policy)[0].worst, abs=1e-6)

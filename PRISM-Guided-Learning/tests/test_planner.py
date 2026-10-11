@@ -81,7 +81,8 @@ def test_table_feedback(tiny_grid):
 def test_without_blame_or_joint_query(tiny_grid, monkeypatch):
     def no_joint_query(*_):
         raise AssertionError("per_requirement branch must not ask the joint query")
-    monkeypatch.setattr(PolicyVerifier, "jointly_feasible", no_joint_query)
+        yield
+    monkeypatch.setattr(PolicyVerifier, "jointly_feasible_steps", no_joint_query)
     result, _ = solve(tiny_grid, [EMPTY], 2, "feedback.blame=none", "planner.branch=per_requirement")
     assert modes(result) == ["initial", "extend"]
     assert result["iterations"][0]["kept_joint_feasible"] is None
@@ -89,7 +90,10 @@ def test_without_blame_or_joint_query(tiny_grid, monkeypatch):
 
 
 def test_joint_conflict_refines(tiny_grid, monkeypatch):
-    monkeypatch.setattr(PolicyVerifier, "jointly_feasible", lambda self, policy=None: False)
+    def infeasible(self, policy=None):
+        return False
+        yield
+    monkeypatch.setattr(PolicyVerifier, "jointly_feasible_steps", infeasible)
     result, _ = solve(tiny_grid, [EMPTY], 2)
     assert modes(result) == ["initial", "refine"]
     first = result["iterations"][0]
@@ -98,10 +102,12 @@ def test_joint_conflict_refines(tiny_grid, monkeypatch):
 
 
 def test_joint_query_is_cached_for_the_kept_policy(tiny_grid, monkeypatch):
-    calls = []
-    original = PolicyVerifier.jointly_feasible
-    monkeypatch.setattr(PolicyVerifier, "jointly_feasible",
-                        lambda self, policy=None: calls.append(policy) or original(self, policy))
+    calls, original = [], PolicyVerifier.jointly_feasible_steps
+
+    def counted(self, policy=None):
+        calls.append(policy)
+        return (yield from original(self, policy))
+    monkeypatch.setattr(PolicyVerifier, "jointly_feasible_steps", counted)
     result, _ = solve(tiny_grid, [EMPTY, EMPTY, EMPTY], 3, "planner.retry=never")
     assert modes(result) == ["initial", "extend", "extend"]
     assert len(calls) == 1   # rounds 2 and 3 add nothing, so the kept policy and its answer stay the same
@@ -112,14 +118,14 @@ def test_joint_query_is_cached_for_the_kept_policy(tiny_grid, monkeypatch):
 @pytest.mark.parametrize("answers,kept_rules", [([LEFT], 0), ([PRE_G1, PRE_G1], 2)])
 def test_prism_failure_scores_the_round_without_losing_the_instance(tiny_grid, monkeypatch, answers, kept_rules):
     """The first candidate PRISM fails on counts as the empty policy, or as the kept one when extending."""
-    original, failed = PolicyVerifier.verify, []
+    original, failed = PolicyVerifier.verify_steps, []
 
     def verify(self, policy, analysis=True, runner=None):
         if len(policy.rules) > kept_rules and not failed:
             failed.append(policy)
             raise PrismError("injected failure\ndetails")
-        return original(self, policy, analysis, runner)
-    monkeypatch.setattr(PolicyVerifier, "verify", verify)
+        return (yield from original(self, policy, analysis, runner))
+    monkeypatch.setattr(PolicyVerifier, "verify_steps", verify)
     result, _ = solve(tiny_grid, answers, len(answers))
     last = result["iterations"][-1]
     assert failed and last["invalid_answers"] == ["verification failed: injected failure"]

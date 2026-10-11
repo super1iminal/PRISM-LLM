@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from config import load_config
-from core.prism import PrismError, PrismRunner
+from core.prism import PrismCall, PrismError, PrismProcess, PrismRunner, run_now
 
 PRISM = load_config().prism
 
@@ -20,9 +20,10 @@ def runner_capturing(monkeypatch, outputs, **kwargs):
     runner.calls = []
     replies = iter(outputs)
 
-    def call(cmd):
+    def call(cmd):   # a generator like the real one, so run/check drive it the same way
         runner.calls.append(cmd)
         return next(replies)
+        yield
     monkeypatch.setattr(runner, "_call", call)
     return runner
 
@@ -59,9 +60,10 @@ def test_run_falls_back_while_prism_does_not_converge(monkeypatch):
     assert "-exporttrans" in first and first[-1] == "-x"   # extra args go last, on every attempt
 
 
-def test_timeout_kills_the_whole_process_tree(tmp_path):
-    """Like prism.bat starting the JVM, the script starts a grandchild that holds the output pipe open."""
-    sleeper = f'"{sys.executable}" -c "import time; time.sleep(60)"'
+def _sleeper_script(tmp_path, seconds: float = 60, then: str = ""):
+    """Like prism.bat starting the JVM, the script starts a grandchild that holds the output pipe open.
+    The grandchild sleeps `seconds`, then runs `then`."""
+    sleeper = f'"{sys.executable}" -c "import time; time.sleep({seconds}); {then}"'
     if os.name == "nt":
         script = tmp_path / "prism.bat"
         script.write_text(f"@{sleeper}\n", encoding="utf-8")
@@ -69,8 +71,28 @@ def test_timeout_kills_the_whole_process_tree(tmp_path):
         script = tmp_path / "prism.sh"
         script.write_text(f"#!/bin/sh\n{sleeper}\n", encoding="utf-8")
         script.chmod(0o755)
+    return script
+
+
+def test_timeout_kills_the_whole_process_tree(tmp_path):
+    script = _sleeper_script(tmp_path)
     runner = PrismRunner(replace(PRISM, timeout_s=1), prism_path=str(script))
     start = time.time()
     with pytest.raises(subprocess.TimeoutExpired):
-        runner._call([str(script)])
+        run_now(runner._call([str(script)]))
     assert time.time() - start < 30
+
+
+def test_background_process_timeout_kills_the_whole_process_tree(tmp_path):
+    """The event scheduler's `PrismProcess` also kills the grandchild, not just the script."""
+    marker = tmp_path / "survived"
+    script = _sleeper_script(tmp_path, 3, f"open(r'{marker}', 'w').close()")
+    process = PrismProcess(PrismCall((str(script),), 1))
+    start = time.time()
+    while not process.done():
+        time.sleep(0.05)
+    assert time.time() - start < 3
+    with pytest.raises(subprocess.TimeoutExpired):
+        process.output()
+    time.sleep(3)
+    assert not marker.exists()   # the grandchild was killed before it woke up

@@ -30,12 +30,14 @@ def answer(*rules) -> str:
 
 class FakeBackend(LLMBackend):
     """`answer(task)` returns the raw output text; raising makes that task fail with `LLMResult.error`.
-    Every executed batch is kept in `batches`, so tests can inspect what was sent together."""
+    Every executed batch is kept in `batches`, so tests can inspect what was sent together. With `delay`,
+    each task first waits a random time of up to `delay` seconds, so concurrent answers arrive out of order."""
 
-    def __init__(self, answer: Callable[[LLMTask], str], max_batch: Optional[int] = None):
+    def __init__(self, answer: Callable[[LLMTask], str], max_batch: Optional[int] = None, delay: float = 0.0):
         self.answer = answer
         self.info = BackendInfo(name="fake", max_batch=max_batch)
         self.batches: List[List[LLMTask]] = []
+        self.delay = delay
 
     def execute_batch(self, tasks: List[LLMTask]) -> List[LLMResult]:
         if self.info.max_batch is not None:
@@ -43,6 +45,8 @@ class FakeBackend(LLMBackend):
         self.batches.append(list(tasks))
         results = []
         for task in tasks:
+            if self.delay:
+                time.sleep(random.uniform(0, self.delay))
             try:
                 results.append(LLMResult(task.id, self.answer(task), prompt_tokens=10, output_tokens=5))
             except Exception as e:

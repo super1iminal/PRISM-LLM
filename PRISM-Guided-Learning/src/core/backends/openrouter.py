@@ -75,4 +75,5 @@ class OpenRouterBackend(LLMBackend):
         )
 
     def close(self) -> None:
+        super().close()
         self._client.close()

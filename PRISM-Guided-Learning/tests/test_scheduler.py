@@ -1,8 +1,10 @@
-"""LLM tasks, backends and schedulers: the planner as a generator, driven one task at a time or in lockstep batches."""
+"""LLM tasks, backends and schedulers: the planner as a generator, driven one task at a time, in lockstep batches
+or by the event scheduler."""
 import io
 import json
 import logging
 import shutil
+import threading
 from collections import defaultdict
 from pathlib import Path
 
@@ -11,7 +13,10 @@ import pytest
 from config import load_config
 from core.domain import load_domain
 from core.planner import SymbolicPlanner
-from core.scheduler import LockstepScheduler, drive, failed_result
+import core.prism
+import core.scheduler
+from core.scheduler import EventScheduler, LockstepScheduler, drive, failed_result
+from core.verifier import PolicyVerifier
 from core.tasks import LLMError, LLMResult, TaskFactory
 from fakes import FakeBackend
 
@@ -68,10 +73,26 @@ def saved_run(name):
     return cfg, samples
 
 
-def replay_backend(samples):
-    """Answers each instance's tasks with that instance's saved raw outputs, in order."""
+def replay_backend(samples, delay=0.0):
+    """Answers each instance's tasks with that instance's saved raw outputs, in order (after a random wait of
+    up to `delay` seconds each)."""
     queues = {inst: iter([o for it in s["iterations"] for o in it["raw_outputs"]]) for inst, s in samples.items()}
-    return FakeBackend(lambda task: next(queues[str(task.meta["instance"])]))
+    return FakeBackend(lambda task: next(queues[str(task.meta["instance"])]), delay=delay)
+
+
+def single_threaded(monkeypatch):
+    """Make any PRISM call run in place fail, and return the set of threads that verify policies."""
+    def blocked(call):
+        raise AssertionError("a PRISM call ran in place")
+    monkeypatch.setattr(core.prism, "run_call", blocked)
+    monkeypatch.setattr(core.scheduler, "run_call", blocked)
+    threads, original = set(), PolicyVerifier._assign_rules
+
+    def assign(self, v, policy):
+        threads.add(threading.get_ident())
+        return original(self, v, policy)
+    monkeypatch.setattr(PolicyVerifier, "_assign_rules", assign)
+    return threads
 
 
 def assert_same_rounds(replayed, saved):
@@ -112,8 +133,10 @@ def test_replay_one_at_a_time(run, instances):
 
 @needs_prism
 @pytest.mark.parametrize("run,instances", REPLAY_CASES[:2])
-def test_replay_lockstep(run, instances):
-    """The lockstep scheduler gives the same rounds as the saved run, with batches of at most `slots`."""
+def test_replay_lockstep(run, instances, monkeypatch):
+    """The lockstep scheduler gives the same rounds as the saved run, with batches of at most `slots`, PRISM
+    calls as background processes and every instance's code in this thread."""
+    threads = single_threaded(monkeypatch)
     cfg, samples = saved_run(run)
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     by_id = {str(i.id): i for i in domain.load_instances(cfg.domain.dataset)}
@@ -130,6 +153,28 @@ def test_replay_lockstep(run, instances):
     lines = [json.loads(line) for line in log.getvalue().splitlines()]
     assert len(lines) == sum(len(b) for b in backend.batches)
     assert all(line["result"]["text"] is not None for line in lines)
+    assert threads == {threading.get_ident()}
+
+
+@needs_prism
+@pytest.mark.parametrize("run,instances", REPLAY_CASES)
+def test_replay_event(run, instances, monkeypatch):
+    """The event scheduler gives the same rounds as the saved run, with answers arriving in random order,
+    PRISM calls as background processes and every instance's code in this thread."""
+    threads = single_threaded(monkeypatch)
+    cfg, samples = saved_run(run)
+    domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
+    by_id = {str(i.id): i for i in domain.load_instances(cfg.domain.dataset)}
+    backend = replay_backend({k: samples[k] for k in instances}, delay=0.2)
+    log = io.StringIO()
+    results = EventScheduler(SymbolicPlanner(domain, None, cfg).solve_steps, backend, 2, lambda i: LOG,
+                             task_log=log).run([by_id[k] for k in instances])
+    for inst in instances:
+        assert_same_rounds(results[by_id[inst].id], samples[inst])
+    lines = [json.loads(line) for line in log.getvalue().splitlines()]
+    assert [line["seq"] for line in lines] == list(range(len(lines)))
+    assert len(lines) == sum(it["llm_calls"] for k in instances for it in samples[k]["iterations"])
+    assert threads == {threading.get_ident()}
 
 
 # ---------------------------------------------------------------- 2. scheduler behaviour
@@ -240,23 +285,25 @@ def test_planner_seeds_count_calls_per_instance():
 # ---------------------------------------------------------------- run_symbolic wiring
 
 @needs_prism
-def test_run_symbolic_both_schedulers(tmp_path, monkeypatch):
-    """run() with threads and with lockstep writes the same per-round results; lockstep also logs its tasks."""
+def test_run_symbolic_every_scheduler(tmp_path, monkeypatch):
+    """run() with threads, lockstep and the event scheduler writes the same per-round results; lockstep and
+    event also log their tasks."""
     import pandas as pd
     import run_symbolic
 
     rules = json.dumps({"rules": [{"condition": "!g1", "action": "down"}, {"condition": "true", "action": "right"}]})
     monkeypatch.setattr(run_symbolic, "make_backend", lambda cfg: FakeBackend(lambda task: rules))
     frames = {}
-    for scheduler in ("threads", "lockstep"):
+    for scheduler in ("threads", "lockstep", "event"):
         cfg = load_config(overrides=["run.limit=3", "planner.max_rounds=2", f"run.scheduler={scheduler}"])
         out = tmp_path / scheduler
         run_symbolic.run(cfg, str(out))
         frames[scheduler] = pd.read_parquet(out / "SYMBOLIC_results.parquet")
         assert len(list((out / "outputs").glob("sample_*.json"))) == 3
-        assert (out / "llm_tasks.jsonl").exists() == (scheduler == "lockstep")
+        assert (out / "llm_tasks.jsonl").exists() == (scheduler != "threads")
     timing = [c for c in frames["threads"].columns if c.endswith("_time")]
-    pd.testing.assert_frame_equal(frames["threads"].drop(columns=timing), frames["lockstep"].drop(columns=timing))
-    tasks = [json.loads(line) for line in (tmp_path / "lockstep" / "llm_tasks.jsonl").read_text().splitlines()]
-    assert len(tasks) == frames["lockstep"]["iter_llm_calls"].sum()
-    assert {t["task"]["meta"]["instance"] for t in tasks} == set(frames["lockstep"]["instance"])
+    for scheduler in ("lockstep", "event"):
+        pd.testing.assert_frame_equal(frames["threads"].drop(columns=timing), frames[scheduler].drop(columns=timing))
+        tasks = [json.loads(line) for line in (tmp_path / scheduler / "llm_tasks.jsonl").read_text().splitlines()]
+        assert len(tasks) == frames[scheduler]["iter_llm_calls"].sum()
+        assert {t["task"]["meta"]["instance"] for t in tasks} == set(frames[scheduler]["instance"])

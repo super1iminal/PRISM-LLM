@@ -49,15 +49,17 @@ python src/run_symbolic.py --set llm.backend=openrouter --set llm.model=qwen/qwe
 python src/run_symbolic.py --set llm.backend=openrouter --set llm.model=qwen/qwen3-14b --set "llm.openrouter.providers=[<slug>]" --set llm.seed=1 --set run.scheduler=lockstep --limit 2 --workers 2 --out out/results/smoke/openrouter_lockstep
 ```
 
-**What to check after steps 3 and 4.** For comparison, the local runs average about 1.4k output tokens per call (max about 5k), and the first round's prompt is about 1.6k tokens.
+**5. Optional: the event scheduler.** Each instance moves on as soon as its own answer arrives (`docs/scheduler.md`). Same as step 4, with `--set run.scheduler=event --out out/results/smoke/openrouter_event`.
+
+**What to check after steps 3 to 5.** For comparison, the local runs average about 1.4k output tokens per call (max about 5k), and the first round's prompt is about 1.6k tokens.
 
 - `main.log`: every instance finishes with no `error`.
 - `outputs/sample_*.json`: in each round, `llm_calls` and `invalid_answers`. A few invalid answers are normal; every call failing to parse is not. `llm_output_tokens` and `llm_prompt_tokens` should be close to the local runs; far more output tokens suggests thinking is on.
 - `outputs/sample_*.json`: `llm_time` per round, to compare with PRISM's `prism_time`.
-- Lockstep only: `llm_tasks.jsonl` has one line per task, and no result carries an `error`.
+- Lockstep and event: `llm_tasks.jsonl` has one line per task, and no result carries an `error`.
 - OpenRouter's *Activity* page: every request was served by the pinned provider, the reasoning tokens are 0, and the cost is as expected.
 
-**Afterwards.** Add a short entry under "LLM tasks, backends and lockstep batching" in `DECISIONS.md`: model id, provider and its quantization, whether thinking was off, tokens and time per round against the local runs, cost, and any errors. The runs go to `out/results/smoke/openrouter_*`, which is gitignored (like the Ollama smoke runs in `out/results/smoke/`), so they are never committed; delete them when done.
+**Afterwards.** Add a short entry under "LLM tasks, backends and schedulers" in `DECISIONS.md`: model id, provider and its quantization, whether thinking was off, tokens and time per round against the local runs, cost, and any errors. The runs go to `out/results/smoke/openrouter_*`, which is gitignored (like the Ollama smoke runs in `out/results/smoke/`), so they are never committed; delete them when done.
 
 ### If something fails
 

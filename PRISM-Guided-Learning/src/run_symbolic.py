@@ -3,8 +3,9 @@
 Usage: python src/run_symbolic.py [--condition B2] [--set section.key=value ...] [--out DIR]
        (shortcuts: --domain, --data, --workers, --max-attempts, --limit)
 Settings come from configs/ (see docs/config.md); the resolved config is saved as <run>/config.json.
-`run.scheduler` picks how instances share the LLM: worker threads, or lockstep batches (tasks logged to
-<run>/llm_tasks.jsonl). With `run.train_sets`, each unit of work is a training set (core/training.py): one rule
+`run.scheduler` picks how instances share the LLM and PRISM: worker threads, lockstep batches, or an event
+loop that moves each instance on as its results arrive (both log their tasks to <run>/llm_tasks.jsonl;
+docs/scheduler.md). With `run.train_sets`, each unit of work is a training set (core/training.py): one rule
 set for several instances, one sample per set.
 """
 import argparse
@@ -23,7 +24,7 @@ from config import Config, load_config
 from core.backends import make_backend
 from core.domain import Instance, load_domain
 from core.planner import SymbolicPlanner
-from core.scheduler import LockstepScheduler, failed_result
+from core.scheduler import EventScheduler, LockstepScheduler, failed_result
 from core.training import training_sets
 from logging_utils import close_logger, setup_logger
 from results_io import SYMBOLIC_RESULTS
@@ -86,12 +87,18 @@ def run(cfg: Config, run_dir: str) -> str:
                          f"time={r['total_time']:.1f}s {r.get('error') or ''}")
 
     try:
-        if cfg.run.scheduler == "lockstep":
+        if cfg.run.scheduler in ("lockstep", "event"):
+            kind = LockstepScheduler if cfg.run.scheduler == "lockstep" else EventScheduler
             with open(os.path.join(run_dir, "llm_tasks.jsonl"), "w", encoding="utf-8") as task_log:
-                scheduler = LockstepScheduler(planner.solve_steps, backend, cfg.run.workers, worker_logger,
-                                              task_log=task_log, on_finish=finish)
+                scheduler = kind(planner.solve_steps, backend, cfg.run.workers, worker_logger,
+                                 task_log=task_log, on_finish=finish)
                 results = scheduler.run(instances)
-            main_logger.info(f"Lockstep: {scheduler.batches} batches of up to {cfg.run.workers} tasks")
+            if cfg.run.scheduler == "lockstep":
+                main_logger.info(f"Lockstep: {scheduler.batches} batches of up to {cfg.run.workers} tasks, "
+                                 f"{scheduler.prism_calls} PRISM calls")
+            else:
+                main_logger.info(f"Event loop: {scheduler.llm_tasks} LLM tasks and {scheduler.prism_calls} PRISM "
+                                 f"calls, up to {cfg.run.workers} instances at once")
         else:
             results = solve_threaded(planner, instances, cfg.run.workers, worker_logger, finish)
     finally:

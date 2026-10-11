@@ -19,9 +19,10 @@ A training set (core/training.py) is solved the same way with one rule list for 
 round verifies the list on every member, keep-best sums the members' scores, the set is done when every
 member passes, and the feedback is about the member that fails worst (with a summary of the others).
 
-The planner never calls a model: `solve_steps` is the loop as a generator that yields each LLM task
-(core/tasks.py) and is sent its result. `solve` answers the tasks one at a time with a backend
-(core/backends); core/scheduler.py can instead batch the tasks of many instances.
+The planner never calls a model or starts PRISM itself: `solve_steps` is the loop as a generator that
+yields each LLM task (core/tasks.py) and each PRISM process (`PrismCall`, core/prism.py), and is sent
+the result. `solve` runs them one at a time with a backend (core/backends) and PRISM; the schedulers in
+core/scheduler.py run many instances' tasks and PRISM processes at once from one thread.
 """
 import zlib
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from config import Config
 from core.analysis import MassAnalyzer
 from core.backends import LLMBackend
 from core.domain import Domain, Instance, Requirement, failing
-from core.prism import PrismError, PrismRunner
+from core.prism import PrismCall, PrismError, PrismRunner
 from core.retry import RetryPolicy
 from core.rules import ANY, RuleError, SymbolicPolicy, Vocabulary
 from core.scheduler import drive
@@ -43,7 +44,8 @@ from core.training import TrainingSet
 from core.verifier import PolicyVerifier, Verification
 
 T = TypeVar("T")
-Steps = Generator[LLMTask, LLMResult, T]   # yields LLM tasks, is sent their results, returns T
+# Yields LLM tasks and PRISM calls, is sent their results (an LLMResult, PRISM's output), returns T.
+Steps = Generator[Union[LLMTask, PrismCall], Union[LLMResult, str], T]
 
 
 def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
@@ -276,17 +278,21 @@ class SymbolicPlanner:
     # ---------------------------------------------------------------- main loop
 
     def solve(self, target: Union[Instance, TrainingSet], logger) -> Dict[str, Any]:
-        """Run the loop for one instance or training set, answering each task with the planner's backend."""
+        """Run the loop for one instance or training set, answering each task with the planner's backend and
+        running each PRISM call, one at a time."""
         return drive(self.solve_steps(target, logger), self.backend.execute)
 
     def solve_steps(self, target: Union[Instance, TrainingSet], logger) -> Steps[Dict[str, Any]]:
-        """The loop for one instance or training set, as a generator: yields each LLM task, is sent its
-        result, and returns the result dict. `solve` and the schedulers (core/scheduler.py) drive it."""
+        """The loop for one instance or training set, as a generator: yields each LLM task and PRISM call, is
+        sent its result, and returns the result dict. `solve` and the schedulers (core/scheduler.py) drive it."""
         ep = self._episode(target, logger.info)
         members, max_rounds = ep.members, self.config.planner.max_rounds
 
         opt_start = time()
-        optima = [m.verifier.optimum()[0] for m in members]
+        optima = []
+        for m in members:
+            optimum, _, _ = yield from m.verifier.optimum_steps()
+            optima.append(optimum)
         optimum_seconds = time() - opt_start
         for m, optimum in zip(members, optima):
             ep.log(f"Unconstrained optimum per requirement{self._on(ep, m)}: {optimum}")
@@ -319,7 +325,7 @@ class SymbolicPlanner:
                 if self.retry.restart(attempt + 1, stall, gain):
                     mode, prompt, stall = "initial", self._render(ep, "initial.md.j2"), 0
                 else:
-                    mode, prompt = self._feedback(ep, kept, record)
+                    mode, prompt = yield from self._feedback(ep, kept, record)
             record["iteration_time"] = time() - iter_start
             if done:
                 break
@@ -327,7 +333,7 @@ class SymbolicPlanner:
         finals, checks, check_start = list(kept.check.vs), ["off"] * len(members), time()
         if self.config.prism.exact_check:
             for i, (m, policy) in enumerate(zip(members, kept.check.policies)):
-                exact, solver = m.verifier.verify_exact(policy)
+                exact, solver = yield from m.verifier.verify_exact_steps(policy)
                 finals[i], checks[i] = (exact, solver) if exact else (kept.check.vs[i], "failed")
                 ep.log(f"Exact check{self._on(ep, m)} ({checks[i]}): " + ", ".join(
                     f"{r.name}: best={finals[i].best[r.name]:.4f} worst={finals[i].worst[r.name]:.4f}"
@@ -414,7 +420,7 @@ class SymbolicPlanner:
         policies = ([k.extended(n) for k, n in zip(kept.check.policies, new)] if mode == "extend" else new)
         ep.log(f"Candidate policy ({len(policies[0].rules)} rules):\n{policies[0].listing()}")
         try:
-            return _Check(policies, [m.verifier.verify(p) for m, p in zip(ep.members, policies)]), answer
+            return (yield from self._check(ep, policies)), answer
         except PrismError as e:
             # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
             # Count the round as producing nothing (the empty policy) instead of losing the instance.
@@ -423,11 +429,19 @@ class SymbolicPlanner:
             answer.errors.append(f"verification failed: {reason}")
             policies = (kept.check.policies if mode == "extend" and kept
                         else [m.verifier.empty_policy() for m in ep.members])
-            return _Check(policies, [m.verifier.verify(p) for m, p in zip(ep.members, policies)]), answer
+            return (yield from self._check(ep, policies)), answer
+
+    @staticmethod
+    def _check(ep: _Episode, policies: List[SymbolicPolicy]) -> Steps[_Check]:
+        """Verify each member's policy, one member after another."""
+        vs = []
+        for m, p in zip(ep.members, policies):
+            vs.append((yield from m.verifier.verify_steps(p)))
+        return _Check(policies, vs)
 
     # ---------------------------------------------------------------- feedback
 
-    def _feedback(self, ep: _Episode, kept: _Kept, record: Dict[str, Any]) -> Tuple[str, str]:
+    def _feedback(self, ep: _Episode, kept: _Kept, record: Dict[str, Any]) -> Steps[Tuple[str, str]]:
         """Mode and prompt of the next round, from the kept rule set's results on the member that fails worst."""
         member, policy, v = ep.members[kept.focus], kept.check.policies[kept.focus], kept.check.vs[kept.focus]
         reqs = member.requirements
@@ -438,7 +452,7 @@ class SymbolicPlanner:
             return "table", self._render(ep, "table.md.j2", member, **results)
         failing_best, failing_worst = failing(reqs, v.best), failing(reqs, v.worst)
         joint_conflict = (not failing_best and self.config.planner.branch == "joint"
-                          and self._joint_conflict(ep, kept, record))
+                          and (yield from self._joint_conflict(ep, kept, record)))
         # Every situation covered, yet best and worst differ: rules allow several actions (`any`) and some of
         # them are harmful. Appending rules cannot change covered states, so rewrite them.
         open_choices = bool(failing_worst) and v.uncovered_situations == 0
@@ -447,14 +461,15 @@ class SymbolicPlanner:
                                                  joint_conflict, results)
         return "extend", self._extend_prompt(ep, member, v, failing_worst, results)
 
-    def _joint_conflict(self, ep: _Episode, kept: _Kept, record: Dict[str, Any]) -> bool:
+    def _joint_conflict(self, ep: _Episode, kept: _Kept, record: Dict[str, Any]) -> Steps[bool]:
         """Whether no single completion of the kept rules meets every threshold (on the member the feedback is
         about), although each requirement passes its best case. Asked once per kept rule set; undecided (None)
         counts as no conflict."""
         if not kept.joint_queried:
             start = time()
             member = ep.members[kept.focus]
-            kept.joint, kept.joint_queried = member.verifier.jointly_feasible(kept.check.policies[kept.focus]), True
+            kept.joint = yield from member.verifier.jointly_feasible_steps(kept.check.policies[kept.focus])
+            kept.joint_queried = True
             record["joint_time"] = time() - start
         conflict = kept.joint is False
         record["kept_joint_feasible"], record["branch_disagreement"] = kept.joint, conflict

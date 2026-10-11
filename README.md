@@ -39,7 +39,8 @@ PRISM-Guided-Learning/
   out/results/       run outputs
 DECISIONS.md         design decisions to review
 docs/                semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids),
-                     openrouter.md (running on OpenRouter, and its smoke test)
+                     openrouter.md (running on OpenRouter, and its smoke test),
+                     scheduler.md (threads, lockstep and event schedulers), testing_scheduler.md (how they were tested)
 ```
 
 ## Running (from `PRISM-Guided-Learning/`)
@@ -59,6 +60,11 @@ python src/run_symbolic.py --domain uuv --data uuv_paper.csv --out out/results/s
 ```bash
 # lockstep: one LLM batch per step (one task per active instance), logged to <run>/llm_tasks.jsonl
 python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=lockstep --out out/results/symbolic_grid20_lockstep
+```
+
+```bash
+# event: each instance moves on as soon as its own LLM answer or PRISM result is ready (docs/scheduler.md)
+python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=event --out out/results/symbolic_grid20_event
 ```
 
 ```bash
