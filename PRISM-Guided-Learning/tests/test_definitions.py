@@ -135,6 +135,32 @@ def test_closer_to_counts_most_likely_moves_around_the_avoid_set():
     assert avoiding["left"] == [False] * 4
 
 
+def test_checks_compare_a_definition_with_its_definers_expectations():
+    from core.definitions import Check
+    ev = chain_evaluator()
+    approach = 'closer_to("goal", avoid "pit")'
+    ok = Definition("d", "", approach, (Check("x = 2", True, "right"), Check("x = 0", False, "right")))
+    ev.check_examples(ok)
+    wrong = Definition("d", "", approach, (Check("x = 0 | x = 2", True, "right"), Check("x = 3", False, "right")))
+    with pytest.raises(DefinitionError, match="check 1 expects it holds for right in x = 0 \\| x = 2, but it does "
+                                              "not hold in: x=0$"):
+        ev.check_examples(wrong)
+    for checks, message in [
+        ((Check("x = 2", True, "right"),), "give 2 to 4 checks"),
+        ((Check("x = 2", True, "right"), Check("x = 3", True, "left")), "one where it does not"),
+        ((Check("x = 2", True), Check("x = 0", False, "right")), "check 1 needs an action"),
+        ((Check("x = 9", True, "right"), Check("x = 0", False, "right")), "no reachable state matches x = 9"),
+        ((Check("next(x = 1)", True, "right"), Check("x = 0", False, "right")), "must be a condition on the state"),
+    ]:
+        with pytest.raises(DefinitionError, match=message):
+            ev.check_examples(Definition("d", "", approach, checks))
+    state_feature = Definition("d", "", '"pit"', (Check("x = 1", True), Check("x = 0", False, "left")))
+    with pytest.raises(DefinitionError, match="does not depend on the action"):
+        ev.check_examples(state_feature)
+    ev.check_examples(Definition("d", "", '"pit"'), required=False)       # domain definitions need none
+    assert Definition.from_dict(ok.to_dict()) == ok
+
+
 def test_compiled_features_hold_where_the_table_does():
     ev = chain_evaluator()
     definitions = [Definition("approach", "", 'closer_to("goal", avoid "pit")'), Definition("pit_ahead", "", 'next("pit")'),

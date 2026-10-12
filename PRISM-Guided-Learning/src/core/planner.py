@@ -69,12 +69,20 @@ def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int,
 
 
 def _definition_model() -> type[BaseModel]:
+    check = create_model(
+        "Check",
+        state=(str, Field(description="Condition describing example states of instance 1")),
+        action=(Optional[str], Field(default=None, description="The action, for a per-action feature")),
+        holds=(bool, Field(description="Whether the feature should hold there")),
+    )
     return create_model(
         "Definition",
         name=(str, Field(description="Feature name: letters, digits and _")),
         description=(str, Field(description="What the feature means, in English")),
         definition=(Union[str, Dict[str, str]],
                     Field(description="The condition in the definition language, or one per action")),
+        checks=(List[check], Field(..., min_length=2, max_length=4,
+                                   description="Example states where the feature should and should not hold")),
     )
 
 
@@ -309,6 +317,9 @@ class SymbolicPlanner:
             except DefinitionError as e:
                 raise DefinitionError(f"on {m.label}: {e}" if len(ep.members) > 1 else str(e)) from e
             if ep.vocabulary == "llm":
+                if m is ep.primary:          # the definer's checks describe states of instance 1
+                    for d in definitions:
+                        m.evaluator.check_examples(d)
                 features = [replace(f, description=f"{d.description} (defined as `{d.listing()}`)")
                             for f, d in zip(features, definitions)]
             out.append(features)

@@ -56,13 +56,33 @@ class DefinitionError(ValueError):
 
 
 @dataclass(frozen=True)
+class Check:
+    """The definer's own expectation: in the states of instance 1 that `state` describes (a condition over the
+    state variables and labels; any numbers allowed), the feature holds (`holds`) or not, for `action` if it is
+    a per-action feature."""
+    state: str
+    holds: bool
+    action: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"state": self.state, **({"action": self.action} if self.action else {}), "holds": self.holds}
+
+    def text(self) -> str:
+        return f"{'holds' if self.holds else 'does not hold'}{f' for {self.action}' if self.action else ''} in {self.state}"
+
+
+@dataclass(frozen=True)
 class Definition:
     name: str
     description: str
     text: Union[str, Dict[str, str]]     # one expression, or one per action
+    checks: Tuple[Check, ...] = ()       # the definer's expected values in example states (rules.vocabulary=llm)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "description": self.description, "definition": self.text}
+        out = {"name": self.name, "description": self.description, "definition": self.text}
+        if self.checks:
+            out["checks"] = [c.to_dict() for c in self.checks]
+        return out
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "Definition":
@@ -72,7 +92,9 @@ class Definition:
         elif not isinstance(text, str):
             raise DefinitionError(f"definition {raw.get('name')!r}: 'definition' must be a string or "
                                   f"an object with one expression per action")
-        return cls(str(raw.get("name", "")).strip(), str(raw.get("description", "")).strip(), text)
+        checks = tuple(Check(str(c.get("state", "")), bool(c.get("holds")), c.get("action") or None)
+                       for c in raw.get("checks") or [])
+        return cls(str(raw.get("name", "")).strip(), str(raw.get("description", "")).strip(), text, checks)
 
     def listing(self) -> str:
         if isinstance(self.text, str):
@@ -560,6 +582,55 @@ class Evaluator:
 
     def features(self, definitions: Sequence[Definition], taken: Iterable[str] = ()) -> List[Feature]:
         return run_now(self.features_steps(definitions, taken))
+
+    def check_examples(self, definition: Definition, required: bool = True) -> None:
+        """Compare the definition with its own checks on this instance; raises DefinitionError listing every check
+        that fails. With `required`, it needs 2 to 4 checks, at least one expecting true and one false."""
+        try:
+            checks = definition.checks
+            if required and not 2 <= len(checks) <= 4:
+                raise DefinitionError(f"give 2 to 4 checks (it has {len(checks)})")
+            if required and len({c.holds for c in checks}) < 2:
+                raise DefinitionError("give at least one check where the feature holds and one where it does not")
+            if not checks:
+                return
+            nodes = self.check(definition, ["\0"])     # names were checked when the feature was evaluated
+            run_now(self.prepare_steps())
+            run_now(self._progress_steps(nodes.values()))
+            table = self._table(nodes)
+            per_action = None not in table
+            problems = []
+            for i, c in enumerate(checks, start=1):
+                if per_action and c.action not in self.actions:
+                    problems.append(f"check {i} needs an action ({', '.join(self.actions)}): it is a per-action feature")
+                    continue
+                if not per_action and c.action:
+                    problems.append(f"check {i} names an action, but the feature does not depend on the action")
+                    continue
+                try:
+                    node = parse(c.state)
+                    if self.scope.check(node) != "bool" or is_action_node(node):
+                        raise DefinitionError("the state must be a condition on the state variables and labels")
+                except DefinitionError as e:
+                    problems.append(f"check {i} ({c.state}): {e}")
+                    continue
+                matching = [s for s, val in enumerate(self.valuations) if self._eval(node, s, None, val, None)]
+                if not matching:
+                    problems.append(f"check {i}: no reachable state matches {c.state}")
+                    continue
+                wrong = [s for s in matching if table[c.action if per_action else None][s] != c.holds]
+                if wrong:
+                    shown = "; ".join(self._format(s) for s in wrong[:3]) + (f"; ... ({len(wrong)} states)" if len(wrong) > 3 else "")
+                    problems.append(f"check {i} expects it {c.text()}, but it {'does not hold' if c.holds else 'holds'} "
+                                    f"in: {shown}")
+            if problems:
+                raise DefinitionError("its checks disagree with what it computes: " + " | ".join(problems))
+        except DefinitionError as e:
+            raise DefinitionError(f"definition {definition.name!r}: {e}") from None
+
+    def _format(self, s: int) -> str:
+        val = self.valuations[s]
+        return " & ".join((n if val[n] else f"!{n}") if isinstance(val[n], bool) else f"{n}={val[n]}" for n in val)
 
     def table(self, definition: Definition) -> Dict[Optional[str], List[bool]]:
         """Whether `definition` holds in each reachable state of the bare MDP, per action (None: a state

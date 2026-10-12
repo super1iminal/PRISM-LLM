@@ -25,11 +25,21 @@ ROWS = [TINY_GRID.splitlines()[1],
         '4,"{1: (0, 3), 2: (3, 3)}","[(0, 1)]","[(2, 1), (2, 2)]",6',
         '4,"{1: (3, 0), 2: (3, 3)}","[(1, 1)]","[(2, 2), (1, 2)]",6']
 
-BLOCKED = {"name": "blocked", "description": "the move does not change the cell", "definition": "stays(x, y)"}
+START = "x = 0 & y = 0 & !g1"     # on the tiny grid: (0,1) is free, goal 1 is at (0,3)
+
+
+def check(state, action, holds):
+    return {"state": state, "action": action, "holds": holds}
+
+
+BLOCKED = {"name": "blocked", "description": "the move does not change the cell", "definition": "stays(x, y)",
+           "checks": [check(START, "up", True), check(START, "right", False)]}
 TOWARD = {"name": "toward_goal", "description": "the move gets nearer the next goal",
-          "definition": '("in_seg1" & closer_to("at_goal1")) | ("in_seg2" & closer_to("at_goal2"))'}
+          "definition": '("in_seg1" & closer_to("at_goal1")) | ("in_seg2" & closer_to("at_goal2"))',
+          "checks": [check(START, "right", True), check(START, "left", False)]}
 UNSAFE = {"name": "unsafe", "description": "the move's likely outcome may meet the obstacle",
-          "definition": 'next(exists obs_idx: "at_moving_obs")'}
+          "definition": 'next(exists obs_idx: "at_moving_obs")',
+          "checks": [check("x = 1 & y = 2 & !g1", "down", True), check(START, "right", False)]}
 
 
 def definitions(*defs) -> str:
@@ -88,6 +98,26 @@ def test_invalid_definitions_are_asked_again_with_the_reason(grids):
     assert len(result["vocabulary_step"]["invalid_answers"]) == 1
     assert "number 3 is not allowed" in llm.prompts[1] and "Your previous answer was invalid" in llm.prompts[1]
     assert [d["name"] for d in result["definitions"]] == ["blocked"]
+
+
+@needs_prism
+def test_definitions_must_pass_their_own_checks(grids):
+    wrong = {**BLOCKED, "checks": [check(START, "right", True), check(START, "up", False)]}   # expectations swapped
+    unchecked = {**TOWARD, "checks": [check(START, "right", True)]}                           # no false example
+    nowhere = {**UNSAFE, "checks": [check("x = 1 & y = 1", "down", True), check(START, "right", False)]}  # (1,1) is a wall
+    result, llm = solve(llm_config(grids), [definitions(wrong), definitions(BLOCKED, unchecked),
+                                            definitions(BLOCKED, nowhere), answer(("true", "right"))])
+    errors = result["vocabulary_step"]["invalid_answers"]
+    assert errors[0].startswith("definition 'blocked': its checks disagree with what it computes: check 1 expects it "
+                                "holds for right in x = 0 & y = 0 & !g1, but it does not hold in: x=0 & y=0 & !g1")
+    assert "check 2 expects it does not hold for up" in errors[0]
+    assert "checks\n  List should have at least 2 items" in errors[1]
+    assert errors[2] == "definition 'unsafe': its checks disagree with what it computes: check 1: no reachable state matches x = 1 & y = 1"
+    assert "check 1 expects it holds for right" in llm.prompts[1] and "Your previous answer was invalid" in llm.prompts[1]
+    assert "List should have at least 2 items" in llm.prompts[2]
+    assert "## Defining features" in llm.prompts[3]              # the third error used the last re-ask: the rules
+    assert result["definitions"] == []                              # every answer was invalid
+    assert "checks" in llm.prompts[0] and '"holds": true' in llm.prompts[0]
 
 
 @needs_prism
