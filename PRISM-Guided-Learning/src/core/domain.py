@@ -98,10 +98,12 @@ class Spec:
 
     def vocabulary(self, rules) -> Vocabulary:
         """The vocabulary a run's `rules` config allows: with `rules.extended`, this instance's constants and
-        features (minus `rules.hidden_features`) and `any` rules; otherwise the base language."""
+        features (minus `rules.hidden_features`) and `any` rules; otherwise the base language. With
+        `rules.vocabulary` other than `domain`, no hand-written feature: the planner adds features built from
+        definitions (core/definitions.py)."""
         if not rules.extended:
             return Vocabulary()
-        features = [f for f in self.features if f.name not in rules.hidden_features]
+        features = [f for f in self.features if f.name not in rules.hidden_features and rules.vocabulary == "domain"]
         return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general)
 
 

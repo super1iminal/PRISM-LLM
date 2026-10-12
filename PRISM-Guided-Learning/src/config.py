@@ -113,6 +113,12 @@ class RulesConfig:
     extended: bool                  # instance constants, domain features and `any` rules
     general: bool                   # only the numbers 0 and 1 in conditions (with extended)
     hidden_features: List[str]      # domain features left out of the vocabulary
+    vocabulary: str                 # domain (hand-written features) | definitions (the domain's definitions.yaml)
+                                    # | llm (the LLM writes its own definitions); core/definitions.py
+    definition_level: int           # 0 one step ahead | 1 + closer_to | 2 + progress_to
+    definition_penalty: float       # progress_to: extra cost per step in the avoid set (level 2)
+    max_definitions: int            # llm: definitions in total, the initial vocabulary step included
+    max_new_definitions: int        # llm: definitions an answer may add during the rule loop
 
 
 @dataclass
@@ -262,10 +268,12 @@ def validate(cfg: Config) -> None:
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
         "run.scheduler": (cfg.run.scheduler, {"threads", "lockstep", "event"}),
+        "rules.vocabulary": (cfg.rules.vocabulary, {"domain", "definitions", "llm"}),
+        "rules.definition_level": (cfg.rules.definition_level, {0, 1, 2}),
     }
     for key, (value, allowed) in checks.items():
         if value not in allowed:
-            raise ValueError(f"{key}={value!r} is not supported (allowed: {', '.join(sorted(allowed))})")
+            raise ValueError(f"{key}={value!r} is not supported (allowed: {', '.join(map(str, sorted(allowed)))})")
     horizon = cfg.feedback.horizon
     if horizon != "domain" and not (isinstance(horizon, int) and not isinstance(horizon, bool) and horizon >= 1):
         raise ValueError(f"feedback.horizon={horizon!r} must be a number of steps (>= 1) or \"domain\"")
@@ -275,5 +283,9 @@ def validate(cfg: Config) -> None:
             raise ValueError(f"llm.openrouter.{key}={value!r} must be a list of names, e.g. [deepinfra]")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
+    if cfg.rules.vocabulary != "domain" and not cfg.rules.extended:
+        raise ValueError(f"rules.vocabulary={cfg.rules.vocabulary} needs rules.extended=true")
+    if cfg.rules.max_definitions < 0 or cfg.rules.max_new_definitions < 0:
+        raise ValueError("rules.max_definitions and rules.max_new_definitions must be >= 0")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
         raise ValueError(f"run.scheduler={cfg.run.scheduler} drives the symbolic planner only; legacy runs use threads")

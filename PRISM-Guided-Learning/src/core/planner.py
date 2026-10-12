@@ -25,7 +25,7 @@ the result. `solve` runs them one at a time with a backend (core/backends) and P
 core/scheduler.py run many instances' tasks and PRISM processes at once from one thread.
 """
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from time import time
 from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple, TypeVar, Union
 
@@ -34,10 +34,11 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 from config import Config
 from core.analysis import MassAnalyzer
 from core.backends import LLMBackend
+from core.definitions import Definition, DefinitionError, Evaluator, domain_definitions, model_label_texts
 from core.domain import Domain, Instance, Requirement, failing
 from core.prism import PrismCall, PrismError, PrismRunner
 from core.retry import RetryPolicy
-from core.rules import ANY, RuleError, SymbolicPolicy, Vocabulary
+from core.rules import ANY, Feature, RuleError, SymbolicPolicy, Vocabulary
 from core.scheduler import drive
 from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.training import TrainingSet
@@ -48,17 +49,39 @@ T = TypeVar("T")
 Steps = Generator[Union[LLMTask, PrismCall], Union[LLMResult, str], T]
 
 
-def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
+def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int,
+                max_new_definitions: int = 0) -> type[BaseModel]:
     """JSON schema for the LLM's answer; `actions` are the values a rule's action may take (with `any` for the
     extended vocabulary). The length bounds are enforced by constrained decoding, which stops degenerate
-    repetition loops from running into the token limit."""
+    repetition loops from running into the token limit. With `max_new_definitions`, the answer may also
+    define up to that many features (rules.vocabulary=llm)."""
     rule = create_model(
         "Rule",
         condition=(str, Field(description="Boolean condition over the state variables",
                               max_length=max_condition_chars)),
         action=(Literal.__getitem__(tuple(actions)), Field(description="Action to take")),
     )
+    if max_new_definitions > 0:
+        return create_model("RuleList", rules=(List[rule], Field(..., max_length=max_rules)),
+                            definitions=(List[_definition_model()],
+                                         Field(default_factory=list, max_length=max_new_definitions)))
     return create_model("RuleList", rules=(List[rule], Field(..., max_length=max_rules)))
+
+
+def _definition_model() -> type[BaseModel]:
+    return create_model(
+        "Definition",
+        name=(str, Field(description="Feature name: letters, digits and _")),
+        description=(str, Field(description="What the feature means, in English")),
+        definition=(Union[str, Dict[str, str]],
+                    Field(description="The condition in the definition language, or one per action")),
+    )
+
+
+def definition_schema(max_definitions: int) -> type[BaseModel]:
+    """JSON schema for the vocabulary step's answer: up to `max_definitions` feature definitions."""
+    return create_model("DefinitionList", definitions=(List[_definition_model()],
+                                                       Field(..., max_length=max_definitions)))
 
 
 def _score(v: Verification, reqs: List[Requirement]) -> Tuple:
@@ -83,6 +106,7 @@ class _Member:
     analyzer: MassAnalyzer
     vocabulary: Vocabulary            # what rule conditions may name besides the policy variables
     context: Dict[str, Any]           # prompt context of this instance
+    evaluator: Optional[Evaluator] = None   # turns definitions into features on this instance (not `domain`)
 
     @property
     def requirements(self) -> List[Requirement]:
@@ -97,6 +121,9 @@ class _Episode:
     log: Callable[[str], None]
     tasks: TaskFactory                # numbers the episode's LLM calls (their seeds)
     training: Dict[str, Any]          # members and variables as the prompt describes them; {} for one instance
+    vocabulary: str = "domain"        # where features come from (rules.vocabulary)
+    definitions: List[Definition] = field(default_factory=list)   # every definition added, in order
+    definition_schema: Optional[type] = None                     # the vocabulary step's answer (llm)
 
     @property
     def primary(self) -> _Member:
@@ -110,6 +137,7 @@ class _Answer:
     errors: List[str]                 # invalid answers (and a failed verification), in order
     results: List[LLMResult]          # one per LLM call, re-asks included
     seconds: float = 0.0              # wall time, including queueing and, in lockstep, waiting for the batch
+    definitions: List[Definition] = field(default_factory=list)   # features the accepted answer defined
 
 
 @dataclass
@@ -178,6 +206,7 @@ def _record(attempt: int, mode: str, prompt: str, check: _Check, members: List[_
         "branch_disagreement": False,       # per-requirement best passes but joint fails
         "prompt": prompt,
         "raw_outputs": [c.text for c in answer.results],
+        "new_definitions": [d.to_dict() for d in answer.definitions],
     }
     if len(members) > 1:
         record["members"] = [{"instance": m.instance.id, "best": dict(v.best), "worst": dict(v.worst),
@@ -204,7 +233,9 @@ class SymbolicPlanner:
         return {
             "description": self.domain.description(instance),
             "visual": self.domain.visual(instance),
-            "examples": self.domain.examples(instance, extended=vocabulary.allow_any) if prompt.examples else "",
+            # With rules.vocabulary=llm the domain's examples would name features that do not exist
+            "examples": (self.domain.examples(instance, extended=vocabulary.allow_any)
+                         if prompt.examples and self.config.rules.vocabulary != "llm" else ""),
             "catch_all_instruction": prompt.catch_all_instruction,
             "variables": spec.variables,
             "actions": spec.actions,
@@ -238,18 +269,57 @@ class SymbolicPlanner:
     def _render(self, ep: _Episode, template: str, member: Optional[_Member] = None, **extra) -> str:
         """`template` for `member` (default: the first), with every member described for a training set."""
         member = member or ep.primary
+        if ep.vocabulary == "llm":
+            extra["definitions"] = self._definition_context(ep, extra.pop("vocabulary_step", False))
         return self.domain.render(template, member.instance, **member.context, training=ep.training, **extra)
 
-    def _parse(self, ep: _Episode, raw: List[Tuple[str, str]]) -> List[SymbolicPolicy]:
-        """The rules parsed for each member. In a training set, an error names the member it occurred on."""
+    def _definition_context(self, ep: _Episode, vocabulary_step: bool) -> Dict[str, Any]:
+        """How the prompt explains the definition language, and how many more features may be defined."""
+        rules = self.config.rules
+        remaining = max(0, rules.max_definitions - len(ep.definitions))
+        return {"level": rules.definition_level, "general": rules.general, "training": len(ep.members) > 1,
+                "labels": model_label_texts(ep.primary.verifier.model), "vocabulary_step": vocabulary_step,
+                "remaining": remaining,
+                "max_new": remaining if vocabulary_step else min(remaining, rules.max_new_definitions)}
+
+    def _parse(self, ep: _Episode, raw: List[Tuple[str, str]],
+               extra: Optional[List[List[Feature]]] = None) -> List[SymbolicPolicy]:
+        """The rules parsed for each member (with `extra` features per member, not yet committed). In a training
+        set, an error names the member it occurred on."""
         policies = []
-        for m in ep.members:
-            spec = m.verifier.spec
+        for i, m in enumerate(ep.members):
+            spec, vocab = m.verifier.spec, m.vocabulary
+            if extra:
+                vocab = Vocabulary(vocab.constants, vocab.features + extra[i], vocab.allow_any, vocab.general)
             try:
-                policies.append(SymbolicPolicy.from_raw(spec.variables, list(spec.actions), raw, m.vocabulary))
+                policies.append(SymbolicPolicy.from_raw(spec.variables, list(spec.actions), raw, vocab))
             except RuleError as e:
                 raise RuleError(f"on {m.label}: {e}" if len(ep.members) > 1 else str(e)) from e
         return policies
+
+    def _evaluate(self, ep: _Episode, definitions: List[Definition]) -> Steps[List[List[Feature]]]:
+        """`definitions` as features on each member, not yet added. With LLM-written definitions, a feature's
+        prompt description also shows its definition. Raises DefinitionError (naming the member in a set)."""
+        out = []
+        for m in ep.members:
+            try:
+                features = yield from m.evaluator.features_steps(definitions, [f.name for f in m.vocabulary.features])
+            except PrismError as e:
+                raise DefinitionError(f"PRISM could not evaluate a definition: {str(e).splitlines()[0]}") from e
+            except DefinitionError as e:
+                raise DefinitionError(f"on {m.label}: {e}" if len(ep.members) > 1 else str(e)) from e
+            if ep.vocabulary == "llm":
+                features = [replace(f, description=f"{d.description} (defined as `{d.listing()}`)")
+                            for f, d in zip(features, definitions)]
+            out.append(features)
+        return out
+
+    @staticmethod
+    def _commit(ep: _Episode, definitions: List[Definition], features: List[List[Feature]]) -> None:
+        """Add the features for good (add-only): every member's vocabulary, and so its prompt context."""
+        for m, fs in zip(ep.members, features):
+            m.vocabulary.features.extend(fs)
+        ep.definitions.extend(definitions)
 
     def _ask(self, ep: _Episode, prompt: str, attempt: int, mode: str) -> Steps[_Answer]:
         """Query the LLM, re-asking with the errors if the rules do not parse. A backend failure
@@ -265,9 +335,20 @@ class SymbolicPlanner:
                 raise LLMError(result.error)
             try:
                 parsed = ep.schema.model_validate_json(result.text)
-                answer.policies = self._parse(ep, [(r.condition, r.action) for r in parsed.rules])
+                new = [Definition.from_dict(d.model_dump()) for d in getattr(parsed, "definitions", [])]
+                extra = None
+                if new:
+                    room = self.config.rules.max_definitions - len(ep.definitions)
+                    if len(new) > room:
+                        raise DefinitionError(f"{len(new)} new definitions, but only {room} more are allowed")
+                    extra = yield from self._evaluate(ep, new)
+                answer.policies = self._parse(ep, [(r.condition, r.action) for r in parsed.rules], extra)
+                if new:
+                    self._commit(ep, new, extra)
+                    answer.definitions = new
+                    ep.log("New definitions:\n" + "\n".join(f"{d.name}: {d.listing()}" for d in new))
                 break
-            except (ValidationError, RuleError) as e:
+            except (ValidationError, RuleError, DefinitionError) as e:
                 message = str(e)
                 answer.errors.append(message)
                 ep.log(f"Invalid LLM answer: {message}")
@@ -296,6 +377,14 @@ class SymbolicPlanner:
         optimum_seconds = time() - opt_start
         for m, optimum in zip(members, optima):
             ep.log(f"Unconstrained optimum per requirement{self._on(ep, m)}: {optimum}")
+
+        vocabulary_record = None
+        if ep.vocabulary == "definitions":
+            definitions = domain_definitions(self.domain, self.config.rules,
+                                             [v.name for v in ep.primary.verifier.spec.variables])
+            self._commit(ep, definitions, (yield from self._evaluate(ep, definitions)))
+        elif ep.vocabulary == "llm":
+            vocabulary_record = yield from self._vocabulary_step(ep)
 
         iterations: List[Dict[str, Any]] = []
         kept: Optional[_Kept] = None
@@ -354,11 +443,44 @@ class SymbolicPlanner:
             "optimum_time": optimum_seconds,
             "iterations": iterations,
         }
+        if ep.vocabulary != "domain":
+            result["definitions"] = [d.to_dict() for d in ep.definitions]
+        if vocabulary_record is not None:
+            result["vocabulary_step"] = vocabulary_record
         if len(members) > 1:
             result["members"] = [{"instance": m.instance.id, "success": not failing(m.requirements, v.worst),
                                   "final_best": dict(v.best), "final_worst": dict(v.worst), "optimum": optimum}
                                  for m, v, optimum in zip(members, finals, optima)]
         return result
+
+    def _vocabulary_step(self, ep: _Episode) -> Steps[Dict[str, Any]]:
+        """Before the rule loop (rules.vocabulary=llm): ask for the initial feature definitions, re-asking with
+        the errors if they are invalid. If every answer is invalid, the loop starts with no features."""
+        start = time()
+        prompt = self._render(ep, "vocabulary.md.j2", vocabulary_step=True)
+        ep.log(f"=== Vocabulary ===\n{prompt}")
+        json_schema = ep.definition_schema.model_json_schema()
+        results, errors, current = [], [], prompt
+        for fixup in range(1 + self.config.planner.max_fixups):
+            result = yield ep.tasks.make(current, json_schema, round=0, mode="vocabulary", fixup=fixup)
+            results.append(result)
+            if result.error is not None:
+                raise LLMError(result.error)
+            try:
+                parsed = ep.definition_schema.model_validate_json(result.text)
+                definitions = [Definition.from_dict(d.model_dump()) for d in parsed.definitions]
+                self._commit(ep, definitions, (yield from self._evaluate(ep, definitions)))
+                ep.log("Definitions:\n" + "\n".join(f"{d.name}: {d.listing()}" for d in definitions))
+                break
+            except (ValidationError, DefinitionError) as e:
+                errors.append(str(e))
+                ep.log(f"Invalid definitions: {e}")
+                current = self.domain.render("invalid.md.j2", prompt=prompt, errors=str(e))
+        return {"prompt": prompt, "definitions": [d.to_dict() for d in ep.definitions], "invalid_answers": errors,
+                "llm_calls": len(results), "llm_time": sum(c.seconds for c in results),
+                "llm_output_tokens": sum(c.output_tokens for c in results),
+                "llm_prompt_tokens": sum(c.prompt_tokens for c in results),
+                "raw_outputs": [c.text for c in results], "seconds": time() - start}
 
     @staticmethod
     def _on(ep: _Episode, member: _Member) -> str:
@@ -375,14 +497,20 @@ class SymbolicPlanner:
                                     cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                     seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
             vocabulary = verifier.spec.vocabulary(cfg.rules)
+            evaluator = (Evaluator(verifier, cfg.rules.definition_level, cfg.rules.general, cfg.rules.definition_penalty)
+                         if cfg.rules.extended and cfg.rules.vocabulary != "domain" else None)
             members.append(_Member(f"instance {k}", instance, verifier, analyzer, vocabulary,
-                                   self._prompt_context(instance, verifier.spec, vocabulary)))
+                                   self._prompt_context(instance, verifier.spec, vocabulary), evaluator))
         self._check_compatible(members)
         primary = members[0]
         answers = list(primary.verifier.spec.actions) + ([ANY] if primary.vocabulary.allow_any else [])
-        schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars)
+        source = cfg.rules.vocabulary if cfg.rules.extended else "domain"
+        llm = source == "llm"
+        schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars,
+                             cfg.rules.max_new_definitions if llm else 0)
         return _Episode(members, schema, log, TaskFactory(cfg.llm, target.id),
-                        self._training_context(members) if len(members) > 1 else {})
+                        self._training_context(members) if len(members) > 1 else {}, source,
+                        definition_schema=definition_schema(cfg.rules.max_definitions) if llm else None)
 
     @staticmethod
     def _training_context(members: List[_Member]) -> Dict[str, Any]:

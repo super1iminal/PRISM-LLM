@@ -142,10 +142,15 @@ def results_to_df(results: List[Dict[str, Any]], instances: List[Instance]) -> p
     rows = []
     for sample_idx, (result, inst) in enumerate(zip(results, instances)):
         iterations = result.get("iterations", [])
+        vocab = result.get("vocabulary_step") or {}   # rules.vocabulary=llm: the definitions asked for up front
         totals = {
-            "llm_calls": sum(it["llm_calls"] for it in iterations),
-            "llm_output_tokens": sum(it["llm_output_tokens"] for it in iterations),
-            "llm_prompt_tokens": sum(it["llm_prompt_tokens"] for it in iterations),
+            "llm_calls": sum(it["llm_calls"] for it in iterations) + vocab.get("llm_calls", 0),
+            "llm_output_tokens": sum(it["llm_output_tokens"] for it in iterations) + vocab.get("llm_output_tokens", 0),
+            "llm_prompt_tokens": sum(it["llm_prompt_tokens"] for it in iterations) + vocab.get("llm_prompt_tokens", 0),
+            "vocab_llm_calls": vocab.get("llm_calls", 0),
+            "vocab_llm_output_tokens": vocab.get("llm_output_tokens", 0),
+            "vocab_llm_prompt_tokens": vocab.get("llm_prompt_tokens", 0),
+            "num_definitions": len(result.get("definitions", [])),
         }
         for it in iterations:
             rows.append({

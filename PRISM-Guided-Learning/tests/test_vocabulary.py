@@ -66,8 +66,11 @@ def test_base_language_unchanged():
 
 def test_spec_vocabulary_follows_the_run_config():
     spec = Spec(VARS, {a: a for a in ACTIONS}, [], VOCAB.constants, VOCAB.features)
-    off = SimpleNamespace(extended=False, general=False, hidden_features=[])
-    on = SimpleNamespace(extended=True, general=True, hidden_features=["wall"])
+    off = SimpleNamespace(extended=False, general=False, hidden_features=[], vocabulary="domain")
+    on = SimpleNamespace(extended=True, general=True, hidden_features=["wall"], vocabulary="domain")
     assert spec.vocabulary(off) == Vocabulary()
     vocab = spec.vocabulary(on)
     assert vocab.allow_any and vocab.general and [f.name for f in vocab.features] == ["at_goal_row", "toward"]
+    for source in ("definitions", "llm"):           # features then come from definitions (core/definitions.py)
+        vocab = spec.vocabulary(SimpleNamespace(**{**vars(on), "vocabulary": source}))
+        assert vocab.features == [] and vocab.constants == VOCAB.constants and vocab.allow_any

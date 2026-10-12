@@ -60,6 +60,10 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `rules.extended` | `false` | conditions may also use the domain's instance constants and features (`constants`, `features` in `spec.yaml.j2`), and rules the action `any` (allow every action whose condition holds); see `docs/semantics.md` | `rl_*` conditions |
 | `rules.general` | `false` | only the numbers 0 and 1 in conditions, so rules must name instance values and carry over to other instances (with `extended`) | `rl_*` conditions |
 | `rules.hidden_features` | `[]` | domain features left out of the vocabulary (gridworld: `[closer]` hides the shortest-path feature) | `rl_*` conditions |
+| `rules.vocabulary` | `domain` | where features come from (with `extended`): `domain` = hand-written in `domain.py`; `definitions` = the domain's `definitions.yaml`, evaluated on each instance's model (`src/core/definitions.py`); `llm` = no hand-written features: the LLM writes definitions in a vocabulary step before the rule loop, and may add more with its rule answers (add-only) | `haiku_vocab_*` |
+| `rules.definition_level` | `1` | what a definition may compute: `0` one step ahead (`next`, `slip`, `stays`), `1` + `closer_to` (the power of gridworld's `closer`), `2` + `progress_to` (expected steps on the MDP) | `haiku_vocab_llm` |
+| `rules.definition_penalty` | `1000` | `progress_to` (level 2): extra cost per step spent in the avoid set | — |
+| `rules.max_definitions` / `rules.max_new_definitions` | `10` / `3` | `llm`: definitions in total / new definitions per rule answer | `haiku_vocab_llm` |
 | `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
 | `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
 | `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |

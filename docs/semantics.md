@@ -24,6 +24,7 @@ The domain may declare, per instance, **constants** `K` (named integers, e.g. a 
 - **Deciding rule:** `first(v) = min{ j : rule j allows some action at v }`. **Allowed actions:** the actions rule `first(v)` allows, or all of `A` if `first(v) = ⊥`. So an `any` rule can leave several actions allowed in a covered state; the worst case covers every choice among them, exactly as at uncovered states, and soundness is unchanged.
 - With **`rules.general`**, number literals in conditions are limited to 0 and 1. Rules then name instance values through `K`, so the same rule set has a meaning on every instance of the domain (checked on each by `src/transfer.py`).
 - `rules.hidden_features` leaves named features out (gridworld's shortest-path feature `closer`, for the ablation).
+- With **`rules.vocabulary`** `definitions` or `llm`, features are not hand-written: each comes from a definition over the model (labels, state variables, `K`, the actions' most likely and other outcomes, and at level 1 shortest most-likely paths), evaluated on each instance's reachable states and compiled into an expression `e_f` (or `e_g^a`) over `X`, so it is a feature exactly as above. Where reachable states share their `X` values, it holds only if it holds in all of them. The language and levels: `src/core/definitions.py`.
 Without `rules.extended` the language, prompts and encoding are exactly the base ones above.
 
 ## Verification
