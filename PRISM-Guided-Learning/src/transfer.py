@@ -16,6 +16,7 @@ checked. With `--targets`, rows of an existing CSV for the other targets are kep
 """
 import argparse
 import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,7 @@ import pandas as pd
 
 from config import CONFIG_DIR, load_file, load_run_config
 from core.domain import load_domain
-from core.prism import PrismRunner
+from core.prism import PrismError, PrismRunner
 from core.rules import RuleError
 from core.verifier import PolicyVerifier
 from results_io import sample_records
@@ -106,7 +107,12 @@ def certify(domain, cfg, runner, target, sources, exact_near: float = 0.0) -> Li
         except RuleError as e:
             rows.append({**row, "parsed": False, "error": str(e).splitlines()[0]})
             continue
-        v = verifier.verify(policy, analysis=False)
+        try:
+            v = verifier.verify(policy, analysis=False)
+        except (PrismError, subprocess.TimeoutExpired) as e:   # undecided: counts as not certified
+            rows.append({**row, "parsed": True, "certified": False, "requirements": len(spec.requirements),
+                         "error": f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"})
+            continue
         exact = False
         if exact_near and any(abs(v.worst[r.name] - r.threshold) < exact_near for r in spec.requirements):
             v_exact, _ = verifier.verify_exact(policy)

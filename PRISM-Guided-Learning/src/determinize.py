@@ -14,13 +14,14 @@ requirements met. Rule sets without `any` rules are kept as they are. Then
 """
 import argparse
 import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 from config import load_run_config
 from core.domain import load_domain
-from core.prism import PrismRunner
+from core.prism import PrismError, PrismRunner
 from core.rules import RuleError
 from core.verifier import PolicyVerifier
 from core.rules import action_orders, fixed_order
@@ -40,7 +41,10 @@ def score(verifiers: List[PolicyVerifier], cfg, rules) -> Tuple[Tuple[int, int, 
             policy = spec.policy(rules, spec.vocabulary(cfg.rules))
         except RuleError:
             return (-1, -1, float("-inf")), []
-        worst = verifier.verify(policy, analysis=False).worst
+        try:
+            worst = verifier.verify(policy, analysis=False).worst
+        except (PrismError, subprocess.TimeoutExpired):    # undecided: as bad as rules that do not parse
+            return (-1, -1, float("-inf")), []
         ok = [r.satisfied(worst[r.name]) for r in spec.requirements]
         passed += all(ok)
         met += sum(ok)
