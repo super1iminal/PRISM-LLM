@@ -9,6 +9,7 @@ METHODS = {
     "template": "baselines.template:Template",
     "feature_search": "baselines.feature_search:FeatureSearch",
     "decision_tree": "baselines.decision_tree:DecisionTree",
+    "ppo": "baselines.ppo:PPO",
 }
 
 

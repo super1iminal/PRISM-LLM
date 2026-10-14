@@ -17,6 +17,7 @@ params:
                        features: the rule-language features of all four actions plus the goal flags
   max_depth: null      tree depth limit (null: grow until pure)
   sets: null           training sets as lists of ids, one tree each; null: one tree from all training ids
+  features: null       with inputs: features, the features to use (null: all of gridworld_mdp.FEATURES)
 """
 from typing import Dict, List, Sequence
 
@@ -40,7 +41,7 @@ def reachable(mdp: GridMDP) -> np.ndarray:
     return seen
 
 
-def inputs(mdp: GridMDP, kind: str) -> np.ndarray:
+def inputs(mdp: GridMDP, kind: str, features: Sequence[str] = FEATURES) -> np.ndarray:
     """One row per state: the tree's input variables."""
     stage = np.array([s for (_, _, s, _) in mdp.states])
     flags = np.stack([stage > k for k in range(mdp.K)], axis=1).astype(int)
@@ -48,7 +49,7 @@ def inputs(mdp: GridMDP, kind: str) -> np.ndarray:
         pos = np.array([(r, c, o) for (r, c, _, o) in mdp.states])
         return np.hstack([pos[:, :2], flags, pos[:, 2:]])
     if kind == "features":
-        return np.hstack([mdp.features[f].astype(int) for f in FEATURES] + [flags])
+        return np.hstack([mdp.features[f].astype(int) for f in features] + [flags])
     raise ValueError(f"unknown tree inputs {kind!r} (raw | features)")
 
 
@@ -73,6 +74,7 @@ class DecisionTree(Baseline):
         self.kind = params.get("inputs", "raw")
         self.max_depth = params.get("max_depth")
         self.sets = params.get("sets")
+        self.features = params.get("features") or list(FEATURES)
         self.tree = None
         self.trees: Dict[str, DecisionTreeClassifier] = {}
 
@@ -89,7 +91,7 @@ class DecisionTree(Baseline):
             mdp = GridMDP(inst.data)
             value, optimal = optimal_actions(mdp)
             keep = reachable(mdp) & (value > 0) & ~optimal.all(axis=1)
-            X.append(inputs(mdp, self.kind)[keep])
+            X.append(inputs(mdp, self.kind, self.features)[keep])
             y.append(optimal[keep].argmax(axis=1))
         tree.fit(np.vstack(X), np.concatenate(y))
         print(f"decision tree ({self.kind}): {tree.tree_.node_count} nodes, depth {tree.get_depth()}, "
@@ -99,9 +101,9 @@ class DecisionTree(Baseline):
     def actions(self, target: Instance) -> np.ndarray:
         """The last fitted tree's action in every state of `target` (for the fast model)."""
         mdp = GridMDP(target.data)
-        return self.tree.predict(inputs(mdp, self.kind))
+        return self.tree.predict(inputs(mdp, self.kind, self.features))
 
     def rules(self, target: Instance) -> Dict[str, Rules]:
         mdp = GridMDP(target.data)
-        x = inputs(mdp, self.kind)
+        x = inputs(mdp, self.kind, self.features)
         return {name: policy_rules(mdp, tree.predict(x)) for name, tree in self.trees.items()}

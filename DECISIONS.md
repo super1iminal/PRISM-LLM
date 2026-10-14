@@ -92,7 +92,8 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   | one set of all 12 training grids | 6.00 |
   | generality, no restarts | 5.83 |
   | feedback in feature space (with generality, no restarts) | 5.58 (4.25-6.25) |
-  | hint to wait by moving into a wall (with tie-break, generality, no restarts) | 5.50 (one run; two more running) |
+  | hint to wait by moving into a wall (with tie-break, generality, no restarts) | 6.25 (one training set solved) |
+  | **`any` resolved in the loop** (`rules.any_order: all`, with generality, no restarts) | **6.42** (6.00-7.00); best rule set 8/8; 17% of sets solved |
 
   - Every condition lies within 5.3-6.0 of 8, about the noise between repeats. Grids 13, 17 and 18 always pass, 14-16 mostly, 19 rarely, 12 never. Prompting does not move transfer here.
   - Haiku writes nearly the same generic list in every condition (`closer`/`toward` moves without walls or hazards, all `any`). The hint and the tie-break explanation did not make it use fixed orders or waiting.
@@ -100,6 +101,10 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - Each `c -> any` becomes one rule per action in a fixed order, and the order is chosen by PRISM on the rule set's own training instances (all 24 orders).
   - Numpy model, per rule set: on 29 feature-only Haiku rule sets, grids certified rise from 7.6 to 10.9 of 20 with the best order. Choosing the order on validation would give up to 8/8 (two rule sets), but that selects on validation.
   - Chosen on the training grids, as it must be: baseline 5.33 -> 5.73, feature-space feedback 5.58 -> 6.0, generality 5.92 -> 5.89 (validation, of 8); all 20 grids about 7.6 -> 11. The gain is mostly on the training sizes. `any`'s worst case costs grids, but it is not what limits validation.
+  - **In the loop** (`rules.any_order`, `docs/semantics.md`): each round, the answer's `any` rules are resolved into the order (of 24) that scores best on the training members, and verification, feedback and keep-best all use the resolved list. Haiku then sees how the deterministic policy fails, not how the adversary exploits `any`.
+    - On `grid_20_large` this is the best condition: 6.42 of 8 validation grids per rule set. Grid 12 is certified by half the rule sets (no held-out rule set had passed it before), one rule set certifies all 8, and 2 of 12 training sets are solved.
+    - That is above the template (6), the rule-list search (4.5) and 1-2-3-Go! with our features (4.0) on the same training sets.
+    - Cost about $0.010 per training set (more rounds of PRISM: 24 orders x 3 members per round).
 - **Gridworld families** (`domains/gridworld/data/families.py`, `families_v0.csv`). Three layouts over sizes 6-20 with seeds 0-3 (180 instances), each with some scattered obstacles:
   - *rooms*: doors, and a patrol in front of a door;
   - *crossing*: a wall with one gap and a patrol along it;
@@ -128,6 +133,11 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - Every solved rule set holds the optimum on horizons 8-18 and reaches 0.680 at 20 and 0.843 at 25. 1-2-3-Go!'s published value at 25 is 0.869; neither is certified against 0.56 beyond 18.
   - Fixed action orders (all 24, one rule set, horizon 20): 0.621-0.680, still above 0.56. `nearer_g0`/`nearer_g1` compare rows and columns, not distances through the maze. Pac-Man now also has `closer_g0`/`closer_g1` (the first step shortens the maze distance to the ghost; hidden in earlier conditions), being tested with hand-written lists before any LLM run.
   - The 1-2-3-Go! artifact (`third_party/123go`, not committed; `third_party/README.md`) has run statuses and times but no Pac-Man values, so its published numbers are what we compare against.
+  - Hand-written lists over the maze-distance features are worse: 0.776-0.955 at horizons 18-20. Fleeing by maze distance is not the optimal strategy.
+  - **Longer training horizons with in-loop order resolution** (`haiku_mi_pacman_long`: one training set of horizons 14, 16 and 18; `rules.any_order: rotations`; three runs):
+    - 2 of 3 runs solved all three horizons at the optimum.
+    - Frozen, they hold the optimum on horizons 8-18 and reach 0.662 at 20 and **0.749 at 25**. The 8-16 training gave 0.843 at 25, and 1-2-3-Go! reports 0.869. The best rotation was right, up, left, down every round.
+  - **[REVIEW] Threshold for the larger horizons.** At 0.56, just above the 0.5511 optimum, nothing is certified beyond 18 (ours, or 1-2-3-Go!'s 0.869). A threshold per horizon, e.g. a fixed slack over each horizon's optimum, or the UUV-style "best over reference policies plus slack", would turn the 0.749-vs-0.869 gap into certified vs not certified. That is Asher's call.
 - **[REVIEW] What this means for the "why LLMs" claim.** With `closer`, short generic lists exist, and a 2-rule list found without an LLM certifies 7/8 validation grids. Trained on the same sets, the search and the feature trees average 4.5 and 4.0, below Haiku's 5.3-5.9, and the hand-written template gets 6. The faithful 1-2-3-Go! trees get 0. So the honest bar is the template, the best searched list and the feature trees, not the published 1-2-3-Go!.
 
 ## Positioning checks for the transfer experiment

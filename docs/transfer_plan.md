@@ -2,6 +2,32 @@
 
 How to carry out `docs/transfer_search.md` (written Oct 13). The phases are ordered by dependency. The work without an LLM (diagnosis, baselines) runs alongside the Haiku batches.
 
+## SEAMS submission (Oct 23 AoE; IEEE, 10 pages + 2 of references, double-anonymous)
+
+Submitted mainly for reviews; the work continues toward ICAPS (Dec 7). Story (Asher): the LLM writes a generic strategy, and the verifier refines it (feedback, and the order that resolves `any` rules) and certifies it on every held-out instance.
+
+- **Method:** multi-instance training, the generality instruction, no restarts, `rules.any_order: all` (`haiku_ts_order`, `haiku_fam_order`).
+- **Sealed tests, used only for the final numbers:**
+  - `grid_test_large.csv`: 30 unused 9x9-13x13 grids from `grid_100_balanced.csv`, plus 4 each of 15x15, 17x17 and 20x20 from `datagen.py` (seeds 515, 517, 520).
+  - Family members of sizes 15-20 in `families_v0.csv`.
+  - Pac-Man horizons 20 and 25.
+- **Methods:**
+  - ours, Haiku: 5 repeats;
+  - ours, Sonnet: 1 repeat (approved);
+  - template;
+  - 1-2-3-Go! reimplemented (raw variables) and with our features;
+  - rule-list search;
+  - PPO (feature and local-view observations);
+  - per-instance optimum as the ceiling.
+
+  All are certified by PRISM in the transfer format.
+- **Research questions:**
+  1. Transfer against the baselines, with and without `closer`.
+  2. What makes it work: prompting conditions vs verifier-side refinement (existing ablations).
+  3. Cost (tokens, model checks) and readability (rules vs tree nodes and network weights).
+  4. Larger instances: grids up to 20x20, Pac-Man horizon 25.
+- **Schedule:** experiments and figures by Oct 18; draft by Oct 20; revise until Oct 23.
+
 ## Decisions (Asher, Oct 13)
 
 - **Deadline:** SEAMS (Oct 23) is a stretch goal; ICAPS (Dec 7) is the fallback. Gridworld and Pac-Man come first; the benchmark-set families and PAYNT follow if time allows.
