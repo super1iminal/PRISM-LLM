@@ -36,6 +36,7 @@ class Prompts:
             "general": vocabulary.general,
             **({"generality": True} if prompt.generality else {}),
             **({"tie_break": True} if prompt.tie_break else {}),
+            **({"any_order": True} if self.config.rules.any_order != "none" and vocabulary.allow_any else {}),
             **({"hint": prompt.hint} if prompt.hint else {}),
             **({"strategy_first": True,
                 "answer_format": '{"strategy": "...", "rules": [{"condition": "...", "action": "..."}, ...]}'}

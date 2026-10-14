@@ -13,7 +13,6 @@ requirements met. Rule sets without `any` rules are kept as they are. Then
 `python src/transfer.py <run dir> --rules determinized` certifies them on targets.
 """
 import argparse
-import itertools
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -24,17 +23,10 @@ from core.domain import load_domain
 from core.prism import PrismRunner
 from core.rules import RuleError
 from core.verifier import PolicyVerifier
-from diagnose_rules import fixed_order
+from core.rules import action_orders, fixed_order
 from transfer import final_rules, training_instances
 
 OUT = "determinized.json"
-
-
-def orders(actions: Sequence[str], kind: str) -> List[Tuple[str, ...]]:
-    """Candidate action orders: every permutation (`all`), or the rotations of the domain's order."""
-    if kind == "all":
-        return list(itertools.permutations(actions))
-    return [tuple(actions[i:]) + tuple(actions[:i]) for i in range(len(actions))]
 
 
 def score(verifiers: List[PolicyVerifier], cfg, rules) -> Tuple[Tuple[int, int, float], List[int]]:
@@ -70,7 +62,7 @@ def determinize(run_dir: Path, kind: str, workers: int) -> Dict[int, dict]:
         if not any(a == "any" for _, a in rules):
             out[sid] = {"order": None, "rules": [list(r) for r in rules], "train_met": score(verifiers, cfg, rules)[1]}
             continue
-        candidates = orders(list(verifiers[0].spec.actions), kind)
+        candidates = action_orders(list(verifiers[0].spec.actions), kind)
         with ThreadPoolExecutor(workers) as pool:
             results = list(pool.map(lambda o: score(verifiers, cfg, fixed_order(rules, o)), candidates))
         best = max(range(len(candidates)), key=lambda k: results[k][0])   # first of the best, in candidate order

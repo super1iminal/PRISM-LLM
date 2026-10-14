@@ -542,6 +542,22 @@ class SymbolicPolicy:
         return "\n".join(lines)
 
 
+def fixed_order(rules: Iterable[Tuple[str, str]], order: Sequence[str]) -> List[Tuple[str, str]]:
+    """`rules` with each `c -> any` replaced by `c -> a` for every action a in `order`: the first action in the
+    order that the rule allows is taken, instead of any of them."""
+    return [(c, a) for c, action in rules for a in (order if action == ANY else [action])]
+
+
+def action_orders(actions: Sequence[str], kind: str) -> List[Tuple[str, ...]]:
+    """Candidate orders for `fixed_order`: every permutation of the actions (`all`), or the rotations of their
+    declared order (`rotations`)."""
+    if kind == "all":
+        return list(itertools.permutations(actions))
+    if kind == "rotations":
+        return [tuple(actions[i:]) + tuple(actions[:i]) for i in range(len(actions))]
+    raise ValueError(f"unknown action orders {kind!r} (all | rotations)")
+
+
 def atomic_rules(assignments: Iterable[Tuple[Dict[str, Value], str]]) -> List[Tuple[str, str]]:
     """Per-state assignments -> one exact-match rule each (how a legacy full policy is expressed)."""
     rules = []

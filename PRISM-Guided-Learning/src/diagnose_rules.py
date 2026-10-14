@@ -15,6 +15,7 @@ from typing import Dict, List, Sequence, Tuple
 
 import yaml
 
+from core.rules import fixed_order  # noqa: F401  (re-exported for scripts)
 from results_io import sample_records
 
 Rules = List[Tuple[str, str]]
@@ -31,11 +32,6 @@ def collect(run_dirs: Sequence[Path]) -> Dict[str, Rules]:
                 rules = tuple((r["condition"], r["action"]) for r in record["final_rules"])
                 found.setdefault(rules, f"{run.parent.name}/{run.name}/{sid}")
     return {name: list(rules) for rules, name in found.items()}
-
-
-def fixed_order(rules: Rules, order: Sequence[str]) -> Rules:
-    """`rules` with each `c -> any` replaced by `c -> d` for every action d in `order`."""
-    return [(c, d) for c, a in rules for d in (order if a == "any" else [a])]
 
 
 def main(argv=None):

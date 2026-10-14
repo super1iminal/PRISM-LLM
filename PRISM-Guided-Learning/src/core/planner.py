@@ -39,7 +39,7 @@ from core.episode import Answer, Check, Episode, Kept, Member, pessimistic
 from core.prism import PrismCall, PrismError, PrismRunner
 from core.prompts import Prompts
 from core.retry import RetryPolicy
-from core.rules import ANY, RuleError, SymbolicPolicy
+from core.rules import ANY, RuleError, SymbolicPolicy, action_orders, fixed_order
 from core.scheduler import drive
 from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.training import TrainingSet
@@ -102,6 +102,8 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
         "prompt": prompt,
         "raw_outputs": [c.text for c in answer.results],
     }
+    if answer.any_order is not None:
+        record["any_order"] = answer.any_order
     if len(members) > 1:
         record["members"] = [{"instance": m.instance.id, "best": dict(v.best), "worst": dict(v.worst),
                               "reachable_situations": v.reachable_situations,
@@ -284,6 +286,10 @@ class SymbolicPlanner:
         answer = yield from self._ask(ep, prompt, attempt, mode)
         new = answer.policies or [m.verifier.empty_policy() for m in ep.members]
         policies = ([k.extended(n) for k, n in zip(kept.check.policies, new)] if mode == "extend" else new)
+        try:
+            policies = yield from self._resolve_any(ep, policies, answer)
+        except PrismError as e:
+            ep.log(f"Choosing an order for `any` failed ({str(e).splitlines()[0]}); keeping `any`")
         ep.log(f"Candidate policy ({len(policies[0].rules)} rules):\n{policies[0].listing()}")
         try:
             return (yield from self._check(ep, policies)), answer
@@ -296,6 +302,26 @@ class SymbolicPlanner:
             policies = (kept.check.policies if mode == "extend" and kept
                         else [m.verifier.empty_policy() for m in ep.members])
             return (yield from self._check(ep, policies)), answer
+
+    def _resolve_any(self, ep: Episode, policies: List[SymbolicPolicy], answer: Answer) -> Steps[List[SymbolicPolicy]]:
+        """With `rules.any_order`, the candidate's `any` rules resolved into the action order that scores best on
+        the members (each order verified without analysis; ties go to the first order); otherwise unchanged."""
+        kind = self.config.rules.any_order
+        raw = [(r.condition, r.action) for r in policies[0].rules]
+        if kind == "none" or not any(a == ANY for _, a in raw):
+            return policies
+        best = None
+        for order in action_orders(list(ep.primary.verifier.spec.actions), kind):
+            candidate = self._parse(ep, fixed_order(raw, order))
+            vs = []
+            for m, p in zip(ep.members, candidate):
+                vs.append((yield from m.verifier.verify_steps(p, analysis=False)))
+            score = Check(candidate, vs).score(ep.members)
+            if best is None or score < best[0]:
+                best = (score, order, candidate)
+        answer.any_order = list(best[1])
+        ep.log(f"`any` resolved in the order {', '.join(best[1])}")
+        return best[2]
 
     @staticmethod
     def _check(ep: Episode, policies: List[SymbolicPolicy]) -> Steps[Check]:

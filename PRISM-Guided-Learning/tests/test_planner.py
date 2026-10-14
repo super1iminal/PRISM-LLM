@@ -152,3 +152,14 @@ def test_the_exact_check_falls_back_to_gauss_seidel_then_to_the_loops_values(tin
     assert result["final_check"] == "Gauss-Seidel 1e-12"
     result, _ = solve(tiny_grid, [LEFT], 1, "prism.exact_epsilon=bad", "prism.exact_fallback_epsilon=bad")
     assert result["final_check"] == "failed" and result["final_worst"] == result["loop_worst"]
+
+
+def test_any_rules_are_resolved_into_the_best_order_on_the_members(tiny_grid):
+    extended = ["rules.extended=true", "rules.general=true"]
+    worst, _ = solve(tiny_grid, [answer(("true", "any"))], 1, *extended)
+    assert not worst["success"] and "any_order" not in worst["iterations"][0]   # left is allowed: the worst case fails
+    result, llm = solve(tiny_grid, [answer(("true", "any"))], 1, *extended, "rules.any_order=rotations")
+    record = result["iterations"][0]
+    assert result["success"] and record["any_order"][0] == "right"             # `true -> right` passes (fakes.py)
+    assert [r["action"] for r in result["final_rules"]] == record["any_order"]
+    assert "resolved into one fixed order of the actions" in llm.prompts[0]

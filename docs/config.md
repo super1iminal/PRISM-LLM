@@ -50,6 +50,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `feedback.blame` | `mass` | blame signal: `mass`, `regret` (one-step regret, no occupancy), `random` (placebo), `none` (no blame section) | S5, V1, V2 |
 | `feedback.horizon` | 100 | mass-analysis occupancy horizon in steps, or `domain` for the domain's own (UUV: the mission deadline, 30 / 70; U1 sets it) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
+| `feedback.space` | `states` | how feedback names states: `states` (their valuations) or `features` (boolean variables and, per action, the features that hold; no positions) | `haiku_ts_features` |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | catch-all ablation (single-seed runs) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
 | `prompt.generality` | `false` | say that the rules will be certified unchanged on unseen, larger instances and must not single one out | `haiku_ts_generality` (transfer search) |
@@ -65,7 +66,8 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `rules.max_enumeration` | 200,000 | state-space size up to which first-match guards are simplified | — |
 | `rules.extended` | `false` | conditions may also use the domain's instance constants and features (`constants`, `features` in `spec.yaml.j2`), and rules the action `any` (allow every action whose condition holds); see `docs/semantics.md` | `rl_*` conditions |
 | `rules.general` | `false` | only the numbers 0 and 1 in conditions, so rules must name instance values and carry over to other instances (with `extended`) | `rl_*` conditions |
-| `rules.hidden_features` | `[]` | domain features left out of the vocabulary (gridworld: `[closer]` hides the shortest-path feature) | `rl_*` conditions |
+| `rules.hidden_features` | `[]` | domain features left out of the vocabulary (gridworld: `[closer]` hides the shortest-path feature). Conditions written before gridworld's `patrol`/`early` and Pac-Man's `closer_g0`/`closer_g1` existed hide those, so their prompts are unchanged | `rl_*` conditions, `haiku_fam_split` (`[hazard]`) |
+| `rules.any_order` | `none` | `rotations` / `all`: each round, `any` rules are resolved into the action order (rotations of the declared order, or all permutations) that does best on the members; `none`: worst case over the allowed actions (`docs/semantics.md`) | `haiku_ts_order`, `haiku_fam_order` |
 | `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
 | `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
 | `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |

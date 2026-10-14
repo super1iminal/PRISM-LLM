@@ -67,6 +67,7 @@ class Answer:
     errors: List[str]                 # invalid answers (and a failed verification), in order
     results: List[LLMResult]          # one per LLM call, re-asks included
     seconds: float = 0.0              # wall time, including queueing and, in lockstep, waiting for the batch
+    any_order: Optional[List[str]] = None   # the order `any` rules were resolved in (`rules.any_order`)
 
 
 @dataclass

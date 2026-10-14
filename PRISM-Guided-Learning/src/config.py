@@ -118,6 +118,8 @@ class RulesConfig:
     extended: bool                  # instance constants, domain features and `any` rules
     general: bool                   # only the numbers 0 and 1 in conditions (with extended)
     hidden_features: List[str]      # domain features left out of the vocabulary
+    any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
+                                    # on the members each round (none: the worst case over the allowed actions)
 
 
 @dataclass
@@ -267,6 +269,7 @@ def validate(cfg: Config) -> None:
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
+        "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
         "run.scheduler": (cfg.run.scheduler, {"threads", *SCHEDULERS}),
     }
