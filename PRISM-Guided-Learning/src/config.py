@@ -75,6 +75,7 @@ class FeedbackConfig:
     top_k: int                                # hotspots / rules shown in feedback
     states_per_rule: int
     space: str                                # states (valuations) | features (feature values per action)
+    trajectory: bool                          # show a likely way to fail the worst-failing requirement
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
@@ -137,6 +138,7 @@ class RunConfig:
     scheduler: str                            # threads | lockstep (batched) | event (as results arrive); docs/scheduler.md
     train_sets: List[List[int]]               # groups of instance ids, one rule set each; [] = one per instance
     hidden_sets: List[List[int]]              # per training set, ids checked and scored but never shown; [] = none
+    pool_sets: List[List[int]]                # per training set, counterexample candidates added when they fail
 
 
 @dataclass

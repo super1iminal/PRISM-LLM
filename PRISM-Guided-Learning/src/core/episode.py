@@ -4,7 +4,7 @@ An `Episode` holds what stays fixed (its members, the answer schema, the task fa
 LLM (`Answer`) and checks the rule list on every member (`Check`); keep-best keeps the best check so far
 (`Kept`). A single instance is an episode with one member.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.analysis import MassAnalyzer
@@ -51,6 +51,8 @@ class Episode:
     log: Callable[[str], None]
     tasks: TaskFactory                # numbers the episode's LLM calls (their seeds)
     training: Dict[str, Any]          # members and variables as the prompt describes them; {} for one instance
+    pool: List[Instance] = field(default_factory=list)    # counterexample candidates not yet added (`run.pool_sets`)
+    added: List[str] = field(default_factory=list)        # ids of the pool instances that joined, in order
 
     @property
     def primary(self) -> Member:

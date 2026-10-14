@@ -16,21 +16,24 @@ class TrainingSet:
     id: str
     members: Tuple[Instance, ...]
     hidden: Tuple[Instance, ...] = ()     # checked and scored with the members, never shown to the LLM
+    pool: Tuple[Instance, ...] = ()       # once the members pass, the first of these that fails joins them
 
 
 def training_sets(instances: Sequence[Instance], groups: Sequence[Sequence[int]],
-                  hidden: Sequence[Sequence[int]] = ()) -> List[TrainingSet]:
-    """One training set per group of instance ids (dataset rows), named set0, set1, ...; `hidden[k]` (if given)
-    are set k's hidden members."""
+                  hidden: Sequence[Sequence[int]] = (), pool: Sequence[Sequence[int]] = ()) -> List[TrainingSet]:
+    """One training set per group of instance ids (dataset rows), named set0, set1, ...; `hidden[k]` and `pool[k]`
+    (if given) are set k's hidden members and its pool of counterexample candidates."""
     by_id = {inst.id: inst for inst in instances}
-    if hidden and len(hidden) != len(groups):
-        raise ValueError(f"run.hidden_sets has {len(hidden)} groups for {len(groups)} training sets")
+    for name, extra in (("hidden_sets", hidden), ("pool_sets", pool)):
+        if extra and len(extra) != len(groups):
+            raise ValueError(f"run.{name} has {len(extra)} groups for {len(groups)} training sets")
     sets = []
     for k, group in enumerate(groups):
-        extra = list(hidden[k]) if hidden else []
-        missing = [i for i in list(group) + extra if str(i) not in by_id]
+        hide, cand = (list(hidden[k]) if hidden else []), (list(pool[k]) if pool else [])
+        missing = [i for i in list(group) + hide + cand if str(i) not in by_id]
         if missing or not group:
             raise ValueError(f"training set {k} ({list(group)}): no instances with ids {missing} in the dataset"
                              if missing else f"training set {k} is empty")
-        sets.append(TrainingSet(f"set{k}", tuple(by_id[str(i)] for i in group), tuple(by_id[str(i)] for i in extra)))
+        sets.append(TrainingSet(f"set{k}", tuple(by_id[str(i)] for i in group), tuple(by_id[str(i)] for i in hide),
+                                tuple(by_id[str(i)] for i in cand)))
     return sets

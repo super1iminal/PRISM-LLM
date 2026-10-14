@@ -233,3 +233,40 @@ class MassAnalyzer:
         if total > 0:
             _normalize(blames.values(), total)
         return sorted(blames.values(), key=lambda b: -b.mass)[:self.top_k]
+
+
+@dataclass
+class TraceStep:
+    valuation: Dict                 # policy-visible variables of the state the step starts in
+    action: Optional[str]           # action label of the choice taken (None for moves the policy does not choose)
+    rule: Optional[int]             # rule deciding the state (0-based), None if uncovered or not a decision
+    probability: float              # probability of the outcome followed
+    failing: float                  # chance of failing the requirement from the state reached
+    reached: Dict                   # policy-visible variables of the state reached
+
+
+def failing_trace(verifier: PolicyVerifier, v: Verification, req: Requirement, adversarial: bool,
+                  max_steps: int = 20) -> List[TraceStep]:
+    """A likely way to fail `req` (a probability requirement): from the initial state, follow the scheduler the
+    verdict is about (the worst case's if `adversarial`, else the best case's), and at each step take the successor
+    most likely to lead to failure (its probability times the chance of failing from there). Stops once failure is
+    certain, when a state repeats, or after `max_steps`. Needs the verification's value vectors and transitions."""
+    if req.reward is not None or req.name not in v.worst_vectors or not v.result.choices:
+        return []
+    vector = np.asarray((v.worst_vectors if adversarial else v.best_vectors)[req.name], dtype=float)
+    fail = 1.0 - vector if req.maximize else vector
+    strategy = _greedy(_q_values(v.result, _signed(req, vector)), maximize=not adversarial)
+    steps, s, seen = [], v.result.initial_state, set()
+    for _ in range(max_steps):
+        if s in seen or strategy[s] < 0:
+            break
+        seen.add(s)
+        choice = v.result.choices[s][strategy[s]]
+        t, p = max(choice.successors, key=lambda tp: tp[1] * fail[tp[0]])
+        rule = v.state_rules[s] if v.state_rules and v.decisions and v.decisions[s] else None
+        steps.append(TraceStep(verifier.policy_valuation(v.result, s), choice.action, rule, float(p), float(fail[t]),
+                               verifier.policy_valuation(v.result, t)))
+        if fail[t] >= 1.0 - 1e-9:
+            break
+        s = t
+    return steps

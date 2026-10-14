@@ -61,7 +61,14 @@ def determinized_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
     return {int(sid): [tuple(r) for r in entry["rules"]] for sid, entry in data.items()}
 
 
-RULES = {"final": (final_rules, ""), "determinized": (determinized_rules, "_determinized")}
+def polished_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
+    """Source sample id -> its rules after src/polish.py's deletions (<run dir>/polished.json)."""
+    data = json.loads((run_dir / "polished.json").read_text(encoding="utf-8"))
+    return {int(sid): [tuple(r) for r in entry["rules"]] for sid, entry in data.items()}
+
+
+RULES = {"final": (final_rules, ""), "determinized": (determinized_rules, "_determinized"),
+         "polished": (polished_rules, "_polished")}
 
 
 def csv_path(run_dir: Path, dataset: str, rules: str = "final") -> Path:

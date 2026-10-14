@@ -143,3 +143,17 @@ def test_hidden_members_are_scored_but_never_shown(grids):
     assert "On 1 further instances of this problem that you are not shown" in second["prompt"]
     assert "the rules meet every requirement in the worst case on 0." in second["prompt"]
     assert result["success"] and result["members"][1]["hidden"] and "hidden" not in result["members"][0]
+
+
+@needs_prism
+def test_a_failing_pool_instance_joins_the_training_set(grids):
+    domain = load_domain("gridworld", ["obs_idx"])
+    cfg = load_config(overrides=["planner.max_rounds=2", "llm.seed=1"])
+    llm = ScriptedBackend([RIGHT, BOTH])
+    target, = training_sets(domain.load_instances(str(grids)), [[0]], pool=[[1]])
+    result = SymbolicPlanner(domain, llm, cfg).solve(target, logging.getLogger("test_training"))
+    first, second = result["iterations"]
+    assert first["worst_case_success"]                       # RIGHT solves grid 0 ...
+    assert result["counterexamples"] == ["1"]                # ... fails on grid 1, which joins the set
+    assert "### Instance 2" in second["prompt"] and [m["instance"] for m in result["members"]] == ["0", "1"]
+    assert result["success"]                                 # BOTH passes both

@@ -82,3 +82,11 @@ def test_first_allowed_takes_the_first_matching_action_of_the_first_rule_that_al
     walls = mdp.features["wall"]
     assert all(walls[i, a] for i, a in enumerate(acts) if walls[i].any())
     assert all(a == 2 for i, a in enumerate(acts) if not walls[i].any())
+
+
+def test_polish_deletes_only_conjuncts_of_plain_conjunctions():
+    from polish import candidates, conjuncts
+    assert conjuncts("a & !b & c") == ["a", "!b", "c"]
+    assert conjuncts("a & (b | c)") is None and conjuncts("a") is None
+    cands = [c for c, _ in candidates([("a & b", "up"), ("true", "down")])]
+    assert [("true", "down")] in cands and [("b", "up"), ("true", "down")] in cands and [("a", "up"), ("true", "down")] in cands

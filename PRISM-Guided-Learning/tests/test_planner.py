@@ -177,3 +177,11 @@ def test_any_rules_in_the_declared_order_or_with_the_best_order_reported(tiny_gr
     assert "took the first action it allows in the order right" in second["prompt"]
     assert "1 of 1 instance would meet every requirement" in second["prompt"]
     assert reported["success"]
+
+
+def test_a_likely_failing_trace_is_shown_when_asked(tiny_grid):
+    result, _ = solve(tiny_grid, [LEFT, LEFT], 2, "feedback.trajectory=true")
+    prompt = result["iterations"][1]["prompt"]
+    assert "## A likely way to fail `goal1`" in prompt and "1. In x=0 & y=0" in prompt and "rule 1 chose left" in prompt
+    plain, _ = solve(tiny_grid, [LEFT, LEFT], 2)
+    assert "A likely way to fail" not in plain["iterations"][1]["prompt"]

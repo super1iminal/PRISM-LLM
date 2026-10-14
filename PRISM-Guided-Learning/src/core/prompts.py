@@ -5,6 +5,7 @@ this module only builds them.
 from typing import Any, Dict, List, Optional
 
 from config import Config
+from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
 from core.episode import Episode, Kept, Member
 from core.rules import SymbolicPolicy, Vocabulary
@@ -151,7 +152,7 @@ class Prompts:
         } for b in (member.analyzer.rule_blame(v, blamed) if kind != "none" else [])]
         return self.render(ep, "refine.md.j2", member, **results, failing=[r.name for r in blamed], blame=blame,
                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
-                           show_blame=kind != "none", blame_kind=kind)
+                           show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, blamed, policy))
 
     def extend(self, ep: Episode, member: Member, v: Verification, failing_worst: List[Requirement],
                results: Dict[str, Any]) -> str:
@@ -161,4 +162,23 @@ class Prompts:
         return self.render(ep, "extend.md.j2", member, **results, failing=[r.name for r in failing_worst],
                            hotspots=self._merged(member, hotspots),
                            with_cost=any(r.reward is not None for r in failing_worst),
-                           show_blame=kind != "none", blame_kind=kind)
+                           show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, failing_worst))
+
+    def _trace(self, member: Member, v: Verification, failing_reqs: List[Requirement],
+               policy: Optional[SymbolicPolicy] = None) -> Dict[str, Any]:
+        """With `feedback.trajectory`, a likely way to fail the failing requirement with the largest shortfall:
+        under the best case's choices if even the best case fails it, else under the worst case's."""
+        if not self.config.feedback.trajectory or not failing_reqs:
+            return {}
+        req = max(failing_reqs, key=lambda r: r.shortfall(v.worst[r.name]))
+        adversarial = req.satisfied(v.best[req.name])
+        steps = failing_trace(member.verifier, v, req, adversarial)
+        if not steps:
+            return {}
+        rules = (policy or member.verifier.empty_policy()).rules
+        return {"trace": {"requirement": req.name, "adversarial": adversarial, "steps": [{
+            "state": self._state(member, s.valuation),
+            "move": (f"rule {s.rule + 1} chose {s.action}" if s.rule is not None and s.rule < len(rules)
+                     else f"{s.action} (no rule decides here)" if s.action else "a move the policy does not choose"),
+            "p": s.probability, "failing": s.failing} for s in steps],
+            "end": self._state(member, steps[-1].reached), "certain": steps[-1].failing >= 1.0 - 1e-9}}

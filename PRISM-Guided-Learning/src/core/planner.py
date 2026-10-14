@@ -200,6 +200,10 @@ class SymbolicPlanner:
             iterations.append(record)
 
             done = kept.check.passes(members)
+            if done and ep.pool:
+                grown = yield from self._counterexample(ep, kept, optima)
+                if grown is not None:
+                    kept, done = grown, False
             if done:
                 ep.log(f"Success after {attempt} attempts")
             elif attempt < max_rounds:
@@ -242,6 +246,7 @@ class SymbolicPlanner:
             "optimum": pessimistic(optima, reqs),
             "optimum_time": optimum_seconds,
             "iterations": iterations,
+            **({"counterexamples": list(ep.added)} if ep.added else {}),
         }
         if len(members) > 1:
             result["members"] = [{"instance": m.instance.id, "success": not failing(m.requirements, v.worst),
@@ -254,23 +259,54 @@ class SymbolicPlanner:
         cfg = self.config
         instances = target.members if isinstance(target, TrainingSet) else (target,)
         hidden = target.hidden if isinstance(target, TrainingSet) else ()
-        members = []
-        for k, (instance, is_hidden) in enumerate([(i, False) for i in instances] + [(i, True) for i in hidden], start=1):
-            verifier = PolicyVerifier(self.domain, instance, cfg, self.runner)
-            analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
-                                    cfg.feedback.states_per_rule, method=cfg.feedback.blame,
-                                    seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
-            vocabulary = verifier.spec.vocabulary(cfg.rules)
-            label = f"hidden instance {k - len(instances)}" if is_hidden else f"instance {k}"
-            members.append(Member(label, instance, verifier, analyzer, vocabulary,
-                                  self.prompts.context(instance, verifier.spec, vocabulary), hidden=is_hidden))
+        members = [self._member(instance, f"instance {k}") for k, instance in enumerate(instances, start=1)]
+        members += [self._member(instance, f"hidden instance {k}", hidden=True) for k, instance in enumerate(hidden, 1)]
         self._check_compatible(members)
         primary = members[0]
         shown = [m for m in members if not m.hidden]
         answers = list(primary.verifier.spec.actions) + ([ANY] if primary.vocabulary.allow_any else [])
         schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars, cfg.prompt.strategy_first)
         return Episode(members, schema, log, TaskFactory(cfg.llm, target.id),
-                       self.prompts.training_context(shown) if len(shown) > 1 else {})
+                       self.prompts.training_context(shown) if len(shown) > 1 else {},
+                       pool=list(target.pool) if isinstance(target, TrainingSet) else [])
+
+    def _member(self, instance: Instance, label: str, hidden: bool = False) -> Member:
+        """An instance with its verifier, mass analyzer, vocabulary and prompt context."""
+        cfg = self.config
+        verifier = PolicyVerifier(self.domain, instance, cfg, self.runner)
+        analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
+                                cfg.feedback.states_per_rule, method=cfg.feedback.blame,
+                                seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
+        vocabulary = verifier.spec.vocabulary(cfg.rules)
+        return Member(label, instance, verifier, analyzer, vocabulary,
+                      self.prompts.context(instance, verifier.spec, vocabulary), hidden=hidden)
+
+    def _counterexample(self, ep: Episode, kept: Kept, optima: List[Dict[str, float]]) -> Steps[Optional[Kept]]:
+        """Once the members pass, check the kept rules on the pool (`run.pool_sets`) in order; the first instance
+        where they fail joins the training set (shown to the LLM from the next round on). Returns the kept rule set
+        re-checked with the new member, or None if every pool instance passes."""
+        raw = [(r.condition, r.action) for r in kept.check.policy.rules]
+        for instance in list(ep.pool):
+            member = self._member(instance, f"instance {sum(not m.hidden for m in ep.members) + 1}")
+            self._check_compatible([ep.primary, member])
+            policy = member.verifier.spec.policy(raw, member.vocabulary)
+            v = yield from member.verifier.verify_steps(policy)
+            if not failing(member.requirements, v.worst):
+                continue
+            ep.pool.remove(instance)
+            optimum, _, _ = yield from member.verifier.optimum_steps()
+            shown = [m for m in ep.members if not m.hidden]
+            optima.insert(len(shown), optimum)                 # optima follow the members' order
+            ep.members.insert(len(shown), member)              # shown members stay before the hidden ones
+            ep.training = self.prompts.training_context(shown + [member])
+            policies, vs = list(kept.check.policies), list(kept.check.vs)
+            policies.insert(len(shown), policy)
+            vs.insert(len(shown), v)
+            check = Check(policies, vs, kept.check.any_report)
+            ep.log(f"Counterexample: the rules fail on instance {instance.id}, which joins the training set")
+            ep.added.append(instance.id)
+            return Kept(check, check.score(ep.members), check.focus(ep.members))
+        return None
 
     @staticmethod
     def _check_compatible(members: List[Member]) -> None:
