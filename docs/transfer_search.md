@@ -1,19 +1,32 @@
-# Transfer search: finding a foundation for rules that generalize
+# Transfer search: beating the related work that acts over families
 
 Brief for the next working session (written Oct 13).
 
-> **Main instruction (Asher): get this working, however long it takes.** Keep iterating until Haiku solves multi-grid training sets and its frozen rules certify on held-out grids. Time and the number of Haiku runs are not constraints; stopping early is. Report progress as you go, but do not stop to ask whether to continue.
+> **Main goal (Asher): beat the related work that acts over families of MDPs**, with LLM-written rules generalized over many examples and certified on every instance we check, held-out and larger ones included. Get it working, however long it takes. Only stop if a big decision needs to be made or there is an irresolvable issue; otherwise keep iterating and report progress as you go.
 
-Read `DECISIONS.md` (top: story and paper target; "Rule language", "Gridworld transfer", "Multi-instance training") and `docs/semantics.md` ("Training sets") first.
+Read `DECISIONS.md` (top: story and paper target; "Positioning checks", "Rule language", "Gridworld transfer", "Multi-instance training"), `docs/positioning.md` (claims and their nearest work) and `docs/semantics.md` ("Training sets") first. Related work: `docs/related_work_survey.md`.
 
-## Goal
+## The comparison to win
+
+Our position is an intersection (`docs/positioning.md`): LLM-written rules, a stochastic model with several thresholds, exact certification on every instance checked, quantitative feedback. "Nobody combined them" only persuades with an experiment in which the combination does what the neighbours cannot. The neighbours that act over families:
+- **1–2–3–Go!** (Azeem et al., VMCAI 2025; arXiv:2410.18293; artifact github.com/muqsit-azeem/dtstrat-123go-artifact): decision trees learned from the optimal policies of small instances, value computed exactly on each larger instance. One reachability objective; predicates over raw state variables, so instance parameters (goal positions, the horizon) cannot appear in them. Near-optimal on 13 of 21 QVBS model–property pairs; fails on csma, Pac-Man and Mars rovers. The planned head-to-head: **threshold satisfaction per instance** (not optimality, its target) on held-out and larger instances, on a family where the thresholds' targets move with the instance (our gridworld: goal positions are constants) and on QVBS families it reports. Pac-Man so far: at horizon 25 our frozen Sonnet rules crash with 0.763 (worst case) against its 0.869; neither is certified there (`DECISIONS.md`, "Pac-Man").
+- **Families of MDPs**: Policies Grow on Trees (Andriushchenko et al., ATVA 2024; artifact doi 10.5281/zenodo.12569976) and SMPMC (AAAI 2026): exact robust policies over finite families that share one state space. They apply to same-size subfamilies of our grids, not across sizes.
+- **Generalized planning with LLMs** (Silver et al. AAAI 2024; Stein et al. ICAPS 2026; Prompt, Prove, Patch, RIPL 2026): deterministic domains, generalization tested rather than certified. Fern, Yoon and Givan (JAIR 2006): decision lists for stochastic planning, judged by simulation.
+- Baselines from the Oct 8 plan: the per-instance PRISM optimum (ceiling) and a strategy synthesized on one instance applied to the others; the hand-written template (`domains/gridworld/data/template_policy.py`).
+
+Getting Haiku's rules to generalize over many grids (below) is the means to this comparison.
+
+## How to work (Asher)
+
+- Get it working, however long it takes. Only stop if a big decision needs to be made or there is an irresolvable issue.
+- Import repositories and datasets and download files as needed (the 1–2–3–Go! artifact, QVBS models, PAYNT/Storm for the families-of-MDPs tools). Keep third-party code in its own directory (e.g. `third_party/<name>/`) with its source, version and license recorded, never mixed into `core/`.
+- Write clean code and organize solvers and planners well: each baseline or external solver behind one small interface in its own module (e.g. `src/baselines/`), run from configs like everything else, its results in the same per-instance format as ours so `transfer.py`-style tables and figures cover all methods.
+- Many cheap Haiku runs **in parallel**; iterate quickly ("gradient descent" over ideas), keep what moves the test-set numbers, combine it, repeat. No limit on Haiku runs. Ask before any Sonnet run (only once Haiku shows something works).
+- The LLM-written vocabulary (Nicholas's `rule-language-generation`) is **parked**: the domain provides its vocabulary, and two moving parts at once would be too confusing.
+
+## Goal for the rules
 
 Find a combination of changes under which **Haiku 5.5 solves multi-grid training sets and its frozen rules certify on held-out grids**. Our "why LLMs" claim is generalized rules over many examples. First find any combination that works, even if it leans on hard-coding or on similar examples; then trim it back and build up from there.
-
-How to work:
-- Many cheap Haiku runs **in parallel**; iterate quickly ("gradient descent" over ideas), keep what moves the test-set numbers, combine it, repeat.
-- No limit on Haiku runs. Ask before any Sonnet run (only once Haiku shows something works).
-- The LLM-written vocabulary (Nicholas's `rule-language-generation`) is **parked**: the domain provides its vocabulary, and two moving parts at once would be too confusing.
 
 ## Where things stand
 
