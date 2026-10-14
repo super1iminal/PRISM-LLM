@@ -252,6 +252,7 @@ def _resolve_scheduler(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def validate(cfg: Config) -> None:
     from core.backends import BACKENDS   # local imports: core depends on config, not the reverse
+    from core.scheduler import SCHEDULERS
     from core.retry import RetryPolicy
     RetryPolicy.parse(cfg.planner.retry)
     RetryPolicy.parse(cfg.legacy.retry)
@@ -261,7 +262,7 @@ def validate(cfg: Config) -> None:
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
-        "run.scheduler": (cfg.run.scheduler, {"threads", "lockstep", "event"}),
+        "run.scheduler": (cfg.run.scheduler, {"threads", *SCHEDULERS}),
     }
     for key, (value, allowed) in checks.items():
         if value not in allowed:

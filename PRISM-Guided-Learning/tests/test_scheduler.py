@@ -84,8 +84,7 @@ def single_threaded(monkeypatch):
     """Make any PRISM call run in place fail, and return the set of threads that verify policies."""
     def blocked(call):
         raise AssertionError("a PRISM call ran in place")
-    monkeypatch.setattr(core.prism, "run_call", blocked)
-    monkeypatch.setattr(core.scheduler, "run_call", blocked)
+    monkeypatch.setattr(core.prism, "run_call", blocked)   # drive() and run_now() reach it through core.prism
     threads, original = set(), PolicyVerifier._assign_rules
 
     def assign(self, v, policy):

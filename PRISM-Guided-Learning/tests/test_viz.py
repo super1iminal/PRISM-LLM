@@ -38,13 +38,13 @@ def test_style_without_ylabel_or_pad_keeps_matplotlib_defaults():
 
 
 @pytest.mark.parametrize("module", ["ablation_summary", "plot_ablation_grid", "plot_budget", "plot_comparison",
-                                    "plot_domain", "plot_runs", "plot_uuv_summary"])
+                                    "plot_domain", "plot_runs", "plot_transfer", "plot_uuv_summary"])
 def test_figure_scripts_import(module):
     importlib.import_module(module)
 
 
 def test_holm_matches_the_step_down_rule():
-    from ablation_summary import holm
+    from stats import holm
     p = np.array([0.04, 0.01, 0.03, 0.20])
     # sorted 0.01, 0.03, 0.04, 0.20 -> x4, x3, x2, x1, each at least the previous: 0.04, 0.09, 0.09, 0.20
     assert np.allclose(holm(p), [0.09, 0.04, 0.09, 0.20])
@@ -61,3 +61,20 @@ def test_at_budget_takes_the_last_round_that_fits_and_at_least_the_first():
     assert rows.met.to_dict() == {0: 5, 1: 4}            # sample 1's first round costs 500 > 250, kept anyway
     per_grid = at_budget(curve, pd.Series({0: 1000, 1: 600}), ("seed", "sample_id")).set_index("sample_id")
     assert per_grid.met.to_dict() == {0: 7, 1: 4}        # all rounds of sample 0 fit; sample 1's second doesn't
+
+
+def test_paired_compares_per_grid_means_of_the_runs():
+    import pandas as pd
+    from stats import paired
+    rows = [("a", 1, 0, 5), ("a", 2, 0, 7), ("a", 1, 1, 4), ("a", 1, 2, 6), ("a", 1, 3, 5),
+            ("b", 1, 0, 4), ("b", 1, 1, 3), ("b", 1, 2, 4), ("b", 1, 3, 4)]
+    data = pd.DataFrame(rows, columns=["condition", "seed", "sample_id", "met"])
+    test = paired(data, "a", "b")
+    # grid 0: (5 + 7) / 2 - 4 = 2; grids 1-3: 1, 2, 1
+    assert test["diff"] == 1.5 and test["n"] == 4 and test["lo"] <= 1.5 <= test["hi"] and 0 < test["p"] <= 1
+    assert paired(data[data.sample_id < 2], "a", "b") is None   # fewer than 3 grids in common
+
+
+def test_long_condition_names_wrap_at_underscores():
+    from ablation_summary import wrap
+    assert wrap(["B2", "haiku_mi_grid_large_closer"]) == ["B2", "haiku_mi_grid_\nlarge_closer"]

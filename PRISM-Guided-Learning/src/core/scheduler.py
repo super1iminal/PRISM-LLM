@@ -16,7 +16,6 @@ runs in parallel while no planner code ever runs in two threads at once (docs/sc
 Finished instances free their slot for the next one.
 """
 import json
-import subprocess
 import traceback
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, wait
@@ -25,7 +24,7 @@ from time import sleep, time
 from typing import Any, Callable, Dict, Generator, IO, Iterable, List, Optional, Sequence, Union
 
 from core.backends.base import LLMBackend
-from core.prism import PrismCall, PrismProcess, run_call
+from core.prism import PrismCall, PrismProcess, run_calls, send_output
 from core.tasks import LLMError, LLMResult, LLMTask
 
 POLL_SECONDS = 0.01   # how often a waiting scheduler checks its PRISM processes
@@ -35,24 +34,11 @@ def drive(steps: Generator, answer: Callable[[LLMTask], LLMResult]) -> Any:
     """Run one generator to the end, answering each LLM task and running each PRISM call as it comes;
     return its return value."""
     try:
-        item = run_prism_here(steps, next(steps))
+        item = run_calls(steps, next(steps))
         while True:
-            item = run_prism_here(steps, steps.send(answer(item)))
+            item = run_calls(steps, steps.send(answer(item)))
     except StopIteration as done:
         return done.value
-
-
-def run_prism_here(steps: Generator, item: Any) -> Any:
-    """Run the generator's PRISM calls in this thread, one at a time, until it yields something else
-    (returned) or returns (StopIteration propagates)."""
-    while isinstance(item, PrismCall):
-        try:
-            output = run_call(item)
-        except subprocess.TimeoutExpired as e:
-            item = steps.throw(e)
-        else:
-            item = steps.send(output)
-    return item
 
 
 def error_message(e: Exception) -> str:
@@ -86,12 +72,7 @@ class _Slot:
 
     def resume_with_prism(self, process: PrismProcess) -> None:
         """Send the finished process's output, or throw its timeout, into the instance."""
-        try:
-            output = process.output()
-        except subprocess.TimeoutExpired as e:
-            self.advance(lambda: self.steps.throw(e))
-        else:
-            self.advance(lambda: self.steps.send(output))
+        self.advance(lambda: send_output(self.steps, process.output))
 
 
 def _wait_any(processes: Iterable[PrismProcess], futures: Iterable[Future] = ()) -> None:
@@ -215,6 +196,9 @@ class LockstepScheduler(_Scheduler):
         self.batches += 1
         return replies
 
+    def summary(self) -> str:
+        return f"Lockstep: {self.batches} batches of up to {self.slots} tasks, {self.prism_calls} PRISM calls"
+
 
 class EventScheduler(_Scheduler):
     """Solve instances as their results arrive: an instance moves on as soon as its own LLM result or
@@ -254,6 +238,10 @@ class EventScheduler(_Scheduler):
                     slot.pending.kill()
         return results
 
+    def summary(self) -> str:
+        return (f"Event loop: {self.llm_tasks} LLM tasks and {self.prism_calls} PRISM calls, up to {self.slots} "
+                f"instances at once")
+
     def _dispatch(self, slot: _Slot) -> None:
         """Start what the instance waits for."""
         if isinstance(slot.task, LLMTask):
@@ -277,3 +265,7 @@ class EventScheduler(_Scheduler):
         self._log("seq", self.llm_tasks, slot.task, reply)
         self.llm_tasks += 1
         slot.advance(lambda: slot.steps.send(reply))
+
+
+# `run.scheduler` names of the single-threaded schedulers (`threads` is `run_symbolic.solve_threaded`)
+SCHEDULERS = {"lockstep": LockstepScheduler, "event": EventScheduler}

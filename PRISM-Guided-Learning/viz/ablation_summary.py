@@ -28,6 +28,7 @@ from core.domain import load_domain  # noqa: E402
 from plot_budget import at_budget, legacy_curve, symbolic_curve, with_cost  # noqa: E402
 from results_io import LEGACY_RESULTS as LEGACY_FILE, SYMBOLIC_RESULTS as SYMBOLIC_FILE, run_facts  # noqa: E402
 from settings import RESULTS_PATH  # noqa: E402
+from stats import holm, paired  # noqa: E402
 from theme import FAMILY_COLORS, INK, INK_2, GRID, SURFACE, style  # noqa: E402
 
 LINE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -132,30 +133,6 @@ def finished_runs(root: Path, conditions):
             else:
                 pending.append(f"{condition}/{run_dir.name}")
     return runs, pending
-
-
-def paired(data: pd.DataFrame, condition: str, reference: str, col: str = "met", n_perm: int = 20000):
-    """Mean per-grid difference (seeds averaged), 95% bootstrap CI and sign-flip permutation p-value."""
-    a = data[data.condition == condition].groupby("sample_id")[col].mean()
-    b = data[data.condition == reference].groupby("sample_id")[col].mean()
-    d = (a - b).dropna().to_numpy()
-    if len(d) < 3:
-        return None
-    rng = np.random.default_rng(0)
-    boot = rng.choice(d, size=(n_perm, len(d))).mean(axis=1)
-    flips = rng.choice([-1, 1], size=(n_perm, len(d)))
-    p = float(((np.abs((flips * d).mean(axis=1)) >= abs(d.mean()) - 1e-12).sum() + 1) / (n_perm + 1))
-    return {"diff": float(d.mean()), "lo": float(np.quantile(boot, 0.025)), "hi": float(np.quantile(boot, 0.975)),
-            "p": p, "n": len(d)}
-
-
-def holm(p: np.ndarray) -> np.ndarray:
-    """Holm-adjusted p-values (step-down; controls the chance of any false positive among the comparisons)."""
-    adjusted, running = np.empty(len(p)), 0.0
-    for rank, i in enumerate(np.argsort(p)):
-        running = max(running, min(1.0, (len(p) - rank) * p[i]))
-        adjusted[i] = running
-    return adjusted
 
 
 def planned_table(curves: pd.DataFrame, cfg: PlotConfig) -> pd.DataFrame:

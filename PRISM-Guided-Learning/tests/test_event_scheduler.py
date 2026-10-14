@@ -128,8 +128,7 @@ def test_no_prism_call_runs_in_the_scheduler_thread(kind, monkeypatch):
     """PRISM calls start as background processes; nothing waits on subprocess.run."""
     def blocked(call):
         raise AssertionError("a PRISM call ran in place")
-    monkeypatch.setattr(core.prism, "run_call", blocked)
-    monkeypatch.setattr(core.scheduler, "run_call", blocked)
+    monkeypatch.setattr(core.prism, "run_call", blocked)   # drive() and run_now() reach it through core.prism
     results = solve_with(kind, [Toy("a"), Toy("b")], FakeBackend(echo), slots=2)
     assert all(r["success"] for r in results.values())
 
@@ -237,3 +236,14 @@ def test_submit_runs_execute_off_the_calling_thread():
     assert callers != [threading.get_ident()]
     backend.close()
     assert backend._submit_pool is None
+
+
+@pytest.mark.parametrize("kind", SCHEDULERS)
+def test_each_scheduler_summarizes_its_run_and_is_chosen_by_name(kind):
+    scheduler = kind(toy_steps, FakeBackend(lambda task: "ok"), 2, lambda i: LOG)
+    scheduler.run([Toy(f"g{i}") for i in range(3)])
+    if kind is LockstepScheduler:
+        assert scheduler.summary() == f"Lockstep: {scheduler.batches} batches of up to 2 tasks, 6 PRISM calls"
+    else:
+        assert scheduler.summary() == "Event loop: 6 LLM tasks and 6 PRISM calls, up to 2 instances at once"
+    assert core.scheduler.SCHEDULERS == {"lockstep": LockstepScheduler, "event": EventScheduler}

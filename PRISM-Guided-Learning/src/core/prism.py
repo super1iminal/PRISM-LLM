@@ -9,7 +9,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Dict, Generator, List, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple, TypeVar
 
 from config import PrismConfig
 from settings import get_prism_path
@@ -260,19 +260,31 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
 
 
+def send_output(steps: Generator, output_of: Callable[[], str]) -> Any:
+    """Hand a generator waiting on a PRISM call the call's output (`output_of()`), or throw its
+    `subprocess.TimeoutExpired` into it; return what the generator yields next."""
+    try:
+        output = output_of()
+    except subprocess.TimeoutExpired as e:
+        return steps.throw(e)
+    return steps.send(output)
+
+
+def run_calls(steps: Generator, item: Any) -> Any:
+    """Run the generator's PRISM calls here, one at a time, starting from `item` (what it yielded last), until it
+    yields something else (returned) or returns (StopIteration propagates)."""
+    while isinstance(item, PrismCall):
+        item = send_output(steps, lambda call=item: run_call(call))
+    return item
+
+
 def run_now(steps: PrismSteps[T]) -> T:
     """Drive a generator that only yields `PrismCall`s, running each with `run_call`; return its value."""
     try:
-        call = next(steps)
-        while True:
-            try:
-                output = run_call(call)
-            except subprocess.TimeoutExpired as e:
-                call = steps.throw(e)
-            else:
-                call = steps.send(output)
+        item = run_calls(steps, next(steps))
     except StopIteration as done:
         return done.value
+    raise TypeError(f"expected only PRISM calls, got {type(item).__name__}")
 
 
 def _text_encoding() -> str:

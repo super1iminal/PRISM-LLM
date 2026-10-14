@@ -1,4 +1,4 @@
-# Rule language on Pac-Man (Haiku 5.5) (auto-generated 2026-10-08 08:01)
+# Rule language on Pac-Man (Haiku 5.5) (auto-generated 2026-10-13 22:40)
 
 Pac-Man (QVBS), horizons 8 to 16, crash probability <= 0.56 (optimum 0.5511), anthropic/claude-haiku-5.5, thinking on, restart on slow progress. One unseeded run per condition, so the comparison is exploratory. "Requirements met" is 0 or 1 here.
 
@@ -29,10 +29,10 @@ Regenerate: `python viz/ablation_summary.py configs/plot/rule_language_pacman.ya
 
 ## Costs (mean per grid)
 
-| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | spend (USD at Haiku 5.5 prices) |
-|---|---|---|---|---|---|
-| haiku_pacman | 8.8k | 6.4k | 5 | 0.7 | 0.00407 |
-| haiku_rl_pacman | 13.4k | 5.8k | 4 | 0.8 | 0.00425 |
+| cond | input tokens | output tokens | PRISM time (s) | wall time (min) | rules (final policy) | spend (USD at Haiku 5.5 prices) |
+|---|---|---|---|---|---|---|
+| haiku_pacman | 8.8k | 6.4k | 5 | 0.7 | 6.2 | 0.00407 |
+| haiku_rl_pacman | 13.4k | 5.8k | 4 | 0.8 | 5.6 | 0.00425 |
 
 ## Requirements met after k rounds
 
