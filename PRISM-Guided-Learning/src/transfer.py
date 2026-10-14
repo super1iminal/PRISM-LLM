@@ -39,6 +39,17 @@ class TransferConfig:
     """configs/transfer/default.yaml documents each key."""
     workers: int
     exact_near: float
+    sealed: Dict[str, str]          # dataset file name -> its sealed test target ids ("*": all)
+
+
+def guard_sealed(dataset: str, ids: List[int], unseal: bool = False) -> None:
+    """Refuse to certify sealed test targets (configs/transfer/default.yaml, `sealed`) unless `unseal`: the test set
+    stays unread until Asher asks for the test pass."""
+    spec = load_file(DEFAULT_CONFIG, TransferConfig).sealed.get(Path(dataset).name)
+    hit = [] if spec is None else (list(ids) if spec == "*" else sorted(set(ids) & set(parse_ids(spec))))
+    if hit and not unseal:
+        raise SystemExit(f"refusing to check sealed test targets of {dataset} ({len(hit)}, e.g. {hit[:3]}); "
+                         f"pass --unseal only for the test pass Asher asked for")
 
 
 def training_instances(run_dir: Path) -> Dict[int, List[int]]:
@@ -137,6 +148,7 @@ def main(argv=None):
                              "open (core.rules.open_ties, *_open.csv: certified however ties are broken)")
     parser.add_argument("--targets", default=None,
                         help='Only these target ids, e.g. "12-19" (rows for other targets in an existing CSV are kept)')
+    parser.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
     args = parser.parse_args(argv)
     settings = load_file(args.config, TransferConfig,
                          args.set + ([f"workers={args.workers}"] if args.workers is not None else []))
@@ -148,6 +160,7 @@ def main(argv=None):
     if args.targets:
         wanted = set(parse_ids(args.targets))
         targets = [t for t in targets if int(t.id) in wanted]
+    guard_sealed(dataset, [int(t.id) for t in targets], args.unseal)
     sources = RULES[args.rules][0](args.run_dir)
     if args.rules == "open":      # ties between the actions a rule allows left open: certified for every tie-break
         actions = list(domain.spec(targets[0]).actions)

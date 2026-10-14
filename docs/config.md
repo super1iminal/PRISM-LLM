@@ -8,7 +8,7 @@ Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run 
 | `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides; `--unseeded N` runs N repeats without a seed instead) |
 | `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
 | `experiments/` | `run_experiment.py` | one file per research-question experiment (`rq1_comparison.yaml`, `rq2_*.yaml`) and `benchmarks.yaml`; keys and the run store in `docs/experiments.md` |
-| `transfer/` | `transfer.py` | `default.yaml`: `workers` (target instances checked in parallel; `--workers` overrides), `exact_near` (re-check with the exact solvers when a worst case is this close to its threshold) |
+| `transfer/` | `transfer.py` | `default.yaml`: `workers` (target instances checked in parallel; `--workers` overrides), `exact_near` (re-check with the exact solvers when a worst case is this close to its threshold), `sealed` (dataset -> sealed test target ids; `transfer.py` and `run_baseline.py` refuse them without `--unseal`) |
 | `baselines/` | `run_baseline.py` | one file per baseline run (method, run condition for the rule language, dataset, training and target ids, method parameters); keys in `baselines/README.md` |
 | `plot/` | `viz/` scripts, `compare.py` | one file per figure or report (no default): `script:` names the script it is for, then its runs, labels, title and output. Run `python viz/<script>.py configs/plot/<figure>.yaml` |
 

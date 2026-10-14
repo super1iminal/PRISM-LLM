@@ -23,7 +23,7 @@ from core.domain import load_domain
 from core.prism import PrismRunner
 from core.rules import open_ties
 from settings import RESULTS_PATH
-from transfer import certify, merge, parse_ids
+from transfer import certify, guard_sealed, merge, parse_ids
 
 BASELINES_PATH = RESULTS_PATH / "baselines"
 
@@ -42,10 +42,12 @@ class BaselineConfig:
     params: Dict[str, Any]
 
 
-def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH, rules: str = "final") -> pd.DataFrame:
+def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH, rules: str = "final",
+        unseal: bool = False) -> pd.DataFrame:
     """Fit, certify and write the results of the baseline in `config_path` (`rules`: final, or open: with the
     action orders of its lists left open); returns them."""
     settings = load_file(config_path, BaselineConfig, overrides)
+    guard_sealed(settings.target_dataset or settings.dataset, parse_ids(settings.targets), unseal)
     cfg = load_config(settings.condition)
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = {int(i.id): i for i in domain.load_instances(settings.dataset)}
@@ -80,8 +82,9 @@ def main(argv=None):
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     parser.add_argument("--rules", choices=["final", "open"], default="final",
                         help="open: certify the lists with their action orders left open (*_open.csv)")
+    parser.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
     args = parser.parse_args(argv)
-    df = run(args.config, args.set, rules=args.rules)
+    df = run(args.config, args.set, rules=args.rules, unseal=args.unseal)
     certified = df.get("certified", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     per_source = df.assign(certified=certified)[~df.trained].groupby("source").certified.sum()
     print(f"held-out targets certified per source ({df[~df.trained].target.nunique()} held-out targets):")

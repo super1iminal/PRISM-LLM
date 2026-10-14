@@ -237,23 +237,23 @@ class Experiment:
 
 
 def jobs(experiments: List["Experiment"], run: bool, check: bool, baselines: bool) -> List[Callable[[int], str]]:
-    """The jobs of several experiments, each taking the number of transfer workers: checks of existing runs (with
-    `check` or `run`), launches of missing repeats (`run`) and baseline fits (`baselines`). A configuration that
-    several experiments need is launched once, for the largest number of missing repeats."""
-    out, seen, launches = [], set(), {}
+    """The jobs of several experiments, each taking the number of transfer workers, in the order they should start:
+    launches of missing repeats (`run`; the longest jobs, each also checks its run), then checks of existing runs
+    (with `check` or `run`), then baseline fits (`baselines`). A configuration that several experiments need is
+    launched once, for the largest number of missing repeats."""
+    checks, extra, seen, launches = [], [], set(), {}
     for exp in experiments:
         for u in exp.units:
             for r in u.runs if (check or run) else []:
                 if (r, u.bench.targets) not in seen:
                     seen.add((r, u.bench.targets))
-                    out.append(lambda w, e=exp, r=r, u=u: e.check(r, u, w))
+                    checks.append(lambda w, e=exp, r=r, u=u: e.check(r, u, w))
             key = fingerprint(u.cfg)
             if run and u.missing and (key not in launches or u.missing > launches[key][1].missing):
                 launches[key] = (exp, u)
-        out += exp.extra_jobs() if baselines else []
-    for exp, u in launches.values():
-        out += [lambda w, e=exp, d=d, u=u: e.launch(d, u, w) for d in exp._new_dirs(u)]
-    return out
+        extra += exp.extra_jobs() if baselines else []
+    out = [lambda w, e=exp, d=d, u=u: e.launch(d, u, w) for exp, u in launches.values() for d in exp._new_dirs(u)]
+    return out + checks + extra
 
 
 def transfer_done(run_dir: Path, dataset: str, targets: List[int], rules: str = "final") -> bool:
