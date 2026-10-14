@@ -4,7 +4,8 @@ Usage (from PRISM-Guided-Learning/):
     python src/run_baseline.py configs/baselines/<name>.yaml [--set key=value ...]
 Settings: the baseline config (BaselineConfig below; configs/baselines/README.md documents each key). Writes
 out/results/baselines/<name>/transfer_<dataset stem>.csv in src/transfer.py's format (one row per source policy and
-target, `trained` marking the training instances) plus `method`, and prints certified targets per source.
+target, `trained` marking the training instances) plus `method`, and prints certified targets per source. Rows
+of an existing CSV for targets this run does not check are kept.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +20,7 @@ from config import load_config, load_file
 from core.domain import load_domain
 from core.prism import PrismRunner
 from settings import RESULTS_PATH
-from transfer import certify, parse_ids
+from transfer import certify, merge, parse_ids
 
 BASELINES_PATH = RESULTS_PATH / "baselines"
 
@@ -61,7 +62,7 @@ def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH) -> pd.
     df["method"] = settings.method
     out = out_root / config_path.stem / f"transfer_{Path(target_dataset).stem}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, index=False)
+    merge(df, out).sort_values(["source", "target"], key=lambda c: c.astype(str)).to_csv(out, index=False)
     return df
 
 
