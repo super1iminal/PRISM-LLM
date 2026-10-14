@@ -15,16 +15,22 @@ from core.domain import Instance
 class TrainingSet:
     id: str
     members: Tuple[Instance, ...]
+    hidden: Tuple[Instance, ...] = ()     # checked and scored with the members, never shown to the LLM
 
 
-def training_sets(instances: Sequence[Instance], groups: Sequence[Sequence[int]]) -> List[TrainingSet]:
-    """One training set per group of instance ids (dataset rows), named set0, set1, ..."""
+def training_sets(instances: Sequence[Instance], groups: Sequence[Sequence[int]],
+                  hidden: Sequence[Sequence[int]] = ()) -> List[TrainingSet]:
+    """One training set per group of instance ids (dataset rows), named set0, set1, ...; `hidden[k]` (if given)
+    are set k's hidden members."""
     by_id = {inst.id: inst for inst in instances}
+    if hidden and len(hidden) != len(groups):
+        raise ValueError(f"run.hidden_sets has {len(hidden)} groups for {len(groups)} training sets")
     sets = []
     for k, group in enumerate(groups):
-        missing = [i for i in group if str(i) not in by_id]
+        extra = list(hidden[k]) if hidden else []
+        missing = [i for i in list(group) + extra if str(i) not in by_id]
         if missing or not group:
             raise ValueError(f"training set {k} ({list(group)}): no instances with ids {missing} in the dataset"
                              if missing else f"training set {k} is empty")
-        sets.append(TrainingSet(f"set{k}", tuple(by_id[str(i)] for i in group)))
+        sets.append(TrainingSet(f"set{k}", tuple(by_id[str(i)] for i in group), tuple(by_id[str(i)] for i in extra)))
     return sets

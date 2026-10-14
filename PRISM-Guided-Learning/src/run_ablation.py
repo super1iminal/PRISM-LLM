@@ -3,8 +3,8 @@
 Usage: python src/run_ablation.py B2 R1 R2 [--seeds 1 2 | --unseeded N] [--set section.key=value ...] [--dry-run]
 
 The seeds default to configs/ablation/default.yaml; `--set` overrides the run config of every run.
-Each (condition, seed) goes to out/results/ablations/<condition>/seed_<k>/ with its resolved
-config.json. `--unseeded N` instead runs N repeats with no seed (for models whose endpoints take
+Each (condition, seed) goes to out/results/<core or ablations>/<condition>/seed_<k>/ (core: the conditions in
+configs/core.yaml) with its resolved config.json. `--unseeded N` instead runs N repeats with no seed (for models whose endpoints take
 none, e.g. Claude on OpenRouter) into seed_none_1/ .. seed_none_N/; `--repeat K ...` runs only those
 repeats. Finished runs (results parquet present) are skipped, so an interrupted batch can be restarted
 with the same command. Runs execute one after another, never concurrently (src/run_search.py runs
@@ -14,13 +14,17 @@ import argparse
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+import yaml
 
 from config import CONFIG_DIR, load_config, load_file
 from results_io import RESULT_FILES
 from settings import RESULTS_PATH
 
 ABLATIONS_PATH = RESULTS_PATH / "ablations"
+CORE_PATH = RESULTS_PATH / "core"
+CORE_CONFIG = CONFIG_DIR / "core.yaml"
 DEFAULT_CONFIG = CONFIG_DIR / "ablation" / "default.yaml"
 
 
@@ -30,8 +34,26 @@ class AblationConfig:
     seeds: List[int]
 
 
-def run_dir_for(condition: str, seed: str, root: Path = ABLATIONS_PATH) -> Path:
-    return root / condition / f"seed_{seed}"
+def core_conditions() -> List[str]:
+    """The conditions configs/core.yaml names as the method's main runs."""
+    return list(yaml.safe_load(CORE_CONFIG.read_text(encoding="utf-8")).get("conditions") or [])
+
+
+def results_root(condition: str) -> Path:
+    """Where a condition's runs go: out/results/core/ for core conditions, out/results/ablations/ otherwise."""
+    return CORE_PATH if condition in core_conditions() else ABLATIONS_PATH
+
+
+def existing_root(condition: str) -> Path:
+    """Where a condition's runs are now: its `results_root`, or the other root while a run that started before the
+    condition was listed in (or removed from) configs/core.yaml has not been moved yet."""
+    root = results_root(condition)
+    other = ABLATIONS_PATH if root == CORE_PATH else CORE_PATH
+    return other if not (root / condition).exists() and (other / condition).exists() else root
+
+
+def run_dir_for(condition: str, seed: str, root: Optional[Path] = None) -> Path:
+    return (root or results_root(condition)) / condition / f"seed_{seed}"
 
 
 def main():
@@ -46,8 +68,9 @@ def main():
                         help="With --unseeded N: only these repeats (1..N)")
     parser.add_argument("--set", action="append", default=[], help="Run-config override section.key=value")
     parser.add_argument("--dry-run", action="store_true", help="Only print what would run")
-    parser.add_argument("--out-root", type=Path, default=ABLATIONS_PATH,
-                        help="Results root (default out/results/ablations; use out/results/smoke for smoke tests)")
+    parser.add_argument("--out-root", type=Path, default=None,
+                        help="Results root (default: out/results/core for the conditions in configs/core.yaml, "
+                             "out/results/ablations otherwise; use out/results/smoke for smoke tests)")
     args = parser.parse_args()
     if args.repeat and not args.unseeded:
         parser.error("--repeat needs --unseeded")

@@ -36,7 +36,8 @@ class Prompts:
             "general": vocabulary.general,
             **({"generality": True} if prompt.generality else {}),
             **({"tie_break": True} if prompt.tie_break else {}),
-            **({"any_order": True} if self.config.rules.any_order != "none" and vocabulary.allow_any else {}),
+            **({"any_order": self.config.rules.any_order, "action_list": ", ".join(spec.actions)}
+               if self.config.rules.any_order != "none" and vocabulary.allow_any else {}),
             **({"hint": prompt.hint} if prompt.hint else {}),
             **({"strategy_first": True,
                 "answer_format": '{"strategy": "...", "rules": [{"condition": "...", "action": "..."}, ...]}'}
@@ -72,10 +73,20 @@ class Prompts:
                 "reachable": v.reachable_situations, "uncovered": v.uncovered_situations}
 
     @staticmethod
+    def hidden_results(ep: Episode, kept: Kept) -> Optional[Dict[str, int]]:
+        """How the rules do on the hidden members: how many there are and how many pass; None without any."""
+        hidden = [(m, v) for m, v in zip(ep.members, kept.check.vs) if m.hidden]
+        if not hidden:
+            return None
+        return {"count": len(hidden), "passed": sum(not failing(m.requirements, v.worst) for m, v in hidden)}
+
+    @staticmethod
     def training_results(ep: Episode, kept: Kept) -> List[Dict[str, Any]]:
         """Per member of a training set: requirements met in the worst case and the failing ones."""
         rows = []
         for m, v in zip(ep.members, kept.check.vs):
+            if m.hidden:
+                continue
             fails = failing(m.requirements, v.worst)
             rows.append({"label": m.label.capitalize(), "met": len(m.requirements) - len(fails),
                          "total": len(m.requirements), "failing": [r.name for r in fails]})

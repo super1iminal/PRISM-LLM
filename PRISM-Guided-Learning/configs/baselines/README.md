@@ -7,6 +7,7 @@ One file per baseline run of `src/run_baseline.py` (methods in `src/baselines/`)
 | `method` | the baseline (`src/baselines/__init__.py`, `METHODS`) |
 | `condition` | run condition whose rule language (`rules.*`) and PRISM settings apply; `null` = the default run config |
 | `dataset` | instances, as in a run config |
+| `target_dataset` | the targets' dataset, when it differs from `dataset` (e.g. a sealed test set); `null` = the same. Then no target counts as trained |
 | `train` | ids of the training instances (`"0-11"`, `"0,4,8"`); `""` for methods that are not fitted |
 | `targets` | ids of the instances to certify on |
 | `workers` | targets checked at once |

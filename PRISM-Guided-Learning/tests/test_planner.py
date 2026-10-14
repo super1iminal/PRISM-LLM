@@ -163,3 +163,17 @@ def test_any_rules_are_resolved_into_the_best_order_on_the_members(tiny_grid):
     assert result["success"] and record["any_order"][0] == "right"             # `true -> right` passes (fakes.py)
     assert [r["action"] for r in result["final_rules"]] == record["any_order"]
     assert "resolved into one fixed order of the actions" in llm.prompts[0]
+
+
+def test_any_rules_in_the_declared_order_or_with_the_best_order_reported(tiny_grid):
+    extended = ["rules.extended=true", "rules.general=true"]
+    declared, llm = solve(tiny_grid, [answer(("true", "any"))], 1, *extended, "rules.any_order=declared")
+    assert declared["iterations"][0]["any_order"] == ["up", "right", "down", "left"]
+    assert "in the fixed order up, right, down, left" in llm.prompts[0]
+    reported, llm = solve(tiny_grid, [answer(("true", "any")), answer(("true", "right"))], 2, *extended,
+                          "rules.any_order=report")
+    first, second = reported["iterations"]
+    assert "any_order" not in first and [r["action"] for r in first["rules"]] == ["any"]   # the rules stay as written
+    assert "took the first action it allows in the order right" in second["prompt"]
+    assert "1 of 1 instance would meet every requirement" in second["prompt"]
+    assert reported["success"]

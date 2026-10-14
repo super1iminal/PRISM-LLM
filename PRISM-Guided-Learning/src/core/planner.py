@@ -107,7 +107,7 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
     if len(members) > 1:
         record["members"] = [{"instance": m.instance.id, "best": dict(v.best), "worst": dict(v.worst),
                               "reachable_situations": v.reachable_situations,
-                              "uncovered_situations": v.uncovered_situations}
+                              "uncovered_situations": v.uncovered_situations, **({"hidden": True} if m.hidden else {})}
                              for m, v in zip(members, check.vs)]
     return record
 
@@ -245,28 +245,32 @@ class SymbolicPlanner:
         }
         if len(members) > 1:
             result["members"] = [{"instance": m.instance.id, "success": not failing(m.requirements, v.worst),
-                                  "final_best": dict(v.best), "final_worst": dict(v.worst), "optimum": optimum}
+                                  "final_best": dict(v.best), "final_worst": dict(v.worst), "optimum": optimum,
+                                  **({"hidden": True} if m.hidden else {})}
                                  for m, v, optimum in zip(members, finals, optima)]
         return result
 
     def _episode(self, target: Union[Instance, TrainingSet], log: Callable[[str], None]) -> Episode:
         cfg = self.config
         instances = target.members if isinstance(target, TrainingSet) else (target,)
+        hidden = target.hidden if isinstance(target, TrainingSet) else ()
         members = []
-        for k, instance in enumerate(instances, start=1):
+        for k, (instance, is_hidden) in enumerate([(i, False) for i in instances] + [(i, True) for i in hidden], start=1):
             verifier = PolicyVerifier(self.domain, instance, cfg, self.runner)
             analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
                                     cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                     seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
             vocabulary = verifier.spec.vocabulary(cfg.rules)
-            members.append(Member(f"instance {k}", instance, verifier, analyzer, vocabulary,
-                                  self.prompts.context(instance, verifier.spec, vocabulary)))
+            label = f"hidden instance {k - len(instances)}" if is_hidden else f"instance {k}"
+            members.append(Member(label, instance, verifier, analyzer, vocabulary,
+                                  self.prompts.context(instance, verifier.spec, vocabulary), hidden=is_hidden))
         self._check_compatible(members)
         primary = members[0]
+        shown = [m for m in members if not m.hidden]
         answers = list(primary.verifier.spec.actions) + ([ANY] if primary.vocabulary.allow_any else [])
         schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars, cfg.prompt.strategy_first)
         return Episode(members, schema, log, TaskFactory(cfg.llm, target.id),
-                       self.prompts.training_context(members) if len(members) > 1 else {})
+                       self.prompts.training_context(shown) if len(shown) > 1 else {})
 
     @staticmethod
     def _check_compatible(members: List[Member]) -> None:
@@ -292,7 +296,9 @@ class SymbolicPlanner:
             ep.log(f"Choosing an order for `any` failed ({str(e).splitlines()[0]}); keeping `any`")
         ep.log(f"Candidate policy ({len(policies[0].rules)} rules):\n{policies[0].listing()}")
         try:
-            return (yield from self._check(ep, policies)), answer
+            check = yield from self._check(ep, policies)
+            check.any_report = answer.any_report
+            return check, answer
         except PrismError as e:
             # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
             # Count the round as producing nothing (the empty policy) instead of losing the instance.
@@ -311,14 +317,24 @@ class SymbolicPlanner:
         if kind == "none" or not any(a == ANY for _, a in raw):
             return policies
         best = None
-        for order in action_orders(list(ep.primary.verifier.spec.actions), kind):
+        for order in action_orders(list(ep.primary.verifier.spec.actions), "all" if kind == "report" else kind):
             candidate = self._parse(ep, fixed_order(raw, order))
             vs = []
             for m, p in zip(ep.members, candidate):
                 vs.append((yield from m.verifier.verify_steps(p, analysis=False)))
-            score = Check(candidate, vs).score(ep.members)
+            check = Check(candidate, vs)
+            score = check.score(ep.members)
             if best is None or score < best[0]:
-                best = (score, order, candidate)
+                best = (score, order, candidate, check)
+        if kind == "report":   # feedback only: the rules stay as written, the LLM is told which order would do best
+            check = best[3]
+            answer.any_report = {"order": list(best[1]), "members": len(ep.members),
+                                 "passed": sum(not failing(m.requirements, v.worst) for m, v in zip(ep.members, check.vs)),
+                                 "met": sum(len(m.requirements) - len(failing(m.requirements, v.worst))
+                                            for m, v in zip(ep.members, check.vs)),
+                                 "total": sum(len(m.requirements) for m in ep.members)}
+            ep.log(f"Best order for `any` (reported only): {', '.join(best[1])}")
+            return policies
         answer.any_order = list(best[1])
         ep.log(f"`any` resolved in the order {', '.join(best[1])}")
         return best[2]
@@ -338,11 +354,18 @@ class SymbolicPlanner:
         member, policy, v = ep.members[kept.focus], kept.check.policies[kept.focus], kept.check.vs[kept.focus]
         reqs = member.requirements
         results = self.prompts.results(policy, v, reqs)
+        if kept.check.any_report:
+            results["any_report"] = kept.check.any_report
+        hidden = self.prompts.hidden_results(ep, kept)
+        if hidden:
+            results["hidden_results"] = hidden
         if ep.training:
             results.update(training_results=self.prompts.training_results(ep, kept), focus=member.label)
-        if self.config.planner.feedback == "table":
-            return "table", self.prompts.table(ep, member, results)
         failing_best, failing_worst = failing(reqs, v.best), failing(reqs, v.worst)
+        # Every shown member passes but a hidden one fails: nothing on the shown members to blame, so ask for a
+        # rewrite with the results only (the hidden members' details are never shown)
+        if self.config.planner.feedback == "table" or (not failing_worst and hidden and hidden["passed"] < hidden["count"]):
+            return "table", self.prompts.table(ep, member, results)
         joint_conflict = (not failing_best and self.config.planner.branch == "joint"
                           and (yield from self._joint_conflict(ep, kept, record)))
         # Every situation covered, yet best and worst differ: rules allow several actions (`any`) and some of

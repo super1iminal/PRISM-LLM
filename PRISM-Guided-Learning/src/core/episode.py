@@ -36,6 +36,7 @@ class Member:
     analyzer: MassAnalyzer
     vocabulary: Vocabulary            # what rule conditions may name besides the policy variables
     context: Dict[str, Any]           # prompt context of this instance
+    hidden: bool = False              # checked and scored, but never shown to the LLM (`run.hidden_sets`)
 
     @property
     def requirements(self) -> List[Requirement]:
@@ -68,6 +69,7 @@ class Answer:
     results: List[LLMResult]          # one per LLM call, re-asks included
     seconds: float = 0.0              # wall time, including queueing and, in lockstep, waiting for the batch
     any_order: Optional[List[str]] = None   # the order `any` rules were resolved in (`rules.any_order`)
+    any_report: Optional[Dict[str, Any]] = None   # `rules.any_order: report`: the order that would do best
 
 
 @dataclass
@@ -75,6 +77,7 @@ class Check:
     """One rule list checked on every member: parsed for each (instance constants differ) and verified."""
     policies: List[SymbolicPolicy]
     vs: List[Verification]
+    any_report: Optional[Dict[str, Any]] = None   # `rules.any_order: report`: the best order, reported as feedback
 
     @property
     def policy(self) -> SymbolicPolicy:
@@ -89,9 +92,10 @@ class Check:
         return all(not failing(m.requirements, getattr(v, case)) for m, v in zip(members, self.vs))
 
     def focus(self, members: List[Member]) -> int:
-        """The member the feedback is about: the one that fails worst (the first, on ties)."""
-        scores = [score(v, m.requirements) for m, v in zip(members, self.vs)]
-        return scores.index(max(scores))
+        """The member the feedback is about: the shown member that fails worst (the first, on ties)."""
+        scores = [score(v, m.requirements) for m, v in zip(members, self.vs) if not m.hidden]
+        shown = [i for i, m in enumerate(members) if not m.hidden]
+        return shown[scores.index(max(scores))]
 
 
 @dataclass

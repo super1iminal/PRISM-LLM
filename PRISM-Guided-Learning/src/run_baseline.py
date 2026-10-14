@@ -30,6 +30,7 @@ class BaselineConfig:
     method: str
     condition: Optional[str]
     dataset: str
+    target_dataset: Optional[str]
     train: str
     targets: str
     workers: int
@@ -48,14 +49,17 @@ def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH) -> pd.
     baseline.fit([instances[i] for i in train])
 
     runner = PrismRunner(cfg.prism)
-    targets = [instances[i] for i in parse_ids(settings.targets)]
+    target_dataset = settings.target_dataset or settings.dataset
+    same = Path(target_dataset).name == Path(settings.dataset).name
+    pool_of = instances if same else {int(i.id): i for i in domain.load_instances(target_dataset)}
+    targets = [pool_of[i] for i in parse_ids(settings.targets)]
     with ThreadPoolExecutor(settings.workers) as pool:
         parts = pool.map(lambda t: certify(domain, cfg, runner, t, baseline.rules(t), settings.exact_near), targets)
         rows = [row for part in parts for row in part]
     df = pd.DataFrame(rows).sort_values(["source", "target"], key=lambda c: c.astype(str))
-    df["trained"] = df.target.isin(train)
+    df["trained"] = df.target.isin(train) if same else False
     df["method"] = settings.method
-    out = out_root / config_path.stem / f"transfer_{Path(settings.dataset).stem}.csv"
+    out = out_root / config_path.stem / f"transfer_{Path(target_dataset).stem}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
     return df

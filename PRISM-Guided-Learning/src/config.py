@@ -119,7 +119,8 @@ class RulesConfig:
     general: bool                   # only the numbers 0 and 1 in conditions (with extended)
     hidden_features: List[str]      # domain features left out of the vocabulary
     any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
-                                    # on the members each round (none: the worst case over the allowed actions)
+                                    # on the members each round; declared: always the declared action order;
+                                    # report: keep `any`, tell the LLM the best order (none: worst case over them)
 
 
 @dataclass
@@ -135,6 +136,7 @@ class RunConfig:
     limit: Optional[int]
     scheduler: str                            # threads | lockstep (batched) | event (as results arrive); docs/scheduler.md
     train_sets: List[List[int]]               # groups of instance ids, one rule set each; [] = one per instance
+    hidden_sets: List[List[int]]              # per training set, ids checked and scored but never shown; [] = none
 
 
 @dataclass
@@ -269,7 +271,7 @@ def validate(cfg: Config) -> None:
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
-        "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all"}),
+        "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
         "run.scheduler": (cfg.run.scheduler, {"threads", *SCHEDULERS}),
     }

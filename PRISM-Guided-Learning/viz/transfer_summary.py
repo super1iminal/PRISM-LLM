@@ -24,6 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from config import plot_config  # noqa: E402
 from results_io import sample_records  # noqa: E402
+from run_ablation import existing_root  # noqa: E402
 from transfer import csv_path, parse_ids  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -33,7 +34,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 class PlotConfig:
     """A configs/plot/*.yaml file for this script (configs/plot/transfer_search.yaml documents each key)."""
     script: str
-    root: str                        # runs: <root>/<condition>/seed_*/
+    root: Optional[str]              # runs: <root>/<condition>/seed_*/; null: out/results/core or ablations (configs/core.yaml)
     dataset: str                     # target dataset of the transfer CSVs
     targets: str                     # held-out target ids, e.g. "12-19"
     rules: str                       # final | determinized (src/determinize.py): which transfer CSVs to read
@@ -102,9 +103,9 @@ def _model(run_dir: Path) -> str:
 
 def summarize(cfg: PlotConfig) -> pd.DataFrame:
     """One row per run of every condition, plus one per baseline CSV."""
-    root, targets = PROJECT / cfg.root, parse_ids(cfg.targets)
+    targets = parse_ids(cfg.targets)
     rows = [{"condition": c, **run_row(d, cfg.dataset, targets, cfg.prices, cfg.rules, cfg.groups, cfg.source_groups)}
-            for c in cfg.conditions for d in run_dirs(root, c)]
+            for c in cfg.conditions for d in run_dirs(PROJECT / cfg.root if cfg.root else existing_root(c), c)]
     rows += [{"condition": name, "run": "-", **transfer_numbers(PROJECT / path, targets, cfg.groups, cfg.source_groups)}
              for name, path in cfg.baselines.items()]
     return pd.DataFrame(rows)

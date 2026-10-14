@@ -6,7 +6,7 @@ Usage (from PRISM-Guided-Learning/, with the OpenRouter key in the environment: 
 
 Each (condition, repeat) is one job, at most `--max-parallel` at once: `run_ablation.py <condition> --unseeded N
 --repeat k` (skipped when the run has finished), then `transfer.py` on the run for `--targets` (skipped when its
-transfer CSV already covers them), and with `--determinize` src/determinize.py and the transfer check of its rules. Output goes to out/results/ablations/<condition>/seed_none_<k>.log. Each run
+transfer CSV already covers them), and with `--determinize` src/determinize.py and the transfer check of its rules. Output goes to out/results/<core or ablations>/<condition>/seed_none_<k>.log (configs/core.yaml). Each run
 keeps up to `run.workers` PRISM processes busy, so `--max-parallel` also caps PRISM's memory use. At the end the
 summary page (viz/transfer_summary.py, `--summary`) is rebuilt, if given.
 """
@@ -21,7 +21,7 @@ import pandas as pd
 
 from config import load_config
 from results_io import RESULT_FILES
-from run_ablation import ABLATIONS_PATH, run_dir_for
+from run_ablation import run_dir_for
 from settings import PROJECT_ROOT
 from transfer import csv_path, parse_ids
 
@@ -83,7 +83,7 @@ def main(argv=None):
         load_config(condition, args.set)       # fail on a typo before anything runs
     jobs = [(c, k) for c in args.conditions for k in range(1, args.unseeded + 1)]
     for c, k in jobs:
-        print(f"[{c} {k}] -> {run_dir_for(c, f'none_{k}', ABLATIONS_PATH)}", flush=True)
+        print(f"[{c} {k}] -> {run_dir_for(c, f'none_{k}')}", flush=True)
     if args.dry_run:
         return
     with ThreadPoolExecutor(args.max_parallel) as pool:

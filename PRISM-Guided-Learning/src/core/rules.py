@@ -549,12 +549,14 @@ def fixed_order(rules: Iterable[Tuple[str, str]], order: Sequence[str]) -> List[
 
 
 def action_orders(actions: Sequence[str], kind: str) -> List[Tuple[str, ...]]:
-    """Candidate orders for `fixed_order`: every permutation of the actions (`all`), or the rotations of their
-    declared order (`rotations`)."""
+    """Candidate orders for `fixed_order`: every permutation of the actions (`all`), the rotations of their declared
+    order (`rotations`), or the declared order alone (`declared`)."""
     if kind == "all":
         return list(itertools.permutations(actions))
     if kind == "rotations":
         return [tuple(actions[i:]) + tuple(actions[:i]) for i in range(len(actions))]
+    if kind == "declared":
+        return [tuple(actions)]
     raise ValueError(f"unknown action orders {kind!r} (all | rotations)")
 
 

@@ -65,7 +65,7 @@ def test_run_baseline_writes_the_transfer_format(tmp_path):
     import run_baseline
     config = tmp_path / "lists.yaml"
     config.write_text(yaml.safe_dump({
-        "method": "rule_lists", "condition": "haiku_mi_grid_large_closer", "dataset": "grid_20_balanced.csv",
+        "method": "rule_lists", "condition": "haiku_mi_grid_large_closer", "dataset": "grid_20_balanced.csv", "target_dataset": None,
         "train": "12", "targets": "12-13", "workers": 2, "exact_near": 0.0,
         "params": {"lists": {"greedy": [["closer & !hazard", "down"], ["closer & !hazard", "right"],
                                         ["true", "up"]]}}}), encoding="utf-8")

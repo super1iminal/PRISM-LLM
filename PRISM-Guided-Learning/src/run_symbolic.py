@@ -69,7 +69,7 @@ def run(cfg: Config, run_dir: str) -> str:
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = domain.load_instances(cfg.domain.dataset)
     if cfg.run.train_sets:
-        instances = training_sets(instances, cfg.run.train_sets)
+        instances = training_sets(instances, cfg.run.train_sets, cfg.run.hidden_sets)
     instances = instances[:cfg.run.limit]
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 

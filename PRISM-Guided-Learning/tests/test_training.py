@@ -120,3 +120,26 @@ def test_every_scheduler_gives_the_same_training_results(tmp_path, grids, monkey
             assert [it["prompt"] for it in got["iterations"]] == [it["prompt"] for it in want["iterations"]]
             assert [it["members"] for it in got["iterations"]] == [it["members"] for it in want["iterations"]]
             assert got["members"] == want["members"]
+
+
+def test_hidden_members_must_be_given_per_training_set():
+    instances = [Instance(str(i)) for i in range(3)]
+    sets = training_sets(instances, [[0]], [[1, 2]])
+    assert [m.id for m in sets[0].hidden] == ["1", "2"]
+    with pytest.raises(ValueError, match="hidden_sets has 2 groups"):
+        training_sets(instances, [[0]], [[1], [2]])
+
+
+@needs_prism
+def test_hidden_members_are_scored_but_never_shown(grids):
+    domain = load_domain("gridworld", ["obs_idx"])
+    cfg = load_config(overrides=["planner.max_rounds=2", "llm.seed=1"])
+    llm = ScriptedBackend([RIGHT, BOTH])
+    target, = training_sets(domain.load_instances(str(grids)), [[0]], [[1]])
+    result = SymbolicPlanner(domain, llm, cfg).solve(target, logging.getLogger("test_training"))
+    first, second = result["iterations"]
+    assert not first["worst_case_success"]                  # RIGHT passes the shown grid, not the hidden one
+    assert "hidden" not in llm.prompts[0].lower() and "Instance 2" not in llm.prompts[0]
+    assert "On 1 further instances of this problem that you are not shown" in second["prompt"]
+    assert "the rules meet every requirement in the worst case on 0." in second["prompt"]
+    assert result["success"] and result["members"][1]["hidden"] and "hidden" not in result["members"][0]
