@@ -68,6 +68,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("conditions", nargs="+", help="Condition names (files in configs/run/conditions/)")
     parser.add_argument("--unseeded", type=int, default=3, help="Repeats per condition (seed_none_1..N)")
+    parser.add_argument("--only", type=int, nargs="+", default=None,
+                        help="Only these repeats (e.g. one that failed while others of the condition still run)")
     parser.add_argument("--targets", default="12-19", help='Held-out target ids for the transfer check')
     parser.add_argument("--data", default=None, help="Target dataset (default: each run's own)")
     parser.add_argument("--max-parallel", type=int, default=6, help="Jobs (runs with their transfer check) at once")
@@ -84,7 +86,7 @@ def main(argv=None):
     for condition in args.conditions:              # also fails on a typo before anything runs
         cfg = load_config(condition, args.set)
         settings[condition] = {"approach": cfg.approach, "dataset": cfg.domain.dataset}
-    jobs = [(c, k) for c in args.conditions for k in range(1, args.unseeded + 1)]
+    jobs = [(c, k) for c in args.conditions for k in range(1, args.unseeded + 1) if not args.only or k in args.only]
     for c, k in jobs:
         print(f"[{c} {k}] -> {run_dir_for(c, f'none_{k}')}", flush=True)
     if args.dry_run:

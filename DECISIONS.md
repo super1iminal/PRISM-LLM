@@ -152,9 +152,45 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - Store several frozen rule sets and use, on each instance, one that certifies.
   - Random grids, validation: one Haiku run's 4 rule sets cover all 8 grids in every run (one rule set alone: 6.25). Without `closer`: 6 of 8 per run, 7 of 8 over all runs.
   - The baselines' libraries of 4 cover 7 of 8 with `closer` (search, feature trees) and 3 of 8 without (feature trees).
-  - Families: a library of 3 Haiku runs covers rooms 12, crossing 18, adjacent 19 (49 of 60). The best single baselines cover 37 of 60 (feature trees, PPO).
+  - Families (five Haiku runs; mean over every choice of k runs, out of 60 members): one run 29.0 (17-45), two 37.7, three 42.6 (32-50), four 46.4, all five 50.
+    - The best single baselines cover 37 (feature trees, PPO), but they have no library here: the trees are deterministic, and PPO would need several training seeds.
+    - The first report, "49 of 60 for three runs", used the first three runs, which happen to be among the best choices.
+  - Every single Haiku run's own four rule sets cover all 8 validation grids (five runs out of five); so do the fixed-declared-order runs.
   - This is the SEAMS angle: the system certifies stored controllers on the instance it meets and adapts by switching to one that certifies.
-- **Ablation batch** (Asher, Oct 14; three repeats each, grids and families, otherwise the core settings; running):
+- **Ablation batch, results** (Haiku, three repeats each, otherwise the core settings).
+
+  Random grids (validation grids certified per rule set, of 8):
+
+  | condition | certified |
+  |---|---|
+  | core: best order chosen each round | 6.25 (5 runs) |
+  | fixed declared order | **7.17** |
+  | hidden training members | 6.58 |
+  | counterexample-driven training sets (8 rounds) | 6.50 |
+  | 8-round control | 6.00 |
+  | failing traces | 5.92 |
+  | best order reported only | 5.42 |
+
+  Families (rooms / crossing / adjacent, of 20 each):
+
+  | condition | rooms | crossing | adjacent |
+  |---|---|---|---|
+  | core | 8.4 | 4.6 | 16.0 |
+  | 10 rounds | 9.3 | 4.7 | 16.3 |
+  | counterexamples (10 rounds) | 8.0 | 6.3 | 16.0 |
+  | hidden members | 10.3 | 0 | 16.0 |
+  | failing traces | 7.3 | 0 | 14.7 |
+  | fixed declared order | 7.0 | 1.3 | 16.3 |
+  | six training members | 6.0 | 1.0 | 15.0 |
+  | best order reported only | 0 | 0 | 12.0 |
+
+  - Reading: the spread between runs is larger than most effects, and nothing reliably beats the core setting.
+  - On the grids, a fixed order known to the LLM does best and needs no choice by the solver.
+  - On crossing, every variant without the solver's choice of order gets about 0. There the right order depends on the family.
+  - Reporting the best order as feedback, leaving the LLM to write it into its rules, is the weakest variant.
+- **PPO on the random grids** (features, 2M steps per training set; numpy model): 4, 7, 5 and 6 validation grids (mean 5.5). It solves its training grids more reliably than Haiku.
+  - PPO with a MiniGrid-style local view is far weaker: families 4 / 0 / 1 of 20, against 19 / 0 / 18 with our features.
+- **Ablation batch, setup** (Asher, Oct 14; three repeats each, grids and families, otherwise the core settings):
   - `any` in the declared order (`rules.any_order: declared`; the verifier chooses nothing).
   - The best order reported as feedback only (`report`).
   - Hidden training members (`run.hidden_sets`; scored, shown only as a count).
