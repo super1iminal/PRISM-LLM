@@ -90,6 +90,10 @@ class FeedbackConfig:
 class PromptConfig:
     catch_all_instruction: bool
     examples: bool
+    generality: bool                # say the rules will be certified unchanged on unseen, larger instances
+    strategy_first: bool            # the answer starts with the strategy in words (`strategy`), then the rules
+    tie_break: bool                 # explain that `any` is resolved against the policy, and how to fix an order
+    hint: str                       # extra advice for the policy section ("" = none), set by a condition
 
 
 @dataclass

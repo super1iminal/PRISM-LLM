@@ -68,3 +68,18 @@ def test_a_run_config_keeps_its_recorded_settings_and_fills_newer_keys_with_defa
     (tmp_path / "config.json").write_text(json.dumps(recorded), encoding="utf-8")
     cfg = load_run_config(tmp_path)
     assert (cfg.domain.name, cfg.llm.seed, cfg.rules.hidden_features) == ("uuv", 7, [])
+
+
+def test_target_specs_are_ids_and_inclusive_ranges():
+    assert transfer.parse_ids("12-14") == [12, 13, 14]
+    assert transfer.parse_ids("0,4, 8") == [0, 4, 8]
+    assert transfer.parse_ids("0-1,5") == [0, 1, 5]
+
+
+def test_a_partial_check_keeps_the_other_targets_of_an_earlier_csv(tmp_path):
+    path = tmp_path / "transfer.csv"
+    pd.DataFrame({"source": [0, 0, 0], "target": [0, 1, 2], "certified": [True, False, False]}).to_csv(path, index=False)
+    new = pd.DataFrame({"source": [0], "target": [1], "certified": [True]})
+    merged = transfer.merge(new, path).sort_values("target")
+    assert merged[["target", "certified"]].values.tolist() == [[0, True], [1, True], [2, False]]
+    assert transfer.merge(new, tmp_path / "missing.csv").equals(new)

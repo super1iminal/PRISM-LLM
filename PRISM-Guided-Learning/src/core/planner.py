@@ -50,17 +50,23 @@ T = TypeVar("T")
 Steps = Generator[Union[LLMTask, PrismCall], Union[LLMResult, str], T]
 
 
-def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int) -> type[BaseModel]:
+def rule_schema(actions: List[str], max_rules: int, max_condition_chars: int,
+                strategy: bool = False) -> type[BaseModel]:
     """JSON schema for the LLM's answer; `actions` are the values a rule's action may take (with `any` for the
     extended vocabulary). The length bounds are enforced by constrained decoding, which stops degenerate
-    repetition loops from running into the token limit."""
+    repetition loops from running into the token limit. With `strategy`, the answer starts with the strategy
+    in words (`prompt.strategy_first`)."""
     rule = create_model(
         "Rule",
         condition=(str, Field(description="Boolean condition over the state variables",
                               max_length=max_condition_chars)),
         action=(Literal.__getitem__(tuple(actions)), Field(description="Action to take")),
     )
-    return create_model("RuleList", rules=(List[rule], Field(..., max_length=max_rules)))
+    rules = (List[rule], Field(..., max_length=max_rules))
+    if strategy:
+        return create_model("RuleList", strategy=(str, Field(description="The strategy the rules implement")),
+                            rules=rules)
+    return create_model("RuleList", rules=rules)
 
 
 def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Member], *, improved: bool,
@@ -256,7 +262,7 @@ class SymbolicPlanner:
         self._check_compatible(members)
         primary = members[0]
         answers = list(primary.verifier.spec.actions) + ([ANY] if primary.vocabulary.allow_any else [])
-        schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars)
+        schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars, cfg.prompt.strategy_first)
         return Episode(members, schema, log, TaskFactory(cfg.llm, target.id),
                        self.prompts.training_context(members) if len(members) > 1 else {})
 

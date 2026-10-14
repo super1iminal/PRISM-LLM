@@ -5,9 +5,10 @@ Usage: python src/run_ablation.py B2 R1 R2 [--seeds 1 2 | --unseeded N] [--set s
 The seeds default to configs/ablation/default.yaml; `--set` overrides the run config of every run.
 Each (condition, seed) goes to out/results/ablations/<condition>/seed_<k>/ with its resolved
 config.json. `--unseeded N` instead runs N repeats with no seed (for models whose endpoints take
-none, e.g. Claude on OpenRouter) into seed_none_1/ .. seed_none_N/. Finished runs (results parquet
-present) are skipped, so an interrupted batch can be restarted with the same command. Runs execute
-one after another, never concurrently.
+none, e.g. Claude on OpenRouter) into seed_none_1/ .. seed_none_N/; `--repeat K ...` runs only those
+repeats. Finished runs (results parquet present) are skipped, so an interrupted batch can be restarted
+with the same command. Runs execute one after another, never concurrently (src/run_search.py runs
+several of these processes in parallel).
 """
 import argparse
 import shutil
@@ -41,13 +42,17 @@ def main():
     seeding.add_argument("--unseeded", type=int, metavar="N", default=None,
                          help="N repeats without a seed, in seed_none_1/ .. seed_none_N/")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Ablation config file")
+    parser.add_argument("--repeat", type=int, nargs="+", default=None,
+                        help="With --unseeded N: only these repeats (1..N)")
     parser.add_argument("--set", action="append", default=[], help="Run-config override section.key=value")
     parser.add_argument("--dry-run", action="store_true", help="Only print what would run")
     parser.add_argument("--out-root", type=Path, default=ABLATIONS_PATH,
                         help="Results root (default out/results/ablations; use out/results/smoke for smoke tests)")
     args = parser.parse_args()
+    if args.repeat and not args.unseeded:
+        parser.error("--repeat needs --unseeded")
     if args.unseeded:
-        runs = [(f"none_{k}", []) for k in range(1, args.unseeded + 1)]
+        runs = [(f"none_{k}", []) for k in range(1, args.unseeded + 1) if not args.repeat or k in args.repeat]
     else:
         runs = [(str(s), [f"llm.seed={s}"]) for s in args.seeds or load_file(args.config, AblationConfig).seeds]
 

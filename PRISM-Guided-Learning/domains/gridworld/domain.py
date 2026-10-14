@@ -5,7 +5,7 @@ BFS_steps. Mirrors the legacy model in src/legacy/prism_model.py, but as a PRISM
 actions are left open for the policy.
 """
 import ast
-from collections import deque
+import heapq
 from typing import Any, Dict, List, Set, Tuple
 
 import pandas as pd
@@ -135,16 +135,20 @@ def _cells(cells, dr: int, dc: int) -> str:
     return " | ".join(f"(x = {r - dr} & y = {c - dc})" for r, c in sorted(cells)) or "false"
 
 
-def _distances(n: int, target: Cell, blocked: Set[Cell]) -> Dict[Cell, int]:
-    """Shortest number of moves from each free cell to `target` through free cells (BFS)."""
-    dist, queue = {target: 0}, deque([target])
+def _distances(n: int, target: Cell, blocked: Set[Cell], costly: Set[Cell] = frozenset()) -> Dict[Cell, int]:
+    """Cost of the cheapest route from each cell to `target` that avoids `blocked`: one per move, and n*n per move
+    into a `costly` cell, so routes through costly cells count only where no other route exists (Dijkstra)."""
+    dist, queue = {target: 0}, [(0, target)]
     while queue:
-        r, c = queue.popleft()
+        d, (r, c) = heapq.heappop(queue)
+        if d > dist[(r, c)]:
+            continue
+        step = n * n if (r, c) in costly else 1   # the move from a neighbour into (r, c)
         for dr, dc in MOVES.values():
             nxt = (r + dr, c + dc)
-            if 0 <= nxt[0] < n and 0 <= nxt[1] < n and nxt not in blocked and nxt not in dist:
-                dist[nxt] = dist[(r, c)] + 1
-                queue.append(nxt)
+            if 0 <= nxt[0] < n and 0 <= nxt[1] < n and nxt not in blocked and d + step < dist.get(nxt, d + step + 1):
+                dist[nxt] = d + step
+                heapq.heappush(queue, (d + step, nxt))
     return dist
 
 
@@ -177,8 +181,7 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
         features["toward"][a] = " | ".join(f"({segment[k]} & {toward[a].format(k=k)})" for k in ks)
         closer = []
         for i, k in enumerate(ks):
-            blocked = static | patrol | {where[j] for j in ks[i + 1:]}
-            dist = _distances(n, where[k], blocked)
+            dist = _distances(n, where[k], static | {where[j] for j in ks[i + 1:]}, costly=patrol)
             cells = [(r, c) for (r, c), d in dist.items()
                      if (r + dr, c + dc) in dist and dist[(r + dr, c + dc)] < d]
             closer.append(f"({segment[k]} & ({' | '.join(f'(x = {r} & y = {c})' for r, c in sorted(cells)) or 'false'}))")
@@ -192,7 +195,8 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
         "obstacle": "true if the moving obstacle will be on the move's target cell right after this move",
         "toward": "true if the move goes towards the next goal not yet reached (fewer rows or columns away)",
         "closer": "true if the move's target cell is closer to the next goal along a shortest path through free "
-                  "cells (avoiding static obstacles, the patrol path and later goals)",
+                  "cells (avoiding static obstacles and later goals, and the patrol path unless every route "
+                  "crosses it)",
     }
     constants = [{"name": "N", "value": n, "description": "grid size: rows and columns are 0..N-1"}]
     for k in ks:

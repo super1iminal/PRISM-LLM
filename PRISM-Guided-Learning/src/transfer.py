@@ -9,9 +9,10 @@ Rules that do not parse on a target (e.g. a run without the general vocabulary) 
 the targets are the run's own dataset.
 
 Usage (from PRISM-Guided-Learning/):
-    python src/transfer.py out/results/ablations/<condition>/<seed dir> [--data <dataset>] [--workers N]
+    python src/transfer.py out/results/ablations/<condition>/<seed dir> [--data <dataset>] [--targets 12-19] [--workers N]
 Settings: configs/transfer/default.yaml (`--config FILE`, `--set key=value`; `--workers` is a shortcut).
-Writes <run dir>/transfer_<dataset stem>.csv (one row per source and target) and prints a summary.
+Writes <run dir>/transfer_<dataset stem>.csv (one row per source and target) and prints a summary of the targets
+checked. With `--targets`, rows of an existing CSV for the other targets are kept.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -35,6 +36,7 @@ DEFAULT_CONFIG = CONFIG_DIR / "transfer" / "default.yaml"
 class TransferConfig:
     """configs/transfer/default.yaml documents each key."""
     workers: int
+    exact_near: float
 
 
 def training_instances(run_dir: Path) -> Dict[int, List[int]]:
@@ -51,8 +53,26 @@ def final_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
             for sid, record in sample_records(run_dir).items() if "final_rules" in record}
 
 
-def certify(domain, cfg, runner, target, sources) -> List[dict]:
-    """Every source rule set, checked on one target instance."""
+def parse_ids(spec: str) -> List[int]:
+    """Instance ids from a spec such as "12-19" or "0,4,8" or "0-3,12": ranges are inclusive."""
+    ids = []
+    for part in spec.split(","):
+        lo, _, hi = part.strip().partition("-")
+        ids.extend(range(int(lo), int(hi or lo) + 1))
+    return ids
+
+
+def merge(new: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """`new` rows, plus the rows of an earlier transfer CSV at `path` for targets `new` does not cover."""
+    if not path.exists():
+        return new
+    old = pd.read_csv(path)
+    return pd.concat([old[~old.target.isin(new.target.unique())], new], ignore_index=True)
+
+
+def certify(domain, cfg, runner, target, sources, exact_near: float = 0.0) -> List[dict]:
+    """Every source rule set, checked on one target instance. A worst case within `exact_near` of its threshold is
+    re-checked with the exact solvers (`PolicyVerifier.verify_exact`), so the verdict holds (column `exact`)."""
     verifier = PolicyVerifier(domain, target, cfg, runner)
     spec, vocab = verifier.spec, verifier.spec.vocabulary(cfg.rules)
     rows = []
@@ -64,9 +84,13 @@ def certify(domain, cfg, runner, target, sources) -> List[dict]:
             rows.append({**row, "parsed": False, "error": str(e).splitlines()[0]})
             continue
         v = verifier.verify(policy, analysis=False)
+        exact = False
+        if exact_near and any(abs(v.worst[r.name] - r.threshold) < exact_near for r in spec.requirements):
+            v_exact, _ = verifier.verify_exact(policy)
+            v, exact = (v_exact, True) if v_exact else (v, False)
         met = [r.name for r in spec.requirements if r.satisfied(v.worst[r.name])]
         rows.append({**row, "parsed": True, "met": len(met), "requirements": len(spec.requirements),
-                     "certified": len(met) == len(spec.requirements), "uncovered": v.uncovered_situations,
+                     "certified": len(met) == len(spec.requirements), "uncovered": v.uncovered_situations, "exact": exact,
                      **{f"worst_{r.name}": v.worst[r.name] for r in spec.requirements}})
     return rows
 
@@ -78,6 +102,8 @@ def main(argv=None):
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Transfer config file")
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     parser.add_argument("--workers", type=int, default=None, help="Shortcut for --set workers=N")
+    parser.add_argument("--targets", default=None,
+                        help='Only these target ids, e.g. "12-19" (rows for other targets in an existing CSV are kept)')
     args = parser.parse_args(argv)
     settings = load_file(args.config, TransferConfig,
                          args.set + ([f"workers={args.workers}"] if args.workers is not None else []))
@@ -86,16 +112,20 @@ def main(argv=None):
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     dataset = args.data or cfg.domain.dataset
     targets = domain.load_instances(dataset)
+    if args.targets:
+        wanted = set(parse_ids(args.targets))
+        targets = [t for t in targets if int(t.id) in wanted]
     sources = final_rules(args.run_dir)
     runner = PrismRunner(cfg.prism)
     with ThreadPoolExecutor(settings.workers) as pool:
-        rows = [row for part in pool.map(lambda t: certify(domain, cfg, runner, t, sources), targets) for row in part]
+        rows = [row for part in pool.map(lambda t: certify(domain, cfg, runner, t, sources, settings.exact_near),
+                                                  targets) for row in part]
 
     df = pd.DataFrame(rows).sort_values(["source", "target"])
     trained = training_instances(args.run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
     df["trained"] = [t in trained.get(s, []) for s, t in zip(df.source, df.target)]
     out = args.run_dir / f"transfer_{Path(dataset).stem}.csv"
-    df.to_csv(out, index=False)
+    merge(df, out).sort_values(["source", "target"]).to_csv(out, index=False)
     certified = df.get("certified", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     per_source = df.assign(certified=certified).groupby("source").certified.sum()
     print(f"{len(sources)} rule sets x {len(targets)} targets ({dataset}); certified targets per source rule set:")

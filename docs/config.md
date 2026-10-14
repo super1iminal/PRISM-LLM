@@ -7,7 +7,8 @@ Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run 
 | `run/` | `run_symbolic.py`, `run_legacy.py`, `run_ablation.py`, `ceilings.py` | `default.yaml` (every key in the table below) and `conditions/<name>.yaml` |
 | `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides; `--unseeded N` runs N repeats without a seed instead) |
 | `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
-| `transfer/` | `transfer.py` | `default.yaml`: `workers` (target instances checked in parallel; `--workers` overrides) |
+| `transfer/` | `transfer.py` | `default.yaml`: `workers` (target instances checked in parallel; `--workers` overrides), `exact_near` (re-check with the exact solvers when a worst case is this close to its threshold) |
+| `baselines/` | `run_baseline.py` | one file per baseline run (method, run condition for the rule language, dataset, training and target ids, method parameters); keys in `baselines/README.md` |
 | `plot/` | `viz/` scripts, `compare.py` | one file per figure or report (no default): `script:` names the script it is for, then its runs, labels, title and output. Run `python viz/<script>.py configs/plot/<figure>.yaml` |
 
 - `run/conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. B2 and the conditions compared with it set `planner.retry: "stall:2"`.
@@ -51,6 +52,10 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | catch-all ablation (single-seed runs) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
+| `prompt.generality` | `false` | say that the rules will be certified unchanged on unseen, larger instances and must not single one out | `haiku_ts_generality` (transfer search) |
+| `prompt.strategy_first` | `false` | the answer starts with the strategy in words (`strategy`, added to the answer schema), then the rules | `haiku_ts_strategy` |
+| `prompt.tie_break` | `false` | explain that an `any` rule's choices are resolved against the policy, and how to fix an order with one rule per action | `haiku_ts_tiebreak` |
+| `prompt.hint` | `""` | extra advice in the policy section, set by a condition (deliberate hard-coding while searching for what works) | `haiku_ts_hint_wait` |
 | `prism.method` | `gaussseidel` | PRISM solver; plain value iteration fails on periodic chains (rules that read `obs_idx`) | — |
 | `prism.fallback_methods` | `[modpoliter]` | tried in order when `method` does not converge (seen on a real qwen rule set) | — |
 | `prism.multi_engine` / `multi_method` | `sparse` / `lp` | joint queries (the explicit engine can't do them; LP is exact) | — |

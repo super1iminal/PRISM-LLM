@@ -63,6 +63,43 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
 - **Reading:** Sonnet's held-out transfer is higher after training on three grids (about 3 grids per rule set, including 1–2 of the 8 larger grids, against 0.45 after single-grid training), but **the comparison is confounded**: the single-grid Sonnet run used vocabulary v1 (no `obstacle`, `risky`), the multi-instance run v2, and `risky` is what lifted Haiku's single-grid transfer. A clean comparison needs Sonnet single-grid with v2 (or multi-instance with v1). Most held-out grids still fail, and only one set was solved in 5 rounds. On the never-seen 12x12/13x13 grids, trained on 1 vs 3 grids: Haiku v2 0.13 vs 0 of 8 per rule set, Haiku v2 + closer 4.4 vs 5.3, Sonnet 0.17 (v1) vs 1.75 (v2). Haiku cannot write rules that pass three grids at once without `closer` (0 of 12 sets solved over three runs; at most 1 of the 68 held-out rule-set/grid pairs certified per run); with it, multi-instance training adds little over single-grid training, and the three runs give nearly the same generic rule sets (set 1, grids 1, 5, 9, certifies 3 test grids every time). **Open:** more rounds for training sets, and whether the rules' instance-specific patches (constant relations) are what fails on held-out grids.
 - **Prompt wart, not fixed:** gridworld's `description.md.j2` runs two bullets together ("it starts at 0.- The agent keeps moving"), in every prompt with the obstacle visible. Fixing it changes every gridworld prompt and the saved-run replays, so it waits for a deliberate prompt revision.
 
+## Transfer search (plan: `docs/transfer_plan.md`)
+- **Tools.**
+  - `src/run_search.py` runs conditions in parallel, then each run's transfer check on `--targets` (default the validation grids 12-19).
+  - `transfer.py --targets` merges into an existing CSV. Transfer checks now re-verify with the exact solvers when a worst case is within `exact_near` (0.03) of its threshold.
+  - `viz/transfer_summary.py` (`configs/plot/transfer_search.yaml`) builds `out/results/transfer_search/SUMMARY.md`.
+  - Baselines live in `src/baselines/`, run by `src/run_baseline.py configs/baselines/<name>.yaml`, with results in the transfer CSV format. Methods: fixed rule lists, the hand-written template, a beam search over the rule language, and 1-2-3-Go!-style decision trees.
+  - `src/baselines/gridworld_mdp.py` is a numpy model of the gridworld: features and requirement values of a deterministic policy in 20-60 ms instead of a 2 s PRISM run. It agrees with PRISM's exact values to 1e-9, and its features match the core rule evaluator (`tests/test_gridworld_mdp.py`). The search and the trees rank candidates with it; PRISM certifies what they keep.
+- **`closer` now routes through the patrol only where no other route exists.** The patrol costs n*n per cell entered (Dijkstra) instead of being blocked. On `grid_20_large` no cell's distance changes; only patrol cells and 12 cells cut off by a patrol gain one. Needed for families whose only passage crosses the patrol, where the old `closer` was false everywhere.
+- **Search over the rule language** (beam of 4, up to 6 rules, each a conjunction of feature literals with one of 4 fixed action orders, ending `true -> up`; trained on the same sets as the LLM; PRISM-certified):
+  - Of the four standard training sets only `[2,6,10]` is solvable by such a list; the others stop at 2 of 3 grids. Every standard set contains a 9x9 grid, and no generic rule set has passed grids 0, 1 or 3 held-out.
+  - The list found on `[2,6,10]` has two rules: `!hazard & !risky & closer` in the order down, right, up, left, then `wall & !risky` (wait by moving into a wall), then `true -> up`. It certifies **15/20 grids and 7 of the 8 validation grids**, including grid 12, which no rule set had passed held-out. That is more than any LLM rule set so far (6) and the template (6).
+  - Over the four standard sets, the search's lists certify 4, 1, 7 and 6 validation grids (mean 4.5); on all 12 training grids at once, 2. The search fits its training set closely.
+  - Without `closer`, its lists pass 2-5 of the 20 grids (at most 2 validation grids).
+- **1-2-3-Go!-style trees** (`src/baselines/decision_tree.py`, a reimplementation):
+  - Optimal strategies of the training grids for one reachability objective: every goal in order, nothing entered early, no collision. Ties go to the fastest optimal action; an arbitrary optimal action can cycle where the probability is 1 anyway.
+  - CART on the states' optimal actions. Over the raw state variables, as in the paper: 0 validation grids for every standard set. Over our features (with the goal flags): 7, 3, 3, 3 (mean 4.0). These numbers come from the numpy model; PRISM checks are to follow.
+- **Haiku keeps writing the same generic list:** `closer`/`toward` moves with `!wall & !hazard (& !risky)`, all `any`, then `!wall -> any`, `true -> up`. This holds even with the tie-break explanation. With restarts on slow progress, rounds 3-5 of a training set are mostly fresh starts, so the loop resamples rather than refines.
+- **Batch 1** (three repeats each; validation grids certified per rule set, of 8; no condition solved a training set; summary page `out/results/transfer_search/SUMMARY.md`):
+  - baseline (multi-instance + `closer`): 5.33;
+  - generality instruction: 5.92 (5.50-6.25);
+  - training sets one generic list can solve: 5.50 (still 0 sets solved);
+  - strategy in words first: 5.50 (one run so far);
+  - tie-break explanation: 5.00 (two runs so far);
+  - one set of all 12 training grids: running.
+- **Gridworld families** (`domains/gridworld/data/families.py`, `families_v0.csv`). Three layouts over sizes 6-20 with seeds 0-3 (180 instances), each with some scattered obstacles:
+  - *rooms*: doors, and a patrol in front of a door;
+  - *crossing*: a wall with one gap and a patrol along it;
+  - *adjacent*: goals 1 and 3 side by side.
+
+  Results:
+  - All 15 sampled members are jointly feasible.
+  - The template certifies 47 of 180 (PRISM; the numpy model agrees on every member): adjacent 78%, crossing and rooms 0%.
+  - Search on each family's 6x6-8x8 members solves them, but passes 26-33 of each family's 60 members.
+  - Trees over raw variables pass 0-3 of 60; over our features adjacent 49, crossing 53, rooms 8.
+  - Haiku on the families: running.
+- **[REVIEW] What this means for the "why LLMs" claim.** With `closer`, short generic lists exist, and a 2-rule list found without an LLM certifies 7/8 validation grids. Trained on the same sets, the search and the feature trees average 4.5 and 4.0, below Haiku's 5.3-5.9, and the hand-written template gets 6. The faithful 1-2-3-Go! trees get 0. So the honest bar is the template, the best searched list and the feature trees, not the published 1-2-3-Go!.
+
 ## Positioning checks for the transfer experiment
 Details in `docs/positioning.md`, which builds on the related-work survey (`docs/related_work_survey.md`).
 - **The position is an intersection.** No work combines LLM-written rules, a stochastic model with several thresholds, exact certification on every instance (held-out and larger ones included) and quantitative feedback; every neighbour has two or three of these. The closest is **1–2–3–Go!** (VMCAI 2025): trees over raw state variables, learned from small instances, certified per larger instance; single reachability objective; parameters can't appear in predicates; no loop, no LLM.

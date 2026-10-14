@@ -33,6 +33,12 @@ class Prompts:
             "features": vocabulary.features,
             "any_action": vocabulary.allow_any,
             "general": vocabulary.general,
+            **({"generality": True} if prompt.generality else {}),
+            **({"tie_break": True} if prompt.tie_break else {}),
+            **({"hint": prompt.hint} if prompt.hint else {}),
+            **({"strategy_first": True,
+                "answer_format": '{"strategy": "...", "rules": [{"condition": "...", "action": "..."}, ...]}'}
+               if prompt.strategy_first else {}),
         }
 
     @staticmethod
