@@ -1,6 +1,6 @@
 # Schedulers: threads, lockstep and event
 
-`run.scheduler` decides how the instances of a run share the LLM and PRISM. All three run the same loop (`SymbolicPlanner.solve_steps`) and give the same per-instance results. They differ in speed, in what can run at the same time, and in what the task log records. This page explains the design and when to use which. How the change was tested: `docs/testing_scheduler.md`.
+`run.scheduler` decides how the instances of a run share the LLM and PRISM. All three run the same loop (`SymbolicPlanner.solve_steps`) and give the same per-instance results. They differ in speed, in what can run at the same time, and in what the task log records. This page explains the design and when to use which. Tests: `tests/test_scheduler.py` (saved-run replays under every scheduler), `tests/test_event_scheduler.py`, and `tests/test_prism_calls.py` (each instance runs the recorded PRISM commands, in order).
 
 | | `threads` (default for legacy) | `lockstep` | `event` (default for symbolic) |
 |---|---|---|---|
@@ -15,28 +15,28 @@
 
 ## The planner as a generator
 
-`solve_steps(instance, logger)` is a generator. Whenever the loop needs the model it yields an `LLMTask`; whenever it needs PRISM it yields a `PrismCall` (the PRISM command line and its timeout). Whoever drives the generator runs the item and sends back the result: an `LLMResult`, or PRISM's output as text. A timeout is thrown into the generator as `subprocess.TimeoutExpired`, at the point where `subprocess.run` used to raise it.
+`solve_steps(instance, logger)` is a generator. Whenever the loop needs the model it yields an `LLMTask`; whenever it needs PRISM it yields a `PrismCall` (the PRISM command line and its timeout). Whoever drives the generator runs the item and sends back the result: an `LLMResult`, or PRISM's output as text. A timeout is thrown into the generator as `subprocess.TimeoutExpired`, at the point where a blocking PRISM call would raise it.
 
 ```
 solve_steps ── yield LLMTask ──▶ driver ── LLMResult ──▶ solve_steps ── yield PrismCall ──▶ driver ── output ──▶ ...
 ```
 
-PRISM calls used to happen deep inside ordinary functions (`verifier.verify` → `runner.run` → `subprocess.run`). For PRISM to be yielded, every function between the planner and the subprocess became a generator too, passing the yield up with `yield from`:
+For PRISM to be yielded, every function between the planner and the PRISM process is a generator, passing the yield up with `yield from`:
 
 - `PrismRunner.run_steps` / `check_steps` (`core/prism.py`), including the fallback over solver methods;
 - `PolicyVerifier.verify_steps`, `verify_exact_steps`, `optimum_steps`, `jointly_feasible_steps`, `forced_states_steps` (`core/verifier.py`);
-- the planner's `_round`, `_feedback`, `_joint_conflict` and `solve_steps`.
+- the planner's `_round`, `_check`, `_feedback`, `_joint_conflict`, `_final` and `solve_steps`.
 
-The blocking methods (`run`, `verify`, `optimum`, …) remain as thin wrappers that run the generator to the end. So `ceilings.py`, `regression.py` and the mass analyzer, which only reads the cached optimum, are unchanged. A `yield` now marks every point where an instance can wait, for the LLM or for PRISM. Between two yields, an instance's code runs without interruption.
+The blocking methods (`run`, `verify`, `optimum`, …) are thin wrappers that run the generator to the end (`run_now`), for tools that check one policy at a time (`ceilings.py`, `regression.py`, `transfer.py`); the mass analyzer only reads the cached optimum. A `yield` marks every point where an instance can wait, for the LLM or for PRISM. Between two yields, an instance's code runs without interruption.
 
 The three schedulers drive these generators differently:
 
-- **`threads`**: `planner.solve` drives one instance per worker thread with `drive()`, which answers LLM tasks with `backend.execute` and runs PRISM calls with `subprocess.run`, in that thread. This is the behaviour of all runs so far.
+- **`threads`**: `planner.solve` drives one instance per worker thread with `drive()`, which answers LLM tasks with `backend.execute` and runs PRISM calls with `subprocess.run`, in that thread. Runs whose `config.json` records `threads`, or no `run.scheduler`, ran this way.
 - **`lockstep`** and **`event`**: run every instance from the calling thread. PRISM calls start as background processes (`PrismProcess`), with output going to a temporary file rather than a pipe, so no thread needs to read it, and are checked every 10 ms. LLM tasks go to the backend, which runs them concurrently.
 
 ## The event scheduler
 
-This is "Variant B" from the design discussion: conceptually, an array of slots, one instance per slot, and one loop that checks each slot for a ready result and hands it over.
+Conceptually, an array of slots, one instance per slot, and one loop that checks each slot for a ready result and hands it over.
 
 ```
 slots:   [ inst 3: waiting on LLM ][ inst 7: waiting on PRISM ][ inst 1: waiting on LLM ][ ... ]
@@ -53,14 +53,14 @@ loop:    start instances while a slot is free
 - **PRISM calls:** each runs as its own process, so PRISM work of different instances runs in parallel on separate cores, with no thread involved. A process past `prism.timeout_s` is killed and its instance receives the timeout. If the scheduler stops on an exception, its running processes are killed.
 - **Responses are handled as they arrive.** When a reply comes back, only its instance resumes; nobody waits for the slowest reply.
 
-## Lockstep, now single-threaded
+## Lockstep
 
-Lockstep keeps its batches: every step sends the pending LLM task of every active instance as one `execute_batch`. What changed is between batches. Previously, each instance was resumed on a thread of a pool and ran PRISM there, so several instances' planner, verifier and PRISM-runner code ran at the same time. Now each step has two phases on one thread:
+Every step sends the pending LLM task of every active instance as one `execute_batch`. Each step has two phases on one thread:
 
 1. **PRISM phase:** start a process for every instance waiting on PRISM. As each finishes, resume its instance, which may yield another PRISM call (a fallback solver, the joint query) that starts right away. The phase ends when every instance waits on its next LLM task or has finished.
-2. **LLM phase:** send all pending LLM tasks as one batch, as before.
+2. **LLM phase:** send all pending LLM tasks as one batch.
 
-The PRISM phase always runs until every instance reaches its next LLM call, so each batch contains the same tasks as before, whatever order PRISM finishes in. The saved-run replays confirm the batches and rounds are unchanged.
+The PRISM phase always runs until every instance reaches its next LLM call, so each batch contains the same tasks whatever order PRISM finishes in. The saved-run replays check the batches and rounds.
 
 ## Benefits
 
@@ -89,13 +89,12 @@ What can run at the same time, and so where shared state must be safe:
 | | What runs at the same time | Shared state must be safe in |
 |---|---|---|
 | threads | everything, including concurrent calls into the backend | backend, and planner, verifier and PRISM runner |
-| lockstep (before this change) | instances' planner, verifier and PRISM-runner code (the resume pool) | planner, verifier, PRISM runner |
-| lockstep and event (now) | nothing in planner code; instances take turns at a `yield` | only across `yield`s, which are visible in the code (and inside the backend) |
+| lockstep and event | nothing in planner code; instances take turns at a `yield` | only across `yield`s, which are visible in the code (and inside the backend) |
 
 Two hypothetical bugs show the difference:
 
 - **Threads only:** a backend that names its upload files with a counter (`n = self._batch; self._batch = n + 1`). Two threads read the same value, write the same file, and both instances receive one instance's answer. Lockstep and event never call `execute_batch` concurrently, so this cannot happen there. (Event calls `submit`, whose default runs `execute` on worker threads, so the backend's own state must still be safe there, as for threads.)
-- **Old lockstep, not the new schedulers:** a `PrismRunner` that stored the current fallback method on `self` while retrying. One instance's fallback could leak into another instance's PRISM call running in parallel. In the single-threaded schedulers this can only interleave at a `yield`, and the yields are visible in the code.
+- **A scheduler that resumes instances on a thread pool, not the single-threaded ones:** a `PrismRunner` that stored the current fallback method on `self` while retrying. One instance's fallback could leak into another instance's PRISM call running in parallel. In the single-threaded schedulers this can only interleave at a `yield`, and the yields are visible in the code.
 
 ### 4. Reproducible per instance
 
@@ -107,13 +106,13 @@ What lockstep adds is a fixed grouping into batches. That matters only for the m
 
 - **Hosted API (OpenRouter) or any backend that serves concurrent requests:** `event`, the default for symbolic runs (`run.scheduler: null`). No waiting on the slowest reply, PRISM overlaps generation, and planner code is single-threaded.
 - **A local engine that batches a list natively** (vLLM offline, `LLM.chat(list)`), or when fixed batches matter: `lockstep`.
-- **Legacy runs (always), and comparability with the symbolic runs so far:** `threads`. Wall-clock times of the three schedulers are not comparable with each other; tokens are.
+- **Legacy runs (always), and timing comparisons with threaded symbolic runs:** `threads`. Wall-clock times of the three schedulers are not comparable with each other; tokens are.
 
 `run.workers` is the number of slots for all three. Under `event` it is also the maximum number of concurrent LLM requests: keep it within the API's rate limit.
 
 ## Limits and costs
 
-- **Python-side work runs one instance at a time:** building models, parsing PRISM output, mass analysis. It did before too, because of Python's global interpreter lock; only PRISM itself runs in parallel, as processes.
+- **Python-side work runs one instance at a time:** building models, parsing PRISM output, mass analysis. With threads it does too, because of Python's global interpreter lock; only PRISM itself runs in parallel, as processes.
 - **The loop polls PRISM processes every 10 ms.** This is negligible next to PRISM's roughly second-long calls.
 - **Some per-round times include waiting.** A round's `llm_wall_time` and `prism_time` are wall-clock times: under `event` and `lockstep` they include time the instance waited for its turn on the loop thread, and in lockstep for the rest of the batch. `llm_time` stays the tasks' own time in the backend.
 - **The global order of the event log follows timing,** so it is not reproducible line by line; sorted by task id it is.
@@ -122,4 +121,4 @@ What lockstep adds is a fixed grouping into batches. That matters only for the m
 
 The event scheduler is close to what asyncio does internally: an event loop that waits on many operations and resumes whichever is ready. Python's asyncio grew out of generator coroutines driven by `yield from`. Here the generators are the coroutines, and the loop knows two kinds of wait: an LLM future and a PRISM process.
 
-An asyncio version would have needed the same refactor to avoid threads: PRISM as `asyncio.create_subprocess_exec`, `await` through the verifier. Without that refactor it would have run each PRISM call in a worker thread with `asyncio.to_thread`, which reintroduces concurrent planner code. Once PRISM is yielded, a hand-written loop needs no new concepts beyond generators, which the planner already used, and the same generators could later be driven by asyncio if that became useful.
+An asyncio version needs the same structure to avoid threads: PRISM as `asyncio.create_subprocess_exec`, `await` through the verifier. Without it, each PRISM call runs in a worker thread (`asyncio.to_thread`), which brings back concurrent planner code. With PRISM yielded, a hand-written loop needs no concepts beyond generators, which the planner uses anyway, and the same generators could be driven by asyncio if that became useful.

@@ -1,6 +1,6 @@
-# Positioning against related work (phase 2 draft, 2026-10-08)
+# Positioning against related work (2026-10-08)
 
-Builds on `docs/related_work_survey.md` (phase 1; entry labels such as I.3 refer to it). This page states what we can claim, what each claim is up against, and what three PRISM-only checks and three paper readings showed before the transfer experiment.
+Builds on `docs/related_work_survey.md` (entry labels such as I.3 refer to it). This page states what we can claim, what each claim is up against, and what three PRISM-only checks and three paper readings showed before the transfer experiment.
 
 ## Bottom line
 

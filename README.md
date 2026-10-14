@@ -21,26 +21,30 @@ Its per-state approach is the `legacy` baseline.
 PRISM-Guided-Learning/
   src/
     core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts,
-                     LLM tasks, backends (core/backends/) and the lockstep scheduler
+                     training sets, LLM tasks, backends (core/backends/) and schedulers (threads, lockstep, event)
     legacy/          the predecessor's per-state approach (gridworld only), the baseline
     run_symbolic.py  symbolic approach on any domain
     run_legacy.py    legacy approach on gridworld
     run_ablation.py  named conditions x seeds
     ceilings.py      what any controller can achieve per instance
     regression.py    legacy policies -> symbolic rules -> identical PRISM results
+    transfer.py      a run's frozen final rules, certified on every instance of a dataset
+    calibrate.py     each requirement's range over all controllers, and the domain's reference policies
     compare.py       end-to-end comparison report
     results_io.py    reading finished runs (result files, recorded settings, legacy keep-best)
   configs/           settings, one folder per tool (see docs/config.md):
-                       run/ (default.yaml + conditions/), ablation/, regression/, plot/ (one per figure)
+                       run/ (default.yaml + conditions/), ablation/, regression/, transfer/, plot/ (one per figure)
   domains/           case studies (see domains/README.md), each with its datasets:
-                       gridworld/ (reference), uuv/ (pipeline-inspection AUV, Paessler et al. 2023)
+                       gridworld/ (reference), uuv/ (pipeline-inspection AUV, Paessler et al. 2023),
+                       pacman/ (Pac-Man from the Quantitative Verification Benchmark Set)
   viz/               figures, each made from a configs/plot/ file (see viz/README.md)
   tests/
   out/results/       run outputs
 DECISIONS.md         design decisions to review
 docs/                semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids),
                      openrouter.md (running on OpenRouter, and its smoke test),
-                     scheduler.md (threads, lockstep and event schedulers), testing_scheduler.md (how they were tested)
+                     scheduler.md (threads, lockstep and event schedulers), related_work_survey.md and
+                     positioning.md (related work), transfer_search.md (the rule-transfer experiment)
 ```
 
 ## Running (from `PRISM-Guided-Learning/`)
@@ -63,7 +67,8 @@ python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set 
 ```
 
 ```bash
-# event: each instance moves on as soon as its own LLM answer or PRISM result is ready (docs/scheduler.md)
+# event, the default for symbolic runs: each instance moves on as soon as its own LLM answer or PRISM result is
+# ready (docs/scheduler.md)
 python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=event --out out/results/symbolic_grid20_event
 ```
 
@@ -77,6 +82,20 @@ python src/ceilings.py
 
 ```bash
 python src/regression.py
+```
+
+```bash
+python src/calibrate.py --domain uuv --data uuv_paper.csv
+```
+
+```bash
+# one rule set per training set of grids (run.train_sets), on OpenRouter
+python src/run_ablation.py haiku_mi_grid_large --unseeded 1
+```
+
+```bash
+# certify a run's frozen final rules on every grid of its dataset (settings: configs/transfer/default.yaml)
+python src/transfer.py out/results/ablations/haiku_rl2_grid_large_closer/seed_none_2
 ```
 
 ```bash

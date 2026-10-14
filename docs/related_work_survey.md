@@ -1,6 +1,6 @@
-# Related-work survey, phase 1: probabilistic generate-then-verify refinement loops
+# Related-work survey: probabilistic generate-then-verify refinement loops
 
-Compiled 2026-10-08. This is phase 1 of 2: it finds, reads and characterises existing work. It makes no comparison with this project's approach and no novelty argument; phase 2 does that.
+Compiled 2026-10-08. It finds, reads and characterises existing work. It makes no comparison with this project's approach and no novelty argument; `docs/positioning.md` does that.
 
 ## How to read this
 
@@ -1328,7 +1328,7 @@ These are observations about the literature found. Each also depends on the limi
 | I.2 Müller et al. | Experiments, skimmed |
 | I.3 1–2–3–Go! | Preliminaries skimmed; results tables in part; appendices not read |
 
-**Abstract or snippet only, available.** These are the tables in A.6, B.8, C.4, D.3, E.2, F.5, G.7, H.3, I.5, J.2, K and L. They were left at abstract level for time, because they are peripheral or background, or because their facts were already covered by a full entry. If phase 2 needs more depth, the most useful next reads are probably:
+**Abstract or snippet only, available.** These are the tables in A.6, B.8, C.4, D.3, E.2, F.5, G.7, H.3, I.5, J.2, K and L. They were left at abstract level for time, because they are peripheral or background, or because their facts were already covered by a full entry. For more depth, the most useful next reads are probably:
 1. Corrêa et al., NeurIPS 2025 (B.8)
 2. Badings et al., STTT 2022 (F.5)
 3. van der Vegt et al., TACAS 2023 (F.5)
