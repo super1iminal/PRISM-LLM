@@ -10,8 +10,8 @@ Working style (Asher): many cheap Haiku runs **in parallel**, iterate quickly ("
 
 ## Where things stand
 
-- Branch `rule-language` (worktree `../PRISM-LLM-rules`): rule language (constants, features, `any`, general mode), `src/transfer.py`, `viz/plot_transfer.py`, multi-instance training (`run.train_sets`), and Nicholas's scheduler work (merged Oct 13: the planner yields PRISM calls; `event` is the default scheduler for symbolic runs).
-- Branch `rule-language-generation` (worktree `../PRISM-LLM-vocab`, local only, from `script-jpg/PRISM-LLM`): the LLM-written vocabulary, plus two Windows test fixes and level-0 conditions. Not merged, not run.
+- Branch `rule-language` (checked out in the main checkout; no worktrees): rule language (constants, features, `any`, general mode), `src/transfer.py`, `viz/plot_transfer.py`, multi-instance training (`run.train_sets`), and Nicholas's scheduler work (merged Oct 13: the planner yields PRISM calls; `event` is the default scheduler for symbolic runs).
+- Branch `rule-language-generation` (on `origin` as a backup; from Nicholas's fork `script-jpg/PRISM-LLM`): the LLM-written vocabulary, plus two Windows test fixes and level-0 conditions. Not merged, not run.
 - Results so far (`DECISIONS.md` has the numbers):
   - Single-grid training: rules overfit to their grid (Sonnet: 9 of 380 other pairs certify). Even with only the literals 0 and 1, rules identify instances through offsets (`x = G2R & y = G2C - 1`) and relations between constants (`G2R = G3R + 1`).
   - With the shortest-path feature `closer`, Haiku writes nearly the same generic greedy rule set every time; it certifies the grids where greedy-and-safe works (9–14 of 20) and none of the others. Without `closer`, nothing transfers.
@@ -47,4 +47,4 @@ Combinations are expected: the target is the first combination that makes Haiku 
 - `event` scheduler: the first live runs with it are this work's runs; `run.scheduler=threads` compares timings with earlier runs.
 - Joint LP queries on 13x13 grids can take up to `prism.timeout_s` (15 min); a timeout counts as undecided.
 - Don't `cd` into output directories (Windows locks); commit parquet, `outputs/` JSON and transfer CSVs, not logs.
-- OpenRouter key: repo-root `.env` of the main checkout (`set -a && . ../../PRISM-LLM/.env` from a worktree's `PRISM-Guided-Learning/`); never print or commit it.
+- OpenRouter key: repo-root `.env` (`set -a && . ../.env` from `PRISM-Guided-Learning/`); never print or commit it.
