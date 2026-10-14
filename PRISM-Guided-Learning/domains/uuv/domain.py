@@ -10,7 +10,6 @@ Dataset rows (CSV): name, min_visib, max_visib, current_prob, inspect, deadline,
 safe_threshold, on_time_threshold, and optionally energy_threshold and fail_scale (every thruster-failure
 probability times this factor; default 1, the paper's values).
 """
-from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -56,8 +55,7 @@ def scaled_failures(rows: List[Dict[str, Any]], absorbing: str, k: float) -> Lis
 class UUV(Domain):
 
     def load_instances(self, dataset: str) -> List[Instance]:
-        path = Path(dataset) if Path(dataset).is_absolute() else self.root / "data" / dataset
-        df = pd.read_csv(path, index_col=False)
+        df = self.read_dataset(dataset)
         instances = []
         for idx, row in df.iterrows():
             instances.append(Instance(id=str(idx), data={

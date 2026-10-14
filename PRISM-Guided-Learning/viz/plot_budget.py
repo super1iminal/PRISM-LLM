@@ -12,7 +12,6 @@ Usage (from PRISM-Guided-Learning/):
 Settings: the plot config (PlotConfig below); a run can be a condition dir, whose seed_* runs are pooled.
 Writes the figure and a CSV (same stem).
 """
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
@@ -26,7 +25,7 @@ import pandas as pd  # noqa: E402
 from loaders import load_domain  # noqa: E402
 from config import plot_config  # noqa: E402
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
-                        requirements_by_sample, run_facts)
+                        requirements_by_sample, run_facts, sample_records)
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -83,8 +82,7 @@ def legacy_curve(run_dir: Path, max_k: int) -> list:
     instances = load_domain("gridworld").load_instances(run_facts(run_dir).dataset)
     by_sample = requirements_by_sample(run_dir)
     rows = []
-    for path in sorted((run_dir / "outputs").glob("sample_*.json")):
-        rec = json.loads(path.read_text(encoding="utf-8"))
+    for rec in sample_records(run_dir).values():
         probs = rec.get("iteration_prism_probs", [])
         for k in range(1, max_k + 1):
             prefix = {"iteration_prism_probs": probs[:k]}   # no final_prism_probs: replay keep-best on k rounds

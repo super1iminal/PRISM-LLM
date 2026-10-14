@@ -20,15 +20,17 @@ All templates are Jinja2 and are rendered with `Domain.context(instance)`.
 """
 import importlib.util
 import inspect
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import jinja2
+import pandas as pd
 import yaml
 
-from core.rules import Constant, Feature, Value, Variable, Vocabulary
+from core.rules import Constant, Feature, SymbolicPolicy, Value, Variable, Vocabulary
 from settings import DOMAINS_PATH
 
 CORE_TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -104,6 +106,11 @@ class Spec:
         features = [f for f in self.features if f.name not in rules.hidden_features]
         return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general)
 
+    def policy(self, rules: Iterable[Tuple[str, str]], vocabulary: Optional[Vocabulary] = None) -> SymbolicPolicy:
+        """`(condition, action)` pairs parsed into a policy over these variables and actions, with `vocabulary`'s
+        names if given; raises RuleError listing every bad rule."""
+        return SymbolicPolicy.from_raw(self.variables, list(self.actions), rules, vocabulary)
+
 
 @dataclass
 class Instance:
@@ -137,6 +144,19 @@ class Domain:
     def horizon(self, instance: Instance) -> Optional[int]:
         """Optional occupancy horizon for the mass analysis (used when the config asks the domain)."""
         return None
+
+    # ---------------------------------------------------------------- the domain's data files
+
+    def read_dataset(self, dataset: str) -> pd.DataFrame:
+        """A dataset's rows: a CSV file, given by absolute path or by name in `domains/<name>/data/`."""
+        path = Path(dataset) if Path(dataset).is_absolute() else self.root / "data" / dataset
+        return pd.read_csv(path, index_col=False)
+
+    def reference_policies(self) -> Dict[str, List[Tuple[str, str]]]:
+        """Name -> `(condition, action)` rules of the domain's hand-written reference policies
+        (`data/reference_policies.json`); {} if it has none."""
+        path = self.root / "data" / "reference_policies.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
     # ---------------------------------------------------------------- template-backed defaults
 

@@ -8,7 +8,6 @@ for symbolic, in the worst case over all completions of the (possibly partial) r
 With per-instance ceilings (src/ceilings.py, picked up automatically), the report also gives
 solved-of-solvable and the shortfall below what is actually achievable (min(threshold, optimum)).
 """
-import json
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -19,7 +18,7 @@ import pandas as pd
 from config import plot_config
 from core.domain import Requirement, load_domain
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall, requirements_by_sample,
-                        run_facts)
+                        run_facts, sample_records)
 from settings import RESULTS_PATH
 
 PREFIXES = ("legacy_", "symbolic_worst_", "symbolic_best_")   # probability columns that get metrics
@@ -66,8 +65,7 @@ def per_sample_table(legacy_dir: Path, symbolic_dir: Path,
 
     # The legacy parquet's final row is the last iteration; its outcome is the kept-best policy.
     leg_final_probs = {}
-    for path in sorted((legacy_dir / "outputs").glob("sample_*.json")):
-        rec = json.loads(path.read_text(encoding="utf-8"))
+    for rec in sample_records(legacy_dir).values():
         leg_final_probs[rec["sample_id"]] = legacy_kept(rec, instances[rec["sample_id"]])
 
     requirements = sorted({c[len("final_worst_"):] for c in sym.columns if c.startswith("final_worst_")})

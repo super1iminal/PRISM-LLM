@@ -10,7 +10,6 @@ member. If one of them does, the family is trivial: a fixed simple policy covers
 Run from PRISM-Guided-Learning/:
     python domains/uuv/data/failure_sweep.py [uuv_paper.csv]
 """
-import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -20,10 +19,8 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
-from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
 
-REFERENCE = json.loads((Path(__file__).parent / "reference_policies.json").read_text(encoding="utf-8"))
 FACTORS = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
 
 
@@ -36,26 +33,26 @@ def values(domain, instance, cfg, policies):
     out = {"best": {r.name: bounds[2 * i] for i, r in enumerate(reqs)}, "bound": {r.name: r.bound for r in reqs},
            "threshold": {r.name: r.threshold for r in reqs}}
     for name, rules in policies.items():
-        v = verifier.verify(SymbolicPolicy.from_raw(verifier.spec.variables, list(verifier.spec.actions), rules),
-                            analysis=False)
+        v = verifier.verify(verifier.spec.policy(rules), analysis=False)
         out[name] = dict(v.worst)
     return out
 
 
 def main(dataset: str = "uuv_paper.csv") -> None:
     domain = load_domain("uuv")
+    references = domain.reference_policies()
     cfg = load_config()
-    passes_all = {name: True for name in REFERENCE}
+    passes_all = {name: True for name in references}
     for instance in domain.load_instances(dataset):
         base = values(domain, instance, cfg, {})
         slack = {r: abs(base["best"][r] - base["threshold"][r]) for r in base["best"]}
         print(f"{instance.data['name']}: slack at k=1 " + ", ".join(f"{r} {s:.4f}" for r, s in slack.items()))
         for k in FACTORS:
-            v = values(domain, replace(instance, data={**instance.data, "fail_scale": k}), cfg, REFERENCE)
+            v = values(domain, replace(instance, data={**instance.data, "fail_scale": k}), cfg, references)
             thr = {r: v["best"][r] - slack[r] if v["bound"][r] == ">=" else v["best"][r] + slack[r] for r in slack}
             ok = lambda r, x: x >= thr[r] - 1e-9 if v["bound"][r] == ">=" else x <= thr[r] + 1e-9  # noqa: E731
             line = []
-            for name in REFERENCE:
+            for name in references:
                 fails = [r for r in slack if not ok(r, v[name][r])]
                 passes_all[name] &= not fails
                 line.append(f"{name} {'ok' if not fails else 'fails ' + '/'.join(fails)}")

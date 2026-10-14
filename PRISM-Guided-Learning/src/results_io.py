@@ -26,6 +26,12 @@ _quiet.addHandler(logging.NullHandler())
 _quiet.propagate = False
 
 
+def sample_records(run_dir) -> Dict[int, dict]:
+    """Sample id -> the run's per-sample record (`outputs/sample_<id>.json`), in sample order."""
+    return {int(path.stem.split("_")[1]): json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((Path(run_dir) / "outputs").glob("sample_*.json"))}
+
+
 @dataclass
 class RunFacts:
     """What a finished run was, as far as reports and figures need to know."""

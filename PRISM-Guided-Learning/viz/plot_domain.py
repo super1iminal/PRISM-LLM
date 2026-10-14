@@ -9,7 +9,6 @@ the bare MDP (min..max), the dashed line is the threshold. Dots are worst-case v
 ticks: best case) of each symbolic run's final policy and of the domain's reference policies
 (`domains/<domain>/data/reference_policies.json`, if present). Also writes a markdown table.
 """
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +23,6 @@ import pandas as pd  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from config import load_config, plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
-from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
 from results_io import SYMBOLIC_RESULTS, run_facts  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE  # noqa: E402
@@ -67,8 +65,7 @@ def main():
     domain = load_domain(cfg.domain)
     instances = domain.load_instances(cfg.dataset)
     runs = [(label, final_results(Path(path))) for label, path in cfg.symbolic.items()]
-    ref_path = domain.root / "data" / "reference_policies.json"
-    references = json.loads(ref_path.read_text(encoding="utf-8")) if ref_path.exists() else {}
+    references = domain.reference_policies()
 
     reqs = domain.spec(instances[0]).requirements
     height = (0.45 * (len(runs) + len(references)) + 1.6) * len(instances)
@@ -88,7 +85,7 @@ def main():
             missing = [r.name for r in spec.requirements if r.name not in worst]   # runs older than a requirement
             rows.append((f"{label} (no {', '.join(missing)})" if missing else label, worst, best, COLORS[k], ok))
         for name, rules in references.items():
-            v = verifier.verify(SymbolicPolicy.from_raw(spec.variables, list(spec.actions), rules), analysis=False)
+            v = verifier.verify(spec.policy(rules), analysis=False)
             ok = all(r.satisfied(v.worst[r.name]) for r in spec.requirements)
             rows.append((name, v.worst, v.best, INK_2, ok))
         for label, worst, best, _, ok in rows:

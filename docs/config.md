@@ -7,6 +7,7 @@ Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run 
 | `run/` | `run_symbolic.py`, `run_legacy.py`, `run_ablation.py`, `ceilings.py` | `default.yaml` (every key in the table below) and `conditions/<name>.yaml` |
 | `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides; `--unseeded N` runs N repeats without a seed instead) |
 | `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
+| `transfer/` | `transfer.py` | `default.yaml`: `workers` (target instances checked in parallel; `--workers` overrides) |
 | `plot/` | `viz/` scripts, `compare.py` | one file per figure or report (no default): `script:` names the script it is for, then its runs, labels, title and output. Run `python viz/<script>.py configs/plot/<figure>.yaml` |
 
 - `run/conditions/<name>.yaml`: one file per named run condition (B1, B2, R1–R5, D7, S1, S4, S5, V1, V2, L1, L2, U1, `pre_phase_a`), each a small override of the default, selected with `--condition <name>`. A new kind of run gets a new file. B2 and the conditions compared with it set `planner.retry: "stall:2"`.

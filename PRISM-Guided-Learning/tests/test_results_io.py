@@ -6,7 +6,7 @@ import pytest
 from config import load_config
 from core.domain import Requirement, load_domain
 from results_io import (LEGACY_RESULTS, PRE_CONFIG_RUNS, legacy_kept, met_and_shortfall, requirements_by_sample,
-                        run_facts)
+                        run_facts, sample_records)
 
 
 def test_run_facts_come_from_the_recorded_config(tmp_path):
@@ -63,3 +63,12 @@ def test_legacy_kept_replays_keep_best():
     assert legacy_kept(record, instance) == better
     assert legacy_kept({"final_prism_probs": worse, **record}, instance) == worse   # newer runs store it
     assert legacy_kept({}, instance) == {}
+
+
+def test_sample_records_are_keyed_by_sample_id_in_order(tmp_path):
+    (tmp_path / "outputs").mkdir()
+    for sid in (10, 2, 0):
+        (tmp_path / "outputs" / f"sample_{sid:03d}.json").write_text(json.dumps({"id": sid}), encoding="utf-8")
+    records = sample_records(tmp_path)
+    assert list(records) == [0, 2, 10] and records[10] == {"id": 10}
+    assert sample_records(tmp_path / "missing") == {}

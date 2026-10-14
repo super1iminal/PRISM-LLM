@@ -246,7 +246,7 @@ class SymbolicPlanner:
         for m in ep.members:
             spec = m.verifier.spec
             try:
-                policies.append(SymbolicPolicy.from_raw(spec.variables, list(spec.actions), raw, m.vocabulary))
+                policies.append(spec.policy(raw, m.vocabulary))
             except RuleError as e:
                 raise RuleError(f"on {m.label}: {e}" if len(ep.members) > 1 else str(e)) from e
         return policies

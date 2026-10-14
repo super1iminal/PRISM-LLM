@@ -12,7 +12,6 @@ measures (expected energy and time to finish) for each policy, whether it meets 
 (reward ones such as the energy budget included), and our North Sea rules transferred unchanged to
 the Caribbean.
 """
-import json
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -25,10 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from config import load_config, plot_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
 from core.prism import PrismRunner  # noqa: E402
-from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
 from loaders import short_model  # noqa: E402
-from results_io import run_facts  # noqa: E402
+from results_io import run_facts, sample_records  # noqa: E402
 from theme import GRID, INK, INK_2, SURFACE, style  # noqa: E402,F401
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"
@@ -50,7 +48,7 @@ class PlotConfig:
 def evaluate(verifier, rules):
     """Worst-case requirement values and expected (energy, time) to finish of a full rule policy."""
     spec = verifier.spec
-    policy = SymbolicPolicy.from_raw(spec.variables, list(spec.actions), rules)
+    policy = spec.policy(rules)
     v = verifier.verify(policy, analysis=False)
     costs = verifier.runner.run(verifier.compose(policy), COSTS).initial_values
     return v, costs
@@ -69,8 +67,7 @@ def main():
 
     domain = load_domain("uuv")
     instances = domain.load_instances(cfg.dataset)
-    ours = [[(r["condition"], r["action"]) for r in json.loads(p.read_text(encoding="utf-8"))["final_rules"]]
-            for p in sorted((symbolic / "outputs").glob("sample_*.json"))]
+    ours = [[(r["condition"], r["action"]) for r in rec["final_rules"]] for rec in sample_records(symbolic).values()]
     run = load_config()
     runner = PrismRunner(replace(run.prism, method=cfg.prism_method))   # the paper's solver, for its Table 2
 

@@ -24,7 +24,6 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
-from core.rules import SymbolicPolicy  # noqa: E402
 from core.verifier import PolicyVerifier  # noqa: E402
 from domains.gridworld.domain import MOVES, SLIP_LEFT, SLIP_RIGHT, expand_cycle  # noqa: E402
 
@@ -90,8 +89,7 @@ def main(*datasets):
             verifier = PolicyVerifier(domain, inst, cfg)
             reqs = verifier.spec.requirements
             for variant in VARIANTS:
-                policy = SymbolicPolicy.from_raw(verifier.spec.variables, list(verifier.spec.actions),
-                                                 template_rules(inst.data, variant))
+                policy = verifier.spec.policy(template_rules(inst.data, variant))
                 v = verifier.verify(policy, analysis=False)
                 if any(abs(v.worst[r.name] - r.threshold) < NEAR for r in reqs):   # verdict could flip: exact check
                     v = verifier.verify_exact(policy)[0] or v

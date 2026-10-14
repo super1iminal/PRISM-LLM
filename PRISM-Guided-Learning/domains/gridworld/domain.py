@@ -6,7 +6,6 @@ actions are left open for the policy.
 """
 import ast
 from collections import deque
-from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 import pandas as pd
@@ -45,8 +44,7 @@ def _parse(value, default):
 class GridWorld(Domain):
 
     def load_instances(self, dataset: str) -> List[Instance]:
-        path = Path(dataset) if Path(dataset).is_absolute() else self.root / "data" / dataset
-        df = pd.read_csv(path, index_col=False)
+        df = self.read_dataset(dataset)
         instances = []
         for idx, row in df.iterrows():
             instances.append(Instance(id=str(idx), data={

@@ -17,7 +17,6 @@ dataset and PRISM limits come from the run config (configs/run/default.yaml).
 Usage: python src/regression.py [--config FILE] [--set key=value ...]
 """
 import argparse
-import json
 import logging
 import os
 import sys
@@ -30,11 +29,11 @@ import pandas as pd
 from config import CONFIG_DIR, load_config, load_file
 from core.domain import load_domain
 from core.prism import PrismError, PrismRunner
-from core.rules import SymbolicPolicy
 from core.verifier import PolicyVerifier
 from legacy.gridworld import GridWorld as LegacyGridWorld
 from legacy.prism_model import PrismModelGenerator
 from legacy.requirements import SimplifiedVerifier
+from results_io import sample_records
 from settings import PROJECT_ROOT
 
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -82,8 +81,7 @@ def main():
     default_runner = PrismRunner(replace(cfg.prism, method=""))   # PRISM defaults, as in the legacy run
 
     jobs = []
-    for path in sorted((run_dir / "outputs").glob("sample_*.json")):
-        record = json.loads(path.read_text(encoding="utf-8"))
+    for record in sample_records(run_dir).values():
         instance = instances[record["sample_id"]]
         for it, (policy, probs) in enumerate(zip(record["iteration_policies"], record["iteration_prism_probs"]), 1):
             jobs.append((record["sample_id"], it, instance, policy, probs))
@@ -100,7 +98,7 @@ def main():
         sample_id, iteration, instance, legacy_policy, stored = job
         rules = legacy_policy_to_rules(legacy_policy, len(instance.data["goals"]))
         verifier = PolicyVerifier(domain, instance, cfg, default_runner)
-        policy = SymbolicPolicy.from_raw(verifier.spec.variables, list(verifier.spec.actions), rules)
+        policy = verifier.spec.policy(rules)
         v = verifier.verify(policy, analysis=False)
         names = [r.name for r in verifier.spec.requirements]
         # Interval iteration can fail to converge (policies with non-progressing loops); then fall

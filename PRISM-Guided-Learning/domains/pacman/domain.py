@@ -9,10 +9,7 @@ probabilities at crossings that depend on their heading and on where Pac-Man is.
 
 Dataset rows (CSV): name, max_steps, crash_threshold.
 """
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import pandas as pd
 
 from core.domain import Domain, Instance
 
@@ -28,8 +25,7 @@ HEADINGS = ("dP", "dG0", "dG1")
 class PacMan(Domain):
 
     def load_instances(self, dataset: str) -> List[Instance]:
-        path = Path(dataset) if Path(dataset).is_absolute() else self.root / "data" / dataset
-        df = pd.read_csv(path, index_col=False)
+        df = self.read_dataset(dataset)
         return [Instance(id=str(idx), data={"name": str(row["name"]), "max_steps": int(row["max_steps"]),
                                             "crash_threshold": float(row["crash_threshold"])})
                 for idx, row in df.iterrows()]

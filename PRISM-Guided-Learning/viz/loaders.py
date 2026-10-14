@@ -7,7 +7,6 @@ Both loaders return a DataFrame indexed by sample_id with columns:
 Symbolic runs are read from their parquet when present, otherwise reconstructed from the
 worker logs, which is how partial/aborted runs (which never saved a parquet) are plotted.
 """
-import json
 import re
 import sys
 from pathlib import Path
@@ -21,7 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from core.domain import load_domain  # noqa: E402
 from results_io import (LEGACY_RESULTS, SYMBOLIC_RESULTS, legacy_kept, met_and_shortfall,  # noqa: E402
-                        requirements_by_sample, run_facts)
+                        requirements_by_sample, run_facts, sample_records)
 
 
 
@@ -39,8 +38,7 @@ def load_legacy(run_dir: Path) -> pd.DataFrame:
     df = pd.read_parquet(run_dir / LEGACY_RESULTS).reset_index()
     final = df[df.is_final].set_index("sample_id")
     rows = {}
-    for path in sorted((run_dir / "outputs").glob("sample_*.json")):
-        rec = json.loads(path.read_text(encoding="utf-8"))
+    for rec in sample_records(run_dir).values():
         sid = rec["sample_id"]
         probs = legacy_kept(rec, instances[sid])
         f = final.loc[sid]
