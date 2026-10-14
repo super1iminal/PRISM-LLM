@@ -68,7 +68,8 @@ def expected(instance):
 # ---------------------------------------------------------------- PRISM calls as background processes
 
 def test_a_background_process_reads_its_output_like_subprocess_run():
-    call = py(r"import sys; sys.stdout.write('a\r\nb\rc\n'); sys.stdout.flush(); sys.stderr.write('err\n')")
+    # Raw bytes: a text-mode write on Windows would turn the child's own \n into \r\n
+    call = py(r"import sys; sys.stdout.buffer.write(b'a\r\nb\rc\n'); sys.stdout.flush(); sys.stderr.buffer.write(b'err\n')")
     process = PrismProcess(call)
     while not process.done():
         time.sleep(0.01)

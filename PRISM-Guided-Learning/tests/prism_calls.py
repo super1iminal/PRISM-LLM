@@ -31,7 +31,8 @@ def normalize(cmd: List[str]) -> List[str]:
     for arg in cmd[1:]:
         name = os.path.basename(arg)
         if name in INPUTS and os.path.isfile(arg):
-            out.append(f"{name}#{hashlib.sha256(Path(arg).read_bytes()).hexdigest()[:16]}")
+            content = Path(arg).read_bytes().replace(b"\r\n", b"\n")   # Windows writes text files with CRLF
+            out.append(f"{name}#{hashlib.sha256(content).hexdigest()[:16]}")
         elif os.path.isabs(arg) and "prism_" in arg:
             out.append(name)
         else:
