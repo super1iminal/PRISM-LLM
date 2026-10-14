@@ -13,7 +13,6 @@ Per condition, over its runs (mean, and the range over runs):
   * tokens and dollars per rule set (prompt and output tokens over every round, at the configured prices).
 And a target x condition table: how often each target is certified, as a share of the condition's rule sets.
 """
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,9 +22,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from config import plot_config  # noqa: E402
-from results_io import sample_records  # noqa: E402
+from experiments.metrics import run_row, transfer_numbers  # noqa: E402,F401  (transfer_numbers: re-exported)
 from run_ablation import existing_root  # noqa: E402
-from transfer import csv_path, parse_ids  # noqa: E402
+from transfer import parse_ids  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 
@@ -34,7 +33,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 class PlotConfig:
     """A configs/plot/*.yaml file for this script (configs/plot/transfer_search.yaml documents each key)."""
     script: str
-    root: Optional[str]              # runs: <root>/<condition>/seed_*/; null: out/results/core or ablations (configs/core.yaml)
+    root: Optional[str]              # runs: <root>/<condition>/seed_*/; null: out/results/core or ablations (the comparison experiments, configs/experiments/)
     dataset: str                     # target dataset of the transfer CSVs
     targets: str                     # held-out target ids, e.g. "12-19"
     rules: str                       # final | determinized (src/determinize.py): which transfer CSVs to read
@@ -50,55 +49,6 @@ class PlotConfig:
 def run_dirs(root: Path, condition: str) -> List[Path]:
     """The condition's finished runs (those with per-sample outputs), in name order."""
     return sorted(p for p in (root / condition).glob("seed_*") if (p / "outputs").is_dir())
-
-
-def run_row(run_dir: Path, dataset: str, targets: List[int], prices: Dict[str, List[float]],
-            rules: str = "final", groups: Dict[str, str] = None, source_groups: Dict[str, str] = None) -> dict:
-    """One run's numbers: sets solved, tokens and cost per set, and its held-out transfer on `targets`."""
-    records = sample_records(run_dir)
-    prompt = [sum(it.get("llm_prompt_tokens") or 0 for it in r.get("iterations", [])) for r in records.values()]
-    output = [sum(it.get("llm_output_tokens") or 0 for it in r.get("iterations", [])) for r in records.values()]
-    model = _model(run_dir)
-    price_in, price_out = prices.get(model, [float("nan"), float("nan")])
-    row = {"run": run_dir.name, "sets": len(records), "solved": sum(bool(r.get("success")) for r in records.values()),
-           "prompt_tokens": sum(prompt) / max(len(records), 1), "output_tokens": sum(output) / max(len(records), 1)}
-    row["dollars"] = (row["prompt_tokens"] * price_in + row["output_tokens"] * price_out) / 1e6
-    return {**row, **transfer_numbers(csv_path(run_dir, dataset, rules), targets, groups, source_groups)}
-
-
-def transfer_numbers(path: Path, targets: List[int], groups: Dict[str, str] = None,
-                     source_groups: Dict[str, str] = None) -> dict:
-    """Held-out targets certified per rule set, and the share of requirements met on them, from a transfer CSV;
-    `checked` is False when the CSV is missing or does not cover every target. With `groups`, a source counts
-    only on its own group's targets (`source_groups`), and `by_group` gives certified per rule set per group. A
-    source whose group is "*" (a policy for every group, e.g. the template) counts once per group, on its targets."""
-    if not path.exists():
-        return {"checked": False}
-    df = pd.read_csv(path)
-    df = df[df.target.isin(targets) & ~df.trained.astype(bool)]
-    checked = set(targets) <= set(df.target)
-    group_of = {}
-    if groups:
-        members = {g: set(parse_ids(spec)) for g, spec in groups.items()}
-        of_target = {t: g for g, ts in members.items() for t in ts}
-        wanted = {str(s): (source_groups or {}).get(str(s)) for s in df.source.unique()}
-        everywhere = [wanted[str(s)] == "*" for s in df.source]
-        df = df.assign(source=[f"{s}@{of_target.get(t)}" if every else s
-                               for s, t, every in zip(df.source, df.target, everywhere)])
-        group_of = {s: (s.rsplit("@", 1)[1] if isinstance(s, str) and "@" in s and wanted.get(s.rsplit("@", 1)[0]) == "*"
-                        else wanted.get(str(s))) for s in df.source.unique()}
-        df = df[[group_of[s] is not None and t in members.get(group_of[s], ()) for s, t in zip(df.source, df.target)]]
-    certified = df.certified.fillna(False).astype(bool)
-    per_source = certified.groupby(df.source).sum()
-    met = (df.met.fillna(0) / df.requirements.fillna(1)).mean() if "met" in df else 0.0
-    by_group = {g: per_source[[s for s in per_source.index if group_of.get(s) == g]].mean() for g in (groups or {})}
-    return {"checked": checked, "certified": per_source.mean(), "certified_best": per_source.max(),
-            "met_share": met, "by_target": certified.groupby(df.target).mean().to_dict(), "by_group": by_group}
-
-
-def _model(run_dir: Path) -> str:
-    path = run_dir / "config.json"
-    return json.loads(path.read_text(encoding="utf-8"))["llm"]["model"] if path.exists() else ""
 
 
 def summarize(cfg: PlotConfig) -> pd.DataFrame:

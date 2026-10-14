@@ -548,6 +548,21 @@ def fixed_order(rules: Iterable[Tuple[str, str]], order: Sequence[str]) -> List[
     return [(c, a) for c, action in rules for a in (order if action == ANY else [action])]
 
 
+def open_ties(rules: Iterable[Tuple[str, str]], actions: Sequence[str]) -> List[Tuple[str, str]]:
+    """The inverse of `fixed_order`: each run of consecutive rules with one condition and every action becomes
+    `c -> any`, so the order no longer breaks ties between the actions the condition allows (the worst case then
+    covers every choice). Runs that name only some actions are explicit preferences and stay as they are."""
+    rules, out, i = list(rules), [], 0
+    while i < len(rules):
+        j = i
+        while j < len(rules) and rules[j][0] == rules[i][0]:
+            j += 1
+        named = {a for _, a in rules[i:j]}
+        out += [(rules[i][0], ANY)] if named == set(actions) else rules[i:j]
+        i = j
+    return out
+
+
 def action_orders(actions: Sequence[str], kind: str) -> List[Tuple[str, ...]]:
     """Candidate orders for `fixed_order`: every permutation of the actions (`all`), the rotations of their declared
     order (`rotations`), or the declared order alone (`declared`)."""

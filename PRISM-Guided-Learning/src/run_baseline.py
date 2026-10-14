@@ -5,7 +5,9 @@ Usage (from PRISM-Guided-Learning/):
 Settings: the baseline config (BaselineConfig below; configs/baselines/README.md documents each key). Writes
 out/results/baselines/<name>/transfer_<dataset stem>.csv in src/transfer.py's format (one row per source policy and
 target, `trained` marking the training instances) plus `method`, and prints certified targets per source. Rows
-of an existing CSV for targets this run does not check are kept.
+of an existing CSV for targets this run does not check are kept. `--rules open` certifies the same lists with their
+action orders left open (core.rules.open_ties), into transfer_<dataset stem>_open.csv: certified however ties are
+broken.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +21,7 @@ from baselines import load_method
 from config import load_config, load_file
 from core.domain import load_domain
 from core.prism import PrismRunner
+from core.rules import open_ties
 from settings import RESULTS_PATH
 from transfer import certify, merge, parse_ids
 
@@ -39,8 +42,9 @@ class BaselineConfig:
     params: Dict[str, Any]
 
 
-def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH) -> pd.DataFrame:
-    """Fit, certify and write the results of the baseline in `config_path`; returns them."""
+def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH, rules: str = "final") -> pd.DataFrame:
+    """Fit, certify and write the results of the baseline in `config_path` (`rules`: final, or open: with the
+    action orders of its lists left open); returns them."""
     settings = load_file(config_path, BaselineConfig, overrides)
     cfg = load_config(settings.condition)
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
@@ -54,13 +58,17 @@ def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH) -> pd.
     same = Path(target_dataset).name == Path(settings.dataset).name
     pool_of = instances if same else {int(i.id): i for i in domain.load_instances(target_dataset)}
     targets = [pool_of[i] for i in parse_ids(settings.targets)]
+    actions = list(domain.spec(targets[0]).actions)
+    lists = {int(t.id): {s: (open_ties(r, actions) if rules == "open" else r) for s, r in baseline.rules(t).items()}
+             for t in targets}
     with ThreadPoolExecutor(settings.workers) as pool:
-        parts = pool.map(lambda t: certify(domain, cfg, runner, t, baseline.rules(t), settings.exact_near), targets)
+        parts = pool.map(lambda t: certify(domain, cfg, runner, t, lists[int(t.id)], settings.exact_near), targets)
         rows = [row for part in parts for row in part]
     df = pd.DataFrame(rows).sort_values(["source", "target"], key=lambda c: c.astype(str))
     df["trained"] = df.target.isin(train) if same else False
     df["method"] = settings.method
-    out = out_root / config_path.stem / f"transfer_{Path(target_dataset).stem}.csv"
+    suffix = "_open" if rules == "open" else ""
+    out = out_root / config_path.stem / f"transfer_{Path(target_dataset).stem}{suffix}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     merge(df, out).sort_values(["source", "target"], key=lambda c: c.astype(str)).to_csv(out, index=False)
     return df
@@ -70,8 +78,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("config", type=Path, help="Baseline config, e.g. configs/baselines/template.yaml")
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
+    parser.add_argument("--rules", choices=["final", "open"], default="final",
+                        help="open: certify the lists with their action orders left open (*_open.csv)")
     args = parser.parse_args(argv)
-    df = run(args.config, args.set)
+    df = run(args.config, args.set, rules=args.rules)
     certified = df.get("certified", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     per_source = df.assign(certified=certified)[~df.trained].groupby("source").certified.sum()
     print(f"held-out targets certified per source ({df[~df.trained].target.nunique()} held-out targets):")

@@ -27,7 +27,7 @@ import pandas as pd
 from config import CONFIG_DIR, load_file, load_run_config
 from core.domain import load_domain
 from core.prism import PrismError, PrismRunner
-from core.rules import RuleError
+from core.rules import RuleError, open_ties
 from core.verifier import PolicyVerifier
 from results_io import sample_records
 
@@ -69,7 +69,7 @@ def polished_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
 
 
 RULES = {"final": (final_rules, ""), "determinized": (determinized_rules, "_determinized"),
-         "polished": (polished_rules, "_polished")}
+         "polished": (polished_rules, "_polished"), "open": (final_rules, "_open")}
 
 
 def csv_path(run_dir: Path, dataset: str, rules: str = "final") -> Path:
@@ -132,7 +132,9 @@ def main(argv=None):
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     parser.add_argument("--workers", type=int, default=None, help="Shortcut for --set workers=N")
     parser.add_argument("--rules", choices=list(RULES), default="final",
-                        help="The run's final rules, or those of src/determinize.py (written to *_determinized.csv)")
+                        help="The run's final rules; those of src/determinize.py or src/polish.py (written to "
+                             "*_determinized.csv, *_polished.csv); or the final rules with their action orders left "
+                             "open (core.rules.open_ties, *_open.csv: certified however ties are broken)")
     parser.add_argument("--targets", default=None,
                         help='Only these target ids, e.g. "12-19" (rows for other targets in an existing CSV are kept)')
     args = parser.parse_args(argv)
@@ -147,6 +149,9 @@ def main(argv=None):
         wanted = set(parse_ids(args.targets))
         targets = [t for t in targets if int(t.id) in wanted]
     sources = RULES[args.rules][0](args.run_dir)
+    if args.rules == "open":      # ties between the actions a rule allows left open: certified for every tie-break
+        actions = list(domain.spec(targets[0]).actions)
+        sources = {s: open_ties(r, actions) for s, r in sources.items()}
     runner = PrismRunner(cfg.prism)
     with ThreadPoolExecutor(settings.workers) as pool:
         rows = [row for part in pool.map(lambda t: certify(domain, cfg, runner, t, sources, settings.exact_near),

@@ -139,7 +139,7 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
     - Frozen, they hold the optimum on horizons 8-18 and reach 0.662 at 20 and **0.749 at 25**. The 8-16 training gave 0.843 at 25, and 1-2-3-Go! reports 0.869. The best rotation was right, up, left, down every round.
   - **[REVIEW] Threshold for the larger horizons.** At 0.56, just above the 0.5511 optimum, nothing is certified beyond 18 (ours, or 1-2-3-Go!'s 0.869). A threshold per horizon, e.g. a fixed slack over each horizon's optimum, or the UUV-style "best over reference policies plus slack", would turn the 0.749-vs-0.869 gap into certified vs not certified. That is Asher's call.
 - **Core runs and ablations are kept apart.**
-  - `configs/core.yaml` names the core conditions: the method's main configuration on each case study, which the paper's main results come from. They are `haiku_ts_order`, `haiku_ts_order_noclose`, `haiku_fam_order`, `haiku_mi_pacman_long`, `sonnet5_5_ts_order` and `sonnet5_5_fam_order`.
+  - The core runs are the cells of the RQ1 comparison (`configs/experiments/rq1_comparison.yaml`, which replaced `configs/core.yaml`): the method's main configuration on each case study, which the paper's main results come from. They are `haiku_ts_order`, `haiku_ts_order_noclose`, `haiku_fam_order`, `haiku_mi_pacman_long`, `sonnet5_5_ts_order` and `sonnet5_5_fam_order`.
   - The launchers write core runs to `out/results/core/` and every other condition to `out/results/ablations/`; baselines stay in `out/results/baselines/` (`out/results/README.md`).
   - If memory is ever added to the rule language, its conditions and run directories get a `-memory` suffix (Asher).
 - **Sonnet 5.5, one repeat, core settings** (Asher approved one repeat):
@@ -200,6 +200,28 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - 10 rounds, and six training members per family.
 - **[REVIEW] The solver choosing among versions of the LLM's output** (`rules.any_order`, polishing, counterexamples). Asher would prefer the solver only to give feedback, so that the framework carries over to other solvers. For now it may make choices; he is asking Marsha. The feedback-only variants (`declared`, `report`) are in the batch so the two can be compared.
 - **[REVIEW] What this means for the "why LLMs" claim.** With `closer`, short generic lists exist, and a 2-rule list found without an LLM certifies 7/8 validation grids. Trained on the same sets, the search and the feature trees average 4.5 and 4.0, below Haiku's 5.3-5.9, and the hand-written template gets 6. The faithful 1-2-3-Go! trees get 0. So the honest bar is the template, the best searched list and the feature trees, not the published 1-2-3-Go!.
+
+## Research questions: two harnesses over one run store (Oct 14)
+- **Two kinds of experiment, as Asher framed them** (`docs/experiments.md`):
+  - RQ1, comparison (`configs/experiments/rq1_comparison.yaml`): our best configuration per benchmark against each baseline's best.
+  - RQ2, ablations (`configs/experiments/rq2_*.yaml`): one factor at a time against the core configuration. The groups are feedback vs restarts, what the verifier tells the LLM, prompting, the domain's features, training sets and rounds, and who resolves the open choices.
+  - Both run through `src/run_experiment.py`, with a shared base (`src/experiments/base.py`) and shared metrics (`src/experiments/metrics.py`).
+- **Runs are shared through their identity, not their name** (`src/experiments/store.py`).
+  - Identity is the resolved config, minus the name, parallelism, scheduler, timeouts and seed. The model is part of it.
+  - A cell finds every finished run with its identity, so an ablation cell that equals an older condition reuses its runs. Of the 41 RQ2 cells, 15 reuse existing runs. For example, "worst case over the choices" reuses `haiku_ts_norestart` and `haiku_fam_split`.
+  - Runs recorded before `patrol`/`early` (and `obstacle`/`risky`, Pac-Man's `closer_g*`) existed carry an `identity.json` that marks those features as hidden, so they never match newer settings. 47 runs got one. Without it, the v1 and v2 vocabulary runs (`haiku_rl_grid_large` vs `haiku_rl2_grid_large`) looked identical.
+  - **[REVIEW]** Reused runs were made with earlier code. The store assumes that every behaviour change came with a config key, and as far as I can tell it did on this branch. The worst-case cells reuse runs from the first morning of Oct 14, before in-loop order resolution existed; with `any_order: none` that code path is unchanged.
+- **One factor at a time** from the core configuration, 3 repeats per cell (5 for the reference). The reports give the difference to the reference with a 90% bootstrap interval over runs.
+- **New metric: certified with ties left open** (`transfer.py --rules open`, `core.rules.open_ties`). Each run of rules with one condition and every action is read as `c -> any`, and the list is certified in the worst case over every tie-break. A list that passes this way owes nothing to the verifier's choice of order. It answers Asher's question of whether `any` lets PRISM synthesise the policy.
+  - No, per `src/tie_analysis.py` on the numpy model, matching PRISM:
+    - The deciding rule allows one action in 42-56% of reachable states, two in 42-57%, and three or four in under 2%.
+    - The Sonnet rooms list certifies 59/60 family members as frozen, 51/60 with ties open, and 56-60 under every one of the 24 orders.
+    - Haiku's best grid list certifies 8/8 as frozen, 6/8 with ties open, and 7-8 under every order.
+  - PRISM's contribution to a frozen list is one order out of 24, chosen on the training members. Choosing the best action per state would give 60/60, which the method never does.
+- **Sonnet, 3 runs (core settings)**:
+  - Random grids: 6.67 of 8 per list (5.75-7.25), best list 8, every run's library 8/8, 75% of training sets solved, about $0.49 per set.
+  - Families: per list on its own family, rooms / crossing / adjacent 17.7 / 6.7 / 17.7. On all 60 members 32.3 per list. A run's library of 3 lists covers 54.3/60 (45-59). The rooms-trained list certifies 59/60 across all three families in two of the three runs.
+- **Lists carry over across families.** Scored on all 60 members instead of only their own family, Haiku's lists certify 19.2 per list against 9.7 on their own family, and Sonnet's 32.3 against 14.0. A run's library of 3 lists: Haiku 33.8 (24-56), Sonnet 54.3, against 43 for the feature trees' 3 lists and 38 for PPO's. So on families, Sonnet's library beats every baseline's, and Haiku's does not on average.
 
 ## Positioning checks for the transfer experiment
 Details in `docs/positioning.md`, which builds on the related-work survey (`docs/related_work_survey.md`).

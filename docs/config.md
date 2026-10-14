@@ -7,6 +7,7 @@ Settings live in `PRISM-Guided-Learning/configs/`, one folder per tool. The run 
 | `run/` | `run_symbolic.py`, `run_legacy.py`, `run_ablation.py`, `ceilings.py` | `default.yaml` (every key in the table below) and `conditions/<name>.yaml` |
 | `ablation/` | `run_ablation.py` | `default.yaml`: `seeds` (default `[1, 2]`; `--seeds` overrides; `--unseeded N` runs N repeats without a seed instead) |
 | `regression/` | `regression.py` | `default.yaml`: `legacy_run`, `workers`, `epsilon`, `fallback_epsilon`, `tol_stored`, `tol_exact` (documented in the file) |
+| `experiments/` | `run_experiment.py` | one file per research-question experiment (`rq1_comparison.yaml`, `rq2_*.yaml`) and `benchmarks.yaml`; keys and the run store in `docs/experiments.md` |
 | `transfer/` | `transfer.py` | `default.yaml`: `workers` (target instances checked in parallel; `--workers` overrides), `exact_near` (re-check with the exact solvers when a worst case is this close to its threshold) |
 | `baselines/` | `run_baseline.py` | one file per baseline run (method, run condition for the rule language, dataset, training and target ids, method parameters); keys in `baselines/README.md` |
 | `plot/` | `viz/` scripts, `compare.py` | one file per figure or report (no default): `script:` names the script it is for, then its runs, labels, title and output. Run `python viz/<script>.py configs/plot/<figure>.yaml` |
@@ -50,6 +51,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `feedback.blame` | `mass` | blame signal: `mass`, `regret` (one-step regret, no occupancy), `random` (placebo), `none` (no blame section) | S5, V1, V2 |
 | `feedback.horizon` | 100 | mass-analysis occupancy horizon in steps, or `domain` for the domain's own (UUV: the mission deadline, 30 / 70; U1 sets it) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
+| `feedback.trajectory` | `false` | also show one likely way the rules fail (a trace from the start) in REFINE/EXTEND prompts | `rq2_verifier_output` |
 | `feedback.space` | `states` | how feedback names states: `states` (their valuations) or `features` (boolean variables and, per action, the features that hold; no positions) | `haiku_ts_features` |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | catch-all ablation (single-seed runs) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
@@ -67,12 +69,14 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `rules.extended` | `false` | conditions may also use the domain's instance constants and features (`constants`, `features` in `spec.yaml.j2`), and rules the action `any` (allow every action whose condition holds); see `docs/semantics.md` | `rl_*` conditions |
 | `rules.general` | `false` | only the numbers 0 and 1 in conditions, so rules must name instance values and carry over to other instances (with `extended`) | `rl_*` conditions |
 | `rules.hidden_features` | `[]` | domain features left out of the vocabulary (gridworld: `[closer]` hides the shortest-path feature). Conditions written before gridworld's `patrol`/`early` and Pac-Man's `closer_g0`/`closer_g1` existed hide those, so their prompts are unchanged | `rl_*` conditions, `haiku_fam_split` (`[hazard]`) |
-| `rules.any_order` | `none` | `rotations` / `all`: each round, `any` rules are resolved into the action order (rotations of the declared order, or all permutations) that does best on the members; `none`: worst case over the allowed actions (`docs/semantics.md`) | `haiku_ts_order`, `haiku_fam_order` |
+| `rules.any_order` | `none` | `rotations` / `all`: each round, `any` rules are resolved into the action order (rotations of the declared order, or all permutations) that does best on the members; `declared`: always the declared order; `report`: worst case, the best order only named in the feedback; `none`: worst case over the allowed actions (`docs/semantics.md`) | `rq2_choices` |
 | `legacy.max_rounds` | 5 | legacy rounds; with `obs_idx` visible, one call per (goal, obstacle phase) | — |
 | `legacy.retry` | `never` | `stall:k`: after k rounds without improvement, the next round uses the initial prompt | L1 |
 | `legacy.examples` | `true` | the two worked examples in legacy's initial prompt | L2 |
 | `run.workers` / `run.limit` | 2 / `null` | instances in flight (worker threads, the lockstep batch size, or the event scheduler's slots and concurrent LLM requests) / first N instances only | — |
 | `run.train_sets` | `[]` | symbolic only. Groups of instance ids (dataset rows): one rule set per group, written for and verified on every member each round, solved only when every member passes (`core/training.py`, "Training sets" in `semantics.md`). Certify the frozen rules on held-out instances with `src/transfer.py`. `[]`: one rule set per instance | — |
+| `run.hidden_sets` | `[]` | per training set, further instance ids verified and scored every round (keep-best, done) but never shown to the LLM; the prompt only says on how many the rules hold | `rq2_training` |
+| `run.pool_sets` | `[]` | per training set, candidate ids: once the set is solved, the first on which the kept rules fail joins it (counterexample-driven training sets) | `rq2_training` |
 | `run.scheduler` | `null` (symbolic: `event`; legacy: `threads`) | `threads`: each worker solves an instance, calling the LLM and PRISM itself. `lockstep`: every step sends one task per active instance as one batch; between batches the instances' PRISM calls run as parallel processes. `event`: each instance moves on as soon as its own LLM result or PRISM output arrives. `lockstep` and `event` run all planner code in one thread, log their tasks to `<run>/llm_tasks.jsonl` and drive the symbolic planner only. See `docs/scheduler.md`. With Ollama, concurrent requests only run in parallel if `OLLAMA_NUM_PARALLEL` ≥ `run.workers` | — |
 
 

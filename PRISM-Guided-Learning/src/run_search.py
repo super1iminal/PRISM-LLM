@@ -6,7 +6,7 @@ Usage (from PRISM-Guided-Learning/, with the OpenRouter key in the environment: 
 
 Each (condition, repeat) is one job, at most `--max-parallel` at once: `run_ablation.py <condition> --unseeded N
 --repeat k` (skipped when the run has finished), then `transfer.py` on the run for `--targets` (skipped when its
-transfer CSV already covers them), and with `--determinize` src/determinize.py and the transfer check of its rules. Output goes to out/results/<core or ablations>/<condition>/seed_none_<k>.log (configs/core.yaml). Each run
+transfer CSV already covers them), and with `--determinize` src/determinize.py and the transfer check of its rules. Output goes to out/results/<core or ablations>/<condition>/seed_none_<k>.log (the comparison experiments, configs/experiments/). Each run
 keeps up to `run.workers` PRISM processes busy, so `--max-parallel` also caps PRISM's memory use. At the end the
 summary page (viz/transfer_summary.py, `--summary`) is rebuilt, if given.
 """
@@ -15,23 +15,15 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List
-
-import pandas as pd
 
 from config import load_config
+from experiments.base import transfer_done
 from results_io import RESULT_FILES
 from run_ablation import run_dir_for
 from settings import PROJECT_ROOT
-from transfer import csv_path, parse_ids
+from transfer import parse_ids
 
 PYTHON = sys.executable
-
-
-def transfer_done(run_dir: Path, dataset: str, targets: List[int], rules: str = "final") -> bool:
-    """Whether the run's transfer CSV for `dataset` (and `rules`) already has every target in `targets`."""
-    path = csv_path(run_dir, dataset, rules)
-    return path.exists() and set(targets) <= set(pd.read_csv(path).target)
 
 
 def job(condition: str, repeat: int, args, settings: dict) -> str:
