@@ -24,7 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from config import plot_config  # noqa: E402
 from results_io import sample_records  # noqa: E402
-from transfer import parse_ids  # noqa: E402
+from transfer import csv_path, parse_ids  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 
@@ -36,6 +36,7 @@ class PlotConfig:
     root: str                        # runs: <root>/<condition>/seed_*/
     dataset: str                     # target dataset of the transfer CSVs
     targets: str                     # held-out target ids, e.g. "12-19"
+    rules: str                       # final | determinized (src/determinize.py): which transfer CSVs to read
     conditions: List[str]            # in table order
     prices: Dict[str, List[float]]   # model -> [$ per M prompt tokens, $ per M output tokens]
     baselines: Dict[str, str]        # name -> a transfer-format CSV
@@ -48,7 +49,8 @@ def run_dirs(root: Path, condition: str) -> List[Path]:
     return sorted(p for p in (root / condition).glob("seed_*") if (p / "outputs").is_dir())
 
 
-def run_row(run_dir: Path, dataset: str, targets: List[int], prices: Dict[str, List[float]]) -> dict:
+def run_row(run_dir: Path, dataset: str, targets: List[int], prices: Dict[str, List[float]],
+            rules: str = "final") -> dict:
     """One run's numbers: sets solved, tokens and cost per set, and its held-out transfer on `targets`."""
     records = sample_records(run_dir)
     prompt = [sum(it.get("llm_prompt_tokens") or 0 for it in r.get("iterations", [])) for r in records.values()]
@@ -58,7 +60,7 @@ def run_row(run_dir: Path, dataset: str, targets: List[int], prices: Dict[str, L
     row = {"run": run_dir.name, "sets": len(records), "solved": sum(bool(r.get("success")) for r in records.values()),
            "prompt_tokens": sum(prompt) / max(len(records), 1), "output_tokens": sum(output) / max(len(records), 1)}
     row["dollars"] = (row["prompt_tokens"] * price_in + row["output_tokens"] * price_out) / 1e6
-    return {**row, **transfer_numbers(run_dir / f"transfer_{Path(dataset).stem}.csv", targets)}
+    return {**row, **transfer_numbers(csv_path(run_dir, dataset, rules), targets)}
 
 
 def transfer_numbers(path: Path, targets: List[int]) -> dict:
@@ -84,7 +86,7 @@ def _model(run_dir: Path) -> str:
 def summarize(cfg: PlotConfig) -> pd.DataFrame:
     """One row per run of every condition, plus one per baseline CSV."""
     root, targets = PROJECT / cfg.root, parse_ids(cfg.targets)
-    rows = [{"condition": c, **run_row(d, cfg.dataset, targets, cfg.prices)}
+    rows = [{"condition": c, **run_row(d, cfg.dataset, targets, cfg.prices, cfg.rules)}
             for c in cfg.conditions for d in run_dirs(root, c)]
     rows += [{"condition": name, "run": "-", **transfer_numbers(PROJECT / path, targets)}
              for name, path in cfg.baselines.items()]

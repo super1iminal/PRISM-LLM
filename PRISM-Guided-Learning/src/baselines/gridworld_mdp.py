@@ -28,7 +28,7 @@ def _domain_module():
 
 G = _domain_module()
 ACTIONS = list(G.MOVES)                       # up, right, down, left
-FEATURES = ["wall", "hazard", "risky", "toward", "closer", "obstacle"]
+FEATURES = ["wall", "hazard", "risky", "toward", "closer", "obstacle", "patrol", "early"]
 OUTCOMES = {a: [(a, G.PROB_FORWARD), (G.SLIP_LEFT[a], G.PROB_SLIP_LEFT), (G.SLIP_RIGHT[a], G.PROB_SLIP_RIGHT)]
             for a in ACTIONS}
 
@@ -98,6 +98,8 @@ class GridMDP:
                 t = (r + dr, c + dc)
                 f["wall"][i, ai] = not (0 <= t[0] < self.n and 0 <= t[1] < self.n) or t in self.static
                 f["hazard"][i, ai] = t in hazards
+                f["patrol"][i, ai] = t in patrol
+                f["early"][i, ai] = t in later
                 f["risky"][i, ai] = any((r + G.MOVES[side][0], c + G.MOVES[side][1]) in hazards
                                         for side in (G.SLIP_LEFT[a], G.SLIP_RIGHT[a]))
                 f["obstacle"][i, ai] = bool(self.cycle) and t == self.cycle[(o + 1) % self.L]

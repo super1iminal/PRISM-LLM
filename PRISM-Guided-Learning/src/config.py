@@ -74,6 +74,7 @@ class FeedbackConfig:
     horizon: Union[int, str]                  # occupancy steps in the mass analysis, or "domain" (Domain.horizon)
     top_k: int                                # hotspots / rules shown in feedback
     states_per_rule: int
+    space: str                                # states (valuations) | features (feature values per action)
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
@@ -265,6 +266,7 @@ def validate(cfg: Config) -> None:
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
+        "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
         "run.scheduler": (cfg.run.scheduler, {"threads", *SCHEDULERS}),
     }

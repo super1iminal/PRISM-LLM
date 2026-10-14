@@ -15,6 +15,7 @@ class Prompts:
     def __init__(self, domain: Domain, config: Config):
         self.domain = domain
         self.config = config
+        self._feature_policies: Dict[tuple, SymbolicPolicy] = {}   # (member, feature, action) -> `feature -> action`
 
     # ---------------------------------------------------------------- context
 
@@ -94,6 +95,34 @@ class Prompts:
         """`prompt` again, with why the previous answer could not be parsed."""
         return self.domain.render("invalid.md.j2", prompt=prompt, errors=errors)
 
+    def _state(self, member: Member, valuation: Dict[str, Any]) -> str:
+        """How feedback names a state: the domain's rendering of its valuation, or (`feedback.space: features`) its
+        boolean variables and the features that hold, per action, without positions."""
+        if self.config.feedback.space != "features":
+            return self.domain.format_state(valuation)
+        spec, vocab = member.verifier.spec, member.vocabulary
+        actions = list(spec.actions)
+
+        def holds(feature: str, action: str) -> bool:
+            key = (id(member), feature, action)
+            if key not in self._feature_policies:
+                self._feature_policies[key] = spec.policy([(feature, action)], vocab)
+            return self._feature_policies[key].allowed(valuation) == [action]
+
+        flags = [f"{k}={str(v).lower()}" for k, v in valuation.items() if isinstance(v, bool)]
+        flags += [f.name for f in vocab.features if not f.is_action_feature and holds(f.name, actions[0])]
+        moves = [f"{a}: {', '.join(f.name for f in vocab.features if f.is_action_feature and holds(f.name, a)) or 'none'}"
+                 for a in actions]
+        return " & ".join(flags) + (" | " if flags else "") + "; ".join(moves)
+
+    def _merged(self, member: Member, hotspots) -> List[Dict[str, Any]]:
+        """Extend hotspots named by `_state`; states that read the same are merged, their masses summed."""
+        merged: Dict[str, float] = {}
+        for h in hotspots:
+            text = self._state(member, h.valuation)
+            merged[text] = merged.get(text, 0.0) + h.mass
+        return [{"mass": m, "state": t} for t, m in merged.items()]
+
     def table(self, ep: Episode, member: Member, results: Dict[str, Any]) -> str:
         """Results table and previous rules only, asking for a complete new list (`planner.feedback: table`)."""
         return self.render(ep, "table.md.j2", member, **results)
@@ -106,7 +135,7 @@ class Prompts:
         blame = [{
             "rule": b.rule, "mass": b.mass,
             "text": f"{rules[b.rule].condition} (action {rules[b.rule].action})" if b.rule is not None else "",
-            "states": [self.domain.format_state(h.valuation) for h in b.hotspots],
+            "states": list(dict.fromkeys(self._state(member, h.valuation) for h in b.hotspots)),
         } for b in (member.analyzer.rule_blame(v, blamed) if kind != "none" else [])]
         return self.render(ep, "refine.md.j2", member, **results, failing=[r.name for r in blamed], blame=blame,
                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
@@ -118,7 +147,6 @@ class Prompts:
         kind = self.config.feedback.blame
         hotspots = member.analyzer.uncovered_hotspots(v, failing_worst) if kind != "none" else []
         return self.render(ep, "extend.md.j2", member, **results, failing=[r.name for r in failing_worst],
-                           hotspots=[{"mass": h.mass, "state": self.domain.format_state(h.valuation)}
-                                     for h in hotspots],
+                           hotspots=self._merged(member, hotspots),
                            with_cost=any(r.reward is not None for r in failing_worst),
                            show_blame=kind != "none", blame_kind=kind)

@@ -149,7 +149,7 @@ class FeatureSearch(Baseline):
 
     def __init__(self, domain, params):
         super().__init__(domain, params)
-        self.features = params.get("features") or list(FEATURES)
+        self.features = params.get("features") or [f for f in FEATURES if f not in ("patrol", "early")]
         orders = params.get("orders") or "rotations"
         self.orders = ROTATIONS if orders == "rotations" else [[ACTIONS.index(a) for a in o.split(",")] for o in orders]
         self.max_rules = params.get("max_rules", 6)

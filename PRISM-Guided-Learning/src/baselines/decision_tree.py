@@ -16,6 +16,7 @@ params:
   inputs: raw          raw: the state variables (x, y, goal flags, obs_idx), as in the paper;
                        features: the rule-language features of all four actions plus the goal flags
   max_depth: null      tree depth limit (null: grow until pure)
+  sets: null           training sets as lists of ids, one tree each; null: one tree from all training ids
 """
 from typing import Dict, List, Sequence
 
@@ -70,9 +71,19 @@ class DecisionTree(Baseline):
     def __init__(self, domain, params):
         super().__init__(domain, params)
         self.kind = params.get("inputs", "raw")
-        self.tree = DecisionTreeClassifier(criterion="gini", max_depth=params.get("max_depth"), random_state=0)
+        self.max_depth = params.get("max_depth")
+        self.sets = params.get("sets")
+        self.tree = None
+        self.trees: Dict[str, DecisionTreeClassifier] = {}
 
     def fit(self, train: Sequence[Instance]) -> None:
+        by_id = {int(i.id): i for i in train}
+        for k, ids in enumerate(self.sets or [sorted(by_id)]):
+            self.tree = self._fit([by_id[i] for i in ids])
+            self.trees[f"tree_{self.kind}" + (f"_set{k}" if self.sets else "")] = self.tree
+
+    def _fit(self, train: Sequence[Instance]) -> DecisionTreeClassifier:
+        tree = DecisionTreeClassifier(criterion="gini", max_depth=self.max_depth, random_state=0)
         X, y = [], []
         for inst in train:
             mdp = GridMDP(inst.data)
@@ -80,15 +91,17 @@ class DecisionTree(Baseline):
             keep = reachable(mdp) & (value > 0) & ~optimal.all(axis=1)
             X.append(inputs(mdp, self.kind)[keep])
             y.append(optimal[keep].argmax(axis=1))
-        self.tree.fit(np.vstack(X), np.concatenate(y))
-        print(f"decision tree ({self.kind}): {self.tree.tree_.node_count} nodes, depth {self.tree.get_depth()}, "
+        tree.fit(np.vstack(X), np.concatenate(y))
+        print(f"decision tree ({self.kind}): {tree.tree_.node_count} nodes, depth {tree.get_depth()}, "
               f"{sum(len(v) for v in y)} training states", flush=True)
+        return tree
 
     def actions(self, target: Instance) -> np.ndarray:
-        """The frozen tree's action in every state of `target` (for the fast model)."""
+        """The last fitted tree's action in every state of `target` (for the fast model)."""
         mdp = GridMDP(target.data)
         return self.tree.predict(inputs(mdp, self.kind))
 
     def rules(self, target: Instance) -> Dict[str, Rules]:
         mdp = GridMDP(target.data)
-        return {f"tree_{self.kind}": policy_rules(mdp, self.tree.predict(inputs(mdp, self.kind)))}
+        x = inputs(mdp, self.kind)
+        return {name: policy_rules(mdp, tree.predict(x)) for name, tree in self.trees.items()}

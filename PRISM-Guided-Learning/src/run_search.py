@@ -6,7 +6,7 @@ Usage (from PRISM-Guided-Learning/, with the OpenRouter key in the environment: 
 
 Each (condition, repeat) is one job, at most `--max-parallel` at once: `run_ablation.py <condition> --unseeded N
 --repeat k` (skipped when the run has finished), then `transfer.py` on the run for `--targets` (skipped when its
-transfer CSV already covers them). Output goes to out/results/ablations/<condition>/seed_none_<k>.log. Each run
+transfer CSV already covers them), and with `--determinize` src/determinize.py and the transfer check of its rules. Output goes to out/results/ablations/<condition>/seed_none_<k>.log. Each run
 keeps up to `run.workers` PRISM processes busy, so `--max-parallel` also caps PRISM's memory use. At the end the
 summary page (viz/transfer_summary.py, `--summary`) is rebuilt, if given.
 """
@@ -23,14 +23,14 @@ from config import load_config
 from results_io import RESULT_FILES
 from run_ablation import ABLATIONS_PATH, run_dir_for
 from settings import PROJECT_ROOT
-from transfer import parse_ids
+from transfer import csv_path, parse_ids
 
 PYTHON = sys.executable
 
 
-def transfer_done(run_dir: Path, dataset: str, targets: List[int]) -> bool:
-    """Whether the run's transfer CSV for `dataset` already has every target in `targets`."""
-    path = run_dir / f"transfer_{Path(dataset).stem}.csv"
+def transfer_done(run_dir: Path, dataset: str, targets: List[int], rules: str = "final") -> bool:
+    """Whether the run's transfer CSV for `dataset` (and `rules`) already has every target in `targets`."""
+    path = csv_path(run_dir, dataset, rules)
     return path.exists() and set(targets) <= set(pd.read_csv(path).target)
 
 
@@ -53,6 +53,13 @@ def job(condition: str, repeat: int, args) -> str:
                    "--workers", str(args.transfer_workers)] + (["--data", args.data] if args.data else [])
             if subprocess.run(cmd, cwd=PROJECT_ROOT, stdout=out, stderr=subprocess.STDOUT).returncode:
                 return f"[{condition} {repeat}] transfer failed (see {log})"
+        if args.determinize and not transfer_done(run_dir, dataset, targets, "determinized"):
+            steps = [[PYTHON, "src/determinize.py", str(run_dir)],
+                     [PYTHON, "src/transfer.py", str(run_dir), "--rules", "determinized", "--targets", args.targets,
+                      "--workers", str(args.transfer_workers)] + (["--data", args.data] if args.data else [])]
+            for cmd in steps:
+                if subprocess.run(cmd, cwd=PROJECT_ROOT, stdout=out, stderr=subprocess.STDOUT).returncode:
+                    return f"[{condition} {repeat}] determinized transfer failed (see {log})"
     return f"[{condition} {repeat}] done"
 
 
@@ -65,6 +72,9 @@ def main(argv=None):
     parser.add_argument("--max-parallel", type=int, default=6, help="Jobs (runs with their transfer check) at once")
     parser.add_argument("--transfer-workers", type=int, default=2, help="Targets checked at once per transfer check")
     parser.add_argument("--set", action="append", default=[], help="Run-config override section.key=value")
+    parser.add_argument("--determinize", action="store_true",
+                        help="Also resolve `any` rules into an order chosen on the training instances "
+                             "(src/determinize.py) and certify those rules (transfer --rules determinized)")
     parser.add_argument("--summary", type=Path, default=None, help="Summary config to rebuild at the end")
     parser.add_argument("--dry-run", action="store_true", help="Only print the jobs")
     args = parser.parse_args(argv)
@@ -77,8 +87,13 @@ def main(argv=None):
     if args.dry_run:
         return
     with ThreadPoolExecutor(args.max_parallel) as pool:
-        for future in as_completed([pool.submit(job, c, k, args) for c, k in jobs]):
-            print(future.result(), flush=True)
+        futures = {pool.submit(job, c, k, args): (c, k) for c, k in jobs}
+        for future in as_completed(futures):
+            try:
+                print(future.result(), flush=True)
+            except Exception as e:     # one job's failure must not stop the others
+                c, k = futures[future]
+                print(f"[{c} {k}] failed: {type(e).__name__}: {e}", flush=True)
     if args.summary:
         subprocess.run([PYTHON, "viz/transfer_summary.py", str(args.summary)], cwd=PROJECT_ROOT)
 

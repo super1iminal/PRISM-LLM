@@ -162,9 +162,14 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
     segment = {k: " & ".join([f"g{j}" for j in ks[:i]] + [f"!g{k}"]) for i, k in enumerate(ks)}
     border = {"up": "x = 0", "down": "x = N - 1", "left": "y = 0", "right": "y = N - 1"}
     toward = {"up": "G{k}R < x", "down": "G{k}R > x", "left": "G{k}C < y", "right": "G{k}C > y"}
-    features = {"wall": {}, "hazard": {}, "risky": {}, "toward": {}, "closer": {}}
+    features = {"wall": {}, "hazard": {}, "risky": {}, "toward": {}, "closer": {}, "patrol": {}, "early": {}}
     if cycle and phase_visible:
         features["obstacle"] = {}
+
+    def early(dr: int, dc: int) -> str:
+        later = [f"({segment[k]} & ({_cells([where[j] for j in ks[i + 1:]], dr, dc)}))"
+                 for i, k in enumerate(ks) if ks[i + 1:]]
+        return " | ".join(later) or "false"
 
     def hazard(dr: int, dc: int) -> str:
         later = [f"({segment[k]} & ({_cells([where[j] for j in ks[i + 1:]], dr, dc)}))"
@@ -174,6 +179,8 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
     for a, (dr, dc) in MOVES.items():
         features["wall"][a] = f"{border[a]} | {_cells(static, dr, dc)}"
         features["hazard"][a] = hazard(dr, dc)
+        features["patrol"][a] = _cells(patrol, dr, dc)
+        features["early"][a] = early(dr, dc)
         features["risky"][a] = " | ".join(f"({hazard(*MOVES[side])})" for side in (SLIP_LEFT[a], SLIP_RIGHT[a]))
         if "obstacle" in features:
             features["obstacle"][a] = " | ".join(
@@ -193,6 +200,9 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
         "risky": "true if a slip of this move (to either side) could land on a hazard: the patrol path, or a goal "
                  "that must not be entered yet",
         "obstacle": "true if the moving obstacle will be on the move's target cell right after this move",
+        "patrol": "true if the move's target cell is on the moving obstacle's patrol path (safe to enter when the "
+                  "obstacle will not be there: see `obstacle`)",
+        "early": "true if the move's target cell is a goal that must not be entered yet",
         "toward": "true if the move goes towards the next goal not yet reached (fewer rows or columns away)",
         "closer": "true if the move's target cell is closer to the next goal along a shortest path through free "
                   "cells (avoiding static obstacles and later goals, and the patrol path unless every route "

@@ -15,6 +15,7 @@ Writes <run dir>/transfer_<dataset stem>.csv (one row per source and target) and
 checked. With `--targets`, rows of an existing CSV for the other targets are kept.
 """
 import argparse
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,21 @@ def final_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
     error (no final rules) are skipped."""
     return {sid: [(r["condition"], r["action"]) for r in record["final_rules"]]
             for sid, record in sample_records(run_dir).items() if "final_rules" in record}
+
+
+def determinized_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
+    """Source sample id -> its rules with `any` resolved into the order chosen on its training instances
+    (src/determinize.py's <run dir>/determinized.json)."""
+    data = json.loads((run_dir / "determinized.json").read_text(encoding="utf-8"))
+    return {int(sid): [tuple(r) for r in entry["rules"]] for sid, entry in data.items()}
+
+
+RULES = {"final": (final_rules, ""), "determinized": (determinized_rules, "_determinized")}
+
+
+def csv_path(run_dir: Path, dataset: str, rules: str = "final") -> Path:
+    """Where the transfer check of `rules` (final or determinized) on `dataset` is written."""
+    return run_dir / f"transfer_{Path(dataset).stem}{RULES[rules][1]}.csv"
 
 
 def parse_ids(spec: str) -> List[int]:
@@ -102,6 +118,8 @@ def main(argv=None):
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Transfer config file")
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     parser.add_argument("--workers", type=int, default=None, help="Shortcut for --set workers=N")
+    parser.add_argument("--rules", choices=list(RULES), default="final",
+                        help="The run's final rules, or those of src/determinize.py (written to *_determinized.csv)")
     parser.add_argument("--targets", default=None,
                         help='Only these target ids, e.g. "12-19" (rows for other targets in an existing CSV are kept)')
     args = parser.parse_args(argv)
@@ -115,7 +133,7 @@ def main(argv=None):
     if args.targets:
         wanted = set(parse_ids(args.targets))
         targets = [t for t in targets if int(t.id) in wanted]
-    sources = final_rules(args.run_dir)
+    sources = RULES[args.rules][0](args.run_dir)
     runner = PrismRunner(cfg.prism)
     with ThreadPoolExecutor(settings.workers) as pool:
         rows = [row for part in pool.map(lambda t: certify(domain, cfg, runner, t, sources, settings.exact_near),
@@ -124,7 +142,7 @@ def main(argv=None):
     df = pd.DataFrame(rows).sort_values(["source", "target"])
     trained = training_instances(args.run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
     df["trained"] = [t in trained.get(s, []) for s, t in zip(df.source, df.target)]
-    out = args.run_dir / f"transfer_{Path(dataset).stem}.csv"
+    out = csv_path(args.run_dir, dataset, args.rules)
     merge(df, out).sort_values(["source", "target"]).to_csv(out, index=False)
     certified = df.get("certified", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     per_source = df.assign(certified=certified).groupby("source").certified.sum()

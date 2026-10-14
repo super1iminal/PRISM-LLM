@@ -10,7 +10,7 @@ from core.domain import load_domain
 from core.verifier import PolicyVerifier
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
-CFG = load_config("haiku_mi_grid_large_closer")
+CFG = load_config("haiku_mi_grid_large_closer", ["rules.hidden_features=[]"])
 RULES = [({"closer": True, "hazard": False, "risky": False}, [2, 1, 0, 3]),
          ({"closer": True, "hazard": False}, [1, 2, 3, 0]),
          ({"wall": False, "hazard": False}, None),

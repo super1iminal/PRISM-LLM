@@ -80,13 +80,26 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - Optimal strategies of the training grids for one reachability objective: every goal in order, nothing entered early, no collision. Ties go to the fastest optimal action; an arbitrary optimal action can cycle where the probability is 1 anyway.
   - CART on the states' optimal actions. Over the raw state variables, as in the paper: 0 validation grids for every standard set. Over our features (with the goal flags): 7, 3, 3, 3 (mean 4.0). These numbers come from the numpy model; PRISM checks are to follow.
 - **Haiku keeps writing the same generic list:** `closer`/`toward` moves with `!wall & !hazard (& !risky)`, all `any`, then `!wall -> any`, `true -> up`. This holds even with the tie-break explanation. With restarts on slow progress, rounds 3-5 of a training set are mostly fresh starts, so the loop resamples rather than refines.
-- **Batch 1** (three repeats each; validation grids certified per rule set, of 8; no condition solved a training set; summary page `out/results/transfer_search/SUMMARY.md`):
-  - baseline (multi-instance + `closer`): 5.33;
-  - generality instruction: 5.92 (5.50-6.25);
-  - training sets one generic list can solve: 5.50 (still 0 sets solved);
-  - strategy in words first: 5.50 (one run so far);
-  - tie-break explanation: 5.00 (two runs so far);
-  - one set of all 12 training grids: running.
+- **Haiku conditions on `grid_20_large`** (three repeats each, standard training sets unless stated; validation grids certified per rule set, of 8; no condition solved a training set; page `out/results/transfer_search/SUMMARY.md`):
+
+  | condition | validation certified (of 8) |
+  |---|---|
+  | baseline (multi-instance + `closer`) | 5.33 |
+  | generality instruction | 5.92 |
+  | strategy in words first | 5.92 |
+  | tie-break explanation | 5.58 |
+  | training sets one generic list can solve | 5.50 |
+  | one set of all 12 training grids | 6.00 |
+  | generality, no restarts | 5.83 |
+  | feedback in feature space (with generality, no restarts) | 5.58 (4.25-6.25) |
+  | hint to wait by moving into a wall (with tie-break, generality, no restarts) | 5.50 (one run; two more running) |
+
+  - Every condition lies within 5.3-6.0 of 8, about the noise between repeats. Grids 13, 17 and 18 always pass, 14-16 mostly, 19 rarely, 12 never. Prompting does not move transfer here.
+  - Haiku writes nearly the same generic list in every condition (`closer`/`toward` moves without walls or hazards, all `any`). The hint and the tie-break explanation did not make it use fixed orders or waiting.
+- **Determinizing `any`** (`src/determinize.py`; `transfer.py --rules determinized`; `run_search.py --determinize`):
+  - Each `c -> any` becomes one rule per action in a fixed order, and the order is chosen by PRISM on the rule set's own training instances (all 24 orders).
+  - Numpy model, per rule set: on 29 feature-only Haiku rule sets, grids certified rise from 7.6 to 10.9 of 20 with the best order. Choosing the order on validation would give up to 8/8 (two rule sets), but that selects on validation.
+  - Chosen on the training grids, as it must be: baseline 5.33 -> 5.73, feature-space feedback 5.58 -> 6.0, generality 5.92 -> 5.89 (validation, of 8); all 20 grids about 7.6 -> 11. The gain is mostly on the training sizes. `any`'s worst case costs grids, but it is not what limits validation.
 - **Gridworld families** (`domains/gridworld/data/families.py`, `families_v0.csv`). Three layouts over sizes 6-20 with seeds 0-3 (180 instances), each with some scattered obstacles:
   - *rooms*: doors, and a patrol in front of a door;
   - *crossing*: a wall with one gap and a patrol along it;
@@ -97,7 +110,24 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
   - The template certifies 47 of 180 (PRISM; the numpy model agrees on every member): adjacent 78%, crossing and rooms 0%.
   - Search on each family's 6x6-8x8 members solves them, but passes 26-33 of each family's 60 members.
   - Trees over raw variables pass 0-3 of 60; over our features adjacent 49, crossing 53, rooms 8.
-  - Haiku on the families: running.
+  - Validation members (sizes 10-14, 20 per family), certified:
+
+    | method | rooms | crossing | adjacent |
+    |---|---|---|---|
+    | template (cautious) | 0 | 0 | 14 |
+    | 1-2-3-Go! reimplemented (raw variables) | 0 | 0 | 0 |
+    | 1-2-3-Go! with our features | 2 | 19 | 16 |
+    | rule-list search | 10 | 7 | 5 |
+    | Haiku (`haiku_fam_v0`, mean of 3 runs) | 0 | 0 | 16 |
+
+    Template and Haiku are PRISM-certified; trees and search come from the numpy model.
+  - Haiku solved the adjacent training set in all three runs, and never crossing or rooms. It writes `!hazard` into every rule, so it never steps onto the patrol path, and both crossing and rooms need that.
+  - So the vocabulary now also has `patrol` (the move enters the patrol path; safe when `!obstacle`) and `early` (the move enters a goal not yet due). `hazard` stays as their union. Every earlier condition hides the two new features, so its prompts are unchanged. Condition `haiku_fam_split` (running) uses them instead of `hazard`.
+- **Pac-Man, multi-horizon training** (`haiku_mi_pacman`: training sets of horizons 8-12, 10-14 and 12-16; generality; no restarts; three runs; certified on horizons 8-25):
+  - 7 of 9 rule sets solved their training horizons (crash 0.5511, the optimum, on every member); single-horizon Haiku runs had solved 8, 10 and 14 only.
+  - Every solved rule set holds the optimum on horizons 8-18 and reaches 0.680 at 20 and 0.843 at 25. 1-2-3-Go!'s published value at 25 is 0.869; neither is certified against 0.56 beyond 18.
+  - Fixed action orders (all 24, one rule set, horizon 20): 0.621-0.680, still above 0.56. `nearer_g0`/`nearer_g1` compare rows and columns, not distances through the maze. Pac-Man now also has `closer_g0`/`closer_g1` (the first step shortens the maze distance to the ghost; hidden in earlier conditions), being tested with hand-written lists before any LLM run.
+  - The 1-2-3-Go! artifact (`third_party/123go`, not committed; `third_party/README.md`) has run statuses and times but no Pac-Man values, so its published numbers are what we compare against.
 - **[REVIEW] What this means for the "why LLMs" claim.** With `closer`, short generic lists exist, and a 2-rule list found without an LLM certifies 7/8 validation grids. Trained on the same sets, the search and the feature trees average 4.5 and 4.0, below Haiku's 5.3-5.9, and the hand-written template gets 6. The faithful 1-2-3-Go! trees get 0. So the honest bar is the template, the best searched list and the feature trees, not the published 1-2-3-Go!.
 
 ## Positioning checks for the transfer experiment
