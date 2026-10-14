@@ -1,12 +1,19 @@
 # Transfer search: finding a foundation for rules that generalize
 
-Brief for the next working session (written Oct 13). Read `DECISIONS.md` (top: story and paper target; "Rule language", "Gridworld transfer", "Multi-instance training") and `docs/semantics.md` ("Training sets") first.
+Brief for the next working session (written Oct 13).
+
+> **Main instruction (Asher): get this working, however long it takes.** Keep iterating until Haiku solves multi-grid training sets and its frozen rules certify on held-out grids. Time and the number of Haiku runs are not constraints; stopping early is. Report progress as you go, but do not stop to ask whether to continue.
+
+Read `DECISIONS.md` (top: story and paper target; "Rule language", "Gridworld transfer", "Multi-instance training") and `docs/semantics.md` ("Training sets") first.
 
 ## Goal
 
 Find a combination of changes under which **Haiku 5.5 solves multi-grid training sets and its frozen rules certify on held-out grids**. Our "why LLMs" claim is generalized rules over many examples. First find any combination that works, even if it leans on hard-coding or on similar examples; then trim it back and build up from there.
 
-Working style (Asher): many cheap Haiku runs **in parallel**, iterate quickly ("gradient descent" over ideas), no limit on the number of Haiku runs. Sonnet only once Haiku shows something works. The LLM-written vocabulary (Nicholas's `rule-language-generation`) is **parked**: the domain provides its vocabulary, and two moving parts at once would be too confusing.
+How to work:
+- Many cheap Haiku runs **in parallel**; iterate quickly ("gradient descent" over ideas), keep what moves the test-set numbers, combine it, repeat.
+- No limit on Haiku runs. Ask before any Sonnet run (only once Haiku shows something works).
+- The LLM-written vocabulary (Nicholas's `rule-language-generation`) is **parked**: the domain provides its vocabulary, and two moving parts at once would be too confusing.
 
 ## Where things stand
 
