@@ -138,6 +138,31 @@ Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bon
     - 2 of 3 runs solved all three horizons at the optimum.
     - Frozen, they hold the optimum on horizons 8-18 and reach 0.662 at 20 and **0.749 at 25**. The 8-16 training gave 0.843 at 25, and 1-2-3-Go! reports 0.869. The best rotation was right, up, left, down every round.
   - **[REVIEW] Threshold for the larger horizons.** At 0.56, just above the 0.5511 optimum, nothing is certified beyond 18 (ours, or 1-2-3-Go!'s 0.869). A threshold per horizon, e.g. a fixed slack over each horizon's optimum, or the UUV-style "best over reference policies plus slack", would turn the 0.749-vs-0.869 gap into certified vs not certified. That is Asher's call.
+- **Core runs and ablations are kept apart.**
+  - `configs/core.yaml` names the core conditions: the method's main configuration on each case study, which the paper's main results come from. They are `haiku_ts_order`, `haiku_ts_order_noclose`, `haiku_fam_order`, `haiku_mi_pacman_long`, `sonnet5_5_ts_order` and `sonnet5_5_fam_order`.
+  - The launchers write core runs to `out/results/core/` and every other condition to `out/results/ablations/`; baselines stay in `out/results/baselines/` (`out/results/README.md`).
+  - If memory is ever added to the rule language, its conditions and run directories get a `-memory` suffix (Asher).
+- **Sonnet 5.5, one repeat, core settings** (Asher approved one repeat):
+  - Random grids: 3 of 4 training sets solved, 7.25 of 8 validation grids per rule set, best 8.
+  - Families: rooms / crossing / adjacent 19 / 9 / 17 of 20.
+  - Each rule set has about 7-8 feature conditions; its crossing rules wait by moving into a wall.
+  - About $0.62 per training set.
+- **PPO baseline** (`src/baselines/ppo.py`; policy network over our features, 2M steps per family; numpy model): rooms 19, crossing 0 (it never learns to cross), adjacent 18. Every baseline fails at least one family; Sonnet's worst family is 9.
+- **A library of rule sets with certification at run time** (analysis of existing runs, no new runs):
+  - Store several frozen rule sets and use, on each instance, one that certifies.
+  - Random grids, validation: one Haiku run's 4 rule sets cover all 8 grids in every run (one rule set alone: 6.25). Without `closer`: 6 of 8 per run, 7 of 8 over all runs.
+  - The baselines' libraries of 4 cover 7 of 8 with `closer` (search, feature trees) and 3 of 8 without (feature trees).
+  - Families: a library of 3 Haiku runs covers rooms 12, crossing 18, adjacent 19 (49 of 60). The best single baselines cover 37 of 60 (feature trees, PPO).
+  - This is the SEAMS angle: the system certifies stored controllers on the instance it meets and adapts by switching to one that certifies.
+- **Ablation batch** (Asher, Oct 14; three repeats each, grids and families, otherwise the core settings; running):
+  - `any` in the declared order (`rules.any_order: declared`; the verifier chooses nothing).
+  - The best order reported as feedback only (`report`).
+  - Hidden training members (`run.hidden_sets`; scored, shown only as a count).
+  - Failing traces in the feedback (`feedback.trajectory`).
+  - Counterexample-driven training sets (`run.pool_sets`, with 8- and 10-round controls).
+  - Polishing frozen rules by verification (`src/polish.py`; deletions kept when the training score does not drop).
+  - 10 rounds, and six training members per family.
+- **[REVIEW] The solver choosing among versions of the LLM's output** (`rules.any_order`, polishing, counterexamples). Asher would prefer the solver only to give feedback, so that the framework carries over to other solvers. For now it may make choices; he is asking Marsha. The feedback-only variants (`declared`, `report`) are in the batch so the two can be compared.
 - **[REVIEW] What this means for the "why LLMs" claim.** With `closer`, short generic lists exist, and a 2-rule list found without an LLM certifies 7/8 validation grids. Trained on the same sets, the search and the feature trees average 4.5 and 4.0, below Haiku's 5.3-5.9, and the hand-written template gets 6. The faithful 1-2-3-Go! trees get 0. So the honest bar is the template, the best searched list and the feature trees, not the published 1-2-3-Go!.
 
 ## Positioning checks for the transfer experiment
