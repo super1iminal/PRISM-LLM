@@ -1,6 +1,6 @@
 # Transfer search: beating the related work that acts over families
 
-Brief for the next working session (written Oct 13).
+Brief for the next working session (written Oct 13). The plan for carrying it out: `docs/transfer_plan.md`.
 
 > **Main goal (Asher): beat the related work that acts over families of MDPs**, with LLM-written rules generalized over many examples and certified on every instance we check, held-out and larger ones included. Get it working, however long it takes. Only stop if a big decision needs to be made or there is an irresolvable issue; otherwise keep iterating and report progress as you go.
 
