@@ -38,6 +38,10 @@ At 5 rounds, feedback is ahead of restarts only on grids (6.25 against 5.42) and
    - Pac-Man: the reference (2 more repeats of `haiku_mi_pacman_long`), restarts only, and restarts only at equal cost, 5 repeats each. Pac-Man rounds are cheap.
    - Cost: a few dollars in Haiku tokens in total. PRISM time dominates, since the verifier checks 24 action orders a round on every member. Keep to the machine budget and spread the launches.
    - Reuse "more rounds" (`rq2_training`, 8 and 10 rounds) for a longer feedback curve: the store finds those runs.
+   - **Asher, Oct 15 (after the grid result):** the two arms of the planned comparisons, "Feedback, no restarts (core)" and "Restarts only, equal cost (18 rounds)", get **10 runs each** on every benchmark. With 5 per arm the bootstrap understated the spread: grids (a) gave a bootstrap p of 0.0018, but an exact permutation p of 0.056. At 5 v 5 the smallest exact p is 0.008, so nothing could pass Holm over 9.
+5b. **Exact test.** Beside the bootstrap, report an exact two-sided permutation p on the per-run values: every split when there are at most 200,000, otherwise 100,000 random splits with a fixed seed.
+   - Holm over all 9 comparisons for each test, always m = 9; comparisons not yet computed count as p = 1.
+   - The report says the exact test is the more reliable one at these run counts, and that the bootstrap was the test fixed before the runs.
 6. **Report.** Regenerate `rq2_feedback`, with the figure and the planned comparisons first. If feedback does not beat restarts at equal cost somewhere, say so plainly and tell plan 09 and plan 10. The story then leans on the verifier's other roles (resolving the order, keep-best, certifying), and the paper must not claim feedback helps there.
 
 ## Done when
