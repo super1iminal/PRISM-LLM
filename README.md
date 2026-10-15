@@ -44,7 +44,7 @@ DECISIONS.md         design decisions to review
 docs/                semantics.md (formal semantics), config.md (all settings), ablations.md (+ grids),
                      openrouter.md (running on OpenRouter, and its smoke test),
                      scheduler.md (threads, lockstep and event schedulers), related_work_survey.md and
-                     positioning.md (related work), transfer_search.md (the rule-transfer experiment)
+                     positioning.md (related work), experiments.md (research questions, datasets, methods)
 ```
 
 ## Running (from `PRISM-Guided-Learning/`)
