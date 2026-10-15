@@ -14,7 +14,7 @@ Targets 12-19 (each list's own training instances left out); certified of 8.
 | Blame by one-step regret | Regret | 3 | 5.83 (5.50–6.00) | -0.42 [-0.87, +0.00] | 4.58 (3.75–5.25) | 8.0 | 8% (0%–25%) | 4.8 (4.2–5.0) | 8,100 (6,037–9,722) |
 | Random blame (placebo) | Random | 3 | 6.42 (5.75–7.25) | +0.17 [-0.52, +0.87] | 5.88 (5.50–6.25) | 8.0 | 8% (0%–25%) | 5.0 | 8,199 (7,158–9,660) |
 | No blame | No blame | 1 | 6.75 | +0.50 [+0.15, +0.85] | 6.00 | 8.0 | 25% | 4.2 | 8,890 |
-| Results table only | Table | 0 | – | – | – | – | – | – | – |
+| Results table only | Table | 2 | 6.12 (5.50–6.75) | -0.12 [-0.95, +0.70] | 5.25 | 7.0 (6.0–8.0) | 12% (0%–25%) | 4.6 (4.2–5.0) | 6,676 (5,547–7,805) |
 | States named by their features | Feature space | 5 | 5.75 (5.50–6.00) | -0.50 [-0.90, -0.10] | 4.30 (3.75–5.00) | 8.0 | 5% (0%–25%) | 5.0 | 10,834 (9,866–13,117) |
 | Plus a failing trace | Trace | 3 | 5.92 (5.25–6.50) | -0.33 [-0.95, +0.27] | – | 8.0 | 25% | 4.7 (4.5–5.0) | 9,500 (7,462–12,570) |
 
@@ -55,7 +55,7 @@ Targets 0-7,9 (each list's own training instances left out); certified of 6.
 | Random blame (placebo) | Random | 0 | – | – | – | – | – | – | – |
 | No blame | No blame | 0 | – | – | – | – | – | – | – |
 | Results table only | Table | 0 | – | – | – | – | – | – | – |
-| States named by their features (4 unchecked) | Feature space | 5 | 2.60 (2.00–3.00) | +0.20 [-0.40, +1.00] | 2.60 (2.00–3.00) | 2.6 (2.0–3.0) | 60% (0%–100%) | 4.0 (2.0–5.0) | 4,848 (1,904–7,291) |
+| States named by their features | Feature space | 5 | 2.60 (2.00–3.00) | +0.20 [-0.40, +1.00] | 2.60 (2.00–3.00) | 2.6 (2.0–3.0) | 60% (0%–100%) | 4.0 (2.0–5.0) | 4,848 (1,904–7,291) |
 | Plus a failing trace | Trace | 0 | – | – | – | – | – | – | – |
 
 ![RQ2b: what the verifier tells the LLM](rq2_verifier_output.png)
