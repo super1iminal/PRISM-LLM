@@ -126,3 +126,23 @@ def test_sealed_targets_are_refused(tmp_path):
     (run / "config.json").write_text(json.dumps(cfg.to_dict()), encoding="utf-8")
     with pytest.raises(SystemExit, match="sealed"):
         bt.budget_table(run, targets="30-40")
+
+
+def test_permutation_test_is_exact_for_small_groups_and_has_the_5_v_5_floor():
+    p, method = bt.permutation_test([6, 7, 8, 9, 10], [1, 2, 3, 4, 5])
+    assert method == "exact" and p == pytest.approx(2 / 252)            # only the observed split and its mirror
+    assert bt.permutation_test([1, 2, 3], [1, 2, 3]) == (1.0, "exact")
+    p, _ = bt.permutation_test([1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0])   # 70 splits, 32 at least 1 apart
+    assert p == pytest.approx(32 / 70)
+    assert np.isnan(bt.permutation_test([], [1.0])[0])
+
+
+def test_permutation_test_samples_random_splits_when_there_are_too_many():
+    rng = np.random.default_rng(1)
+    a, b = rng.normal(1, 1, 12), rng.normal(0, 1, 12)          # C(24, 12) = 2.7 million splits
+    p, method = bt.permutation_test(a, b, samples=20_000)
+    assert method == "random" and 0 < p < 1
+    assert bt.permutation_test(a, b, samples=20_000) == (p, method)   # fixed seed
+    exact, _ = bt.permutation_test(a[:6], b[:6])
+    sampled, how = bt.permutation_test(a[:6], b[:6], exact_limit=10, samples=50_000)
+    assert how == "random" and sampled == pytest.approx(exact, abs=0.01)

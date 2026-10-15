@@ -28,7 +28,9 @@ Writes <run dir>/budget_transfer.csv: one row per source, round and target. Seal
 """
 import argparse
 import hashlib
+import itertools
 import json
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -242,6 +244,29 @@ def holm(p: Sequence[float]) -> np.ndarray:
     return adjusted
 
 
+def permutation_test(a, b, exact_limit: int = 200_000, samples: int = 100_000, seed: int = 0) -> Tuple[float, str]:
+    """Two-sided permutation p for the difference of means of `a` and `b` (one value per run): the share of splits of
+    the pooled runs into groups of their sizes whose difference is at least as far from 0 as the observed one. Every
+    split when there are at most `exact_limit` ("exact"), else `samples` random splits with a fixed seed ("random",
+    counting the observed split). With 5 runs a side the smallest p is 2/252 = 0.008."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    a, b = a[~np.isnan(a)], b[~np.isnan(b)]
+    if not len(a) or not len(b):
+        return float("nan"), ""
+    pooled, n = np.concatenate([a, b]), len(a)
+    observed = abs(a.mean() - b.mean()) - 1e-9
+    if math.comb(len(pooled), n) <= exact_limit:
+        firsts = np.array(list(itertools.combinations(range(len(pooled)), n)))
+        method, extra = "exact", 0
+    else:
+        rng = np.random.default_rng(seed)
+        firsts = np.argsort(rng.random((samples, len(pooled))), axis=1)[:, :n]
+        method, extra = "random", 1
+    sums = pooled[firsts].sum(axis=1)
+    diffs = np.abs(sums / n - (pooled.sum() - sums) / (len(pooled) - n))
+    return float(((diffs >= observed).sum() + extra) / (len(diffs) + extra)), method
+
+
 # ---------------------------------------------------------------- experiments
 
 def experiment_runs(exp, cells: Optional[Sequence[str]] = None) -> Dict[Path, dict]:
@@ -343,8 +368,9 @@ def overfitting(exp) -> pd.DataFrame:
 
 def planned(exp) -> pd.DataFrame:
     """The experiment's planned comparisons (`budget.planned`) on every benchmark: the reference cell against another
-    cell, each run read at a fraction of the reference's mean spend; bootstrap intervals over runs, Holm-corrected
-    over every comparison on every benchmark together."""
+    cell, each run read at a fraction of the reference's mean spend. Two tests over runs, each Holm-corrected over
+    every comparison on every benchmark together (m fixed at their number; one not yet computed counts as p = 1): the
+    bootstrap fixed before the runs (`p`, with its interval) and the exact permutation test (`p_exact`)."""
     spec = exp.spec["budget"]
     ref = spec.get("reference") or exp.reference()
     cost = spec.get("cost", "dollars")
@@ -361,15 +387,19 @@ def planned(exp) -> pd.DataFrame:
             a = [run_value(t, budget, comp["metric"], cost) for t in ref_tables.values()]
             b = [run_value(t, budget, comp["metric"], cost) for t in (unit_tables(other) if other else {}).values()]
             diff, lo, hi, p = bootstrap_test(a, b, level=spec.get("level", 0.95))
+            p_exact, method = permutation_test(a, b)
             rows.append({"bench": bench.name, "label": bench.label or bench.name, "comparison": comp["name"],
                          "metric": comp["metric"], "cell": comp["cell"], "at": comp["at"], "budget": budget,
                          "runs_ref": len(a), "runs_other": len(b),
                          "ref_value": np.mean(a) if a else np.nan, "other_value": np.mean(b) if b else np.nan,
-                         "diff": diff, "lo": lo, "hi": hi, "p": p})
+                         "diff": diff, "lo": lo, "hi": hi, "p": p, "p_exact": p_exact, "permutations": method})
     table = pd.DataFrame(rows)
     if not table.empty:
-        ok = table.p.notna()
-        table.loc[ok, "p_holm"] = holm(table.p[ok].to_numpy())
+        m = len(spec["planned"]) * len(exp.spec["benchmarks"])
+        for col in ("p", "p_exact"):
+            padded = list(table[col].fillna(1.0)) + [1.0] * (m - len(table))
+            table[f"{col}_holm"] = holm(padded)[:len(table)]
+            table.loc[table[col].isna(), f"{col}_holm"] = np.nan
     return table
 
 
@@ -389,14 +419,24 @@ def report_section(exp) -> List[str]:
     cost = spec.get("cost", plot.cost)
     level = spec.get("level", 0.95)
     table = planned(exp)
+    m = len(spec["planned"]) * len(exp.spec["benchmarks"])
+    methods = set(table.permutations.dropna()) - {""} if not table.empty else set()
+    exact_how = ("every split of the pooled runs enumerated" if methods <= {"exact"} else
+                 "100,000 random splits with a fixed seed where the splits are too many to enumerate"
+                 + (", every split elsewhere" if "exact" in methods else ""))
     lines = ["## Planned comparisons: feedback against restarts at equal cost", "",
              spec.get("note", "").strip(), "",
              f"Δ = **{ref}** minus the other cell, each run read at the given budget per training set (the list "
              f"keep-best holds after its last round within the budget; {cost} at the prices above). Interval: "
-             f"{level:.0%} bootstrap over runs; p: two-sided bootstrap; p (Holm): corrected over all "
-             f"{len(table)} comparisons together; below 0.05 counts.", "",
-             "| benchmark | comparison | against | budget | runs | reference | other | Δ [interval] | p | p (Holm) |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             f"{level:.0%} bootstrap over runs. Two tests, each Holm-corrected over all {m} comparisons together "
+             "(one without runs yet counts as p = 1); below 0.05 counts. p (bootstrap): two-sided bootstrap over "
+             "runs, the test fixed before the runs. p (exact): two-sided permutation test over runs, "
+             f"{exact_how}. At these run counts the exact test is the more reliable one: the bootstrap understates "
+             "the spread with 5 to 10 runs a side (with 5 v 5 the smallest exact p is 2/252 = 0.008, so nothing "
+             f"could pass Holm over {m}).", "",
+             "| benchmark | comparison | against | budget | runs | reference | other | Δ [interval] | p (bootstrap) "
+             "| p (Holm) | p (exact) | p (exact, Holm) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in table.itertuples():
         fmt = ".0%" if r.metric == "solved" else ".2f"
         money = f"${r.budget:.4f}" if cost == "dollars" else f"{r.budget:,.0f}"
@@ -406,8 +446,8 @@ def report_section(exp) -> List[str]:
                      f"{r.runs_ref} v {r.runs_other} | "
                      f"{format(r.ref_value, fmt) if r.runs_ref else '–'} | "
                      f"{format(r.other_value, fmt) if r.runs_other else '–'} | {delta} | "
-                     + ("–" if np.isnan(r.p) else f"{r.p:.3f}") + " | "
-                     + ("–" if pd.isna(getattr(r, "p_holm", np.nan)) else f"{r.p_holm:.3f}") + " |")
+                     + " | ".join("–" if pd.isna(v) else f"{v:.3f}" for v in (r.p, r.p_holm, r.p_exact, r.p_exact_holm))
+                     + " |")
     firsts = first_answers(exp)
     if not firsts.empty:
         lines += ["", "The LLM's first answer (round 1, before any feedback; the same initial prompt in every cell, "
