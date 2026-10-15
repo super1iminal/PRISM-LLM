@@ -31,7 +31,7 @@ At 5 rounds, feedback is ahead of restarts only on grids (6.25 against 5.42) and
    - (b) the same at half that spend;
    - (c) training sets solved at feedback's spend.
 
-   Each is computed on grids, families and Pac-Man. Report the difference with a bootstrap interval over runs and Holm correction, as `out/results/haiku_large` did. No new comparisons are added after seeing the results; extra looks are labelled exploratory.
+   Each is computed on grids, families and Pac-Man. Report the difference with a bootstrap interval over runs and Holm correction, as `out/results/archive/haiku_large` did. No new comparisons are added after seeing the results; extra looks are labelled exploratory.
 5. **New cells and repeats** (Haiku; launch from the main checkout with `src/run_experiment.py configs/experiments/rq2_feedback.yaml --run --check`):
    - "Restarts only, equal cost": `planner.retry=always`, `planner.max_rounds=16`. About 3.4 times as many rounds matches feedback's tokens on both gridworld benchmarks: work out the factor from the existing runs and round up. The curve is read at equal cost, so overshooting is harmless.
    - Restarts only and the core reference up to **5 repeats** each. The hybrids stay at 3.
