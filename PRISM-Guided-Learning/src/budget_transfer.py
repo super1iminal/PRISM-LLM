@@ -10,12 +10,16 @@ Per training set (a source: one sample of the run) and round k:
     at the experiment's prices;
   * solved: whether the kept list passes every training member in the worst case (the loop's values);
   * its certification on each target, cached by a hash of the list: most rounds keep the same list, and the final
-    list's rows come from the run's transfer CSV when it has them.
+    list's rows come from the run's transfer CSV when it has them. Other lists are re-checked with the exact solvers
+    only when the values near a threshold decide the verdict (`certify(deciding_only=True)`): the same verdict as
+    src/transfer.py on its own assumption that values outside the band are accurate, without the exact checks
+    (minutes each) of lists that fail elsewhere anyway.
 Round 1 is the LLM's first answer, before any feedback (`first_answer`): an "LLM alone" point. A set the loop
 stopped early (solved) has no rows after its last round and keeps its last list at any larger budget.
 
 Usage (from PRISM-Guided-Learning/):
-    python src/budget_transfer.py configs/experiments/rq2_feedback.yaml [--max-parallel 2] [--workers 2]
+    python src/budget_transfer.py configs/experiments/rq2_feedback.yaml [--cells "F,R 18"] [--max-parallel 2]
+        [--workers 2]
     python src/budget_transfer.py <run dir> ... [--data <dataset>] [--targets 12-19] [--source-targets JSON]
         [--price 0.10 0.50] [--workers 2]
 An experiment file checks every run of its cells on its benchmarks' targets (each family's list on its own family's
@@ -145,7 +149,7 @@ def budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional
         settings = load_file(DEFAULT_CONFIG, TransferConfig)
         runner = PrismRunner(cfg.prism)
         with ThreadPoolExecutor(workers) as pool:
-            futures = [pool.submit(certify, domain, cfg, runner, instances[t], sources, settings.exact_near)
+            futures = [pool.submit(certify, domain, cfg, runner, instances[t], sources, settings.exact_near, True)
                        for t, sources in todo.items()]
             for future in as_completed(futures):
                 for row in future.result():
@@ -240,12 +244,12 @@ def holm(p: Sequence[float]) -> np.ndarray:
 
 # ---------------------------------------------------------------- experiments
 
-def experiment_runs(exp) -> Dict[Path, dict]:
+def experiment_runs(exp, cells: Optional[Sequence[str]] = None) -> Dict[Path, dict]:
     """Run dir -> how to check it (targets, dataset, own targets per source, price), for every run of an experiment's
-    cells (src/experiments/base.py)."""
+    cells (src/experiments/base.py), or only of the cells with these codes."""
     from experiments.metrics import model_of
     jobs = {}
-    for u in exp.units:
+    for u in exp.units if cells is None else [u for u in exp.units if u.cell.code in cells]:
         b = u.bench
         own = {s: b.groups[g] for s, g in b.source_groups.items() if g in b.groups} if b.groups else None
         for r in u.runs:
@@ -444,6 +448,7 @@ def main(argv=None):
     parser.add_argument("--source-targets", default=None, help='Run dirs: JSON, source -> its own target ids')
     parser.add_argument("--price", type=float, nargs=2, default=None, metavar=("IN", "OUT"),
                         help="Run dirs: $ per M prompt tokens and per M output tokens")
+    parser.add_argument("--cells", default=None, help='Experiment files: only these cell codes, e.g. "F,R 18"')
     parser.add_argument("--workers", type=int, default=2, help="Targets certified at once per run")
     parser.add_argument("--max-parallel", type=int, default=2, help="Runs checked at once")
     args = parser.parse_args(argv)
@@ -452,7 +457,7 @@ def main(argv=None):
     for path in args.paths:
         if path.suffix in (".yaml", ".yml"):
             from experiments.base import experiment
-            jobs.update(experiment_runs(experiment(path)))
+            jobs.update(experiment_runs(experiment(path), args.cells.split(",") if args.cells else None))
         else:
             jobs[path] = {"targets": args.targets, "dataset": args.data, "price": args.price,
                           "source_targets": json.loads(args.source_targets) if args.source_targets else None}

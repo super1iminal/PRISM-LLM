@@ -105,9 +105,11 @@ def merge(new: pd.DataFrame, path: Path) -> pd.DataFrame:
     return pd.concat([old[~old.target.isin(new.target.unique())], new], ignore_index=True)
 
 
-def certify(domain, cfg, runner, target, sources, exact_near: float = 0.0) -> List[dict]:
+def certify(domain, cfg, runner, target, sources, exact_near: float = 0.0, deciding_only: bool = False) -> List[dict]:
     """Every source rule set, checked on one target instance. A worst case within `exact_near` of its threshold is
-    re-checked with the exact solvers (`PolicyVerifier.verify_exact`), so the verdict holds (column `exact`)."""
+    re-checked with the exact solvers (`PolicyVerifier.verify_exact`), so the verdict holds (column `exact`). With
+    `deciding_only`, only when those near values decide the verdict: a requirement that fails by more than
+    `exact_near` fails either way, on the same assumption that values outside the band are accurate enough."""
     verifier = PolicyVerifier(domain, target, cfg, runner)
     spec, vocab = verifier.spec, verifier.spec.vocabulary(cfg.rules)
     rows = []
@@ -125,7 +127,9 @@ def certify(domain, cfg, runner, target, sources, exact_near: float = 0.0) -> Li
                          "error": f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"})
             continue
         exact = False
-        if exact_near and any(abs(v.worst[r.name] - r.threshold) < exact_near for r in spec.requirements):
+        near = [abs(v.worst[r.name] - r.threshold) < exact_near for r in spec.requirements]
+        decides = not deciding_only or all(n or r.satisfied(v.worst[r.name]) for n, r in zip(near, spec.requirements))
+        if exact_near and any(near) and decides:
             v_exact, _ = verifier.verify_exact(policy)
             v, exact = (v_exact, True) if v_exact else (v, False)
         met = [r.name for r in spec.requirements if r.satisfied(v.worst[r.name])]
