@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from config import load_config
-from core.prism import PrismCall, PrismError, PrismProcess, PrismRunner, run_now
+from core.prism import PrismCall, PrismError, PrismProcess, PrismRunner, _error_excerpt, run_now
 
 PRISM = load_config().prism
 
@@ -96,3 +96,9 @@ def test_background_process_timeout_kills_the_whole_process_tree(tmp_path):
         process.output()
     time.sleep(3)
     assert not marker.exists()   # the grandchild was killed before it woke up
+
+
+def test_error_excerpt_never_empty():
+    """A PRISM failure with no output still gives a message whose first line callers can log."""
+    assert _error_excerpt("").splitlines()[0] == "PRISM produced no output"
+    assert _error_excerpt("Error: bad model\nmore") == "Error: bad model"

@@ -123,7 +123,7 @@ def _parse_sections(stdout: str, num_properties: int, num_states: int):
 
 def _error_excerpt(stdout: str) -> str:
     lines = [l for l in stdout.splitlines() if "Error" in l or "error" in l]
-    return "\n".join(lines[:10]) or stdout[-2000:]
+    return "\n".join(lines[:10]) or stdout[-2000:] or "PRISM produced no output"
 
 
 @dataclass(frozen=True)
