@@ -298,11 +298,13 @@ class Comparison(Experiment):
         spec = self.spec["horizon_figure"]
         published = spec.get("published") or {}
         beyond = {h: v for h, v in (published.get("points") or {}).items() if h > spec["max_horizon"]}
+        only = (f" The figure shows {', '.join(spec['methods'])}; the other methods are in the table above."
+                if spec.get("methods") else "")
         return (f"Worst-case {spec['value']} of each method's frozen lists (best configuration) per horizon, up to "
                 f"{spec['max_horizon']}: {spec.get('why_max', '')} Line: mean over the lists, band: their range; hollow "
                 f"markers: a list's own training horizons. {published.get('label', 'Published')}: "
                 + ", ".join(f"{v} at {h}" for h, v in (published.get("points") or {}).items())
-                + (f" ({', '.join(str(h) for h in beyond)} beyond the axis)." if beyond else "."))
+                + (f" ({', '.join(str(h) for h in beyond)} beyond the axis)." if beyond else ".") + only)
 
     def horizon_figure(self, best: Dict[Tuple[str, str], str]) -> Optional[Path]:
         """`horizon_figure` in the experiment file: one line per method (its best configuration on the benchmark),
@@ -318,7 +320,7 @@ class Comparison(Experiment):
         shown = {int(i): int(h) for i, h in horizons.items() if i not in hidden and h <= spec["max_horizon"]}
         column = f"worst_{spec['value']}"
         lines = []
-        for method in dict.fromkeys(self.methods().values()):
+        for method in spec.get("methods") or dict.fromkeys(self.methods().values()):
             name = best.get((bench.name, method))
             lists = [df[df.target.isin(shown)] for df in self._horizon_lists(bench, name)] if name else []
             lists = [df for df in lists if column in df and not df.empty]
@@ -348,9 +350,7 @@ class Comparison(Experiment):
             table = table.assign(horizon=table.target.map(shown))
             per = table.groupby("horizon")[column].agg(["mean", "min", "max"])
             ax.fill_between(per.index, per["min"], per["max"], color=color, alpha=0.15, linewidth=0, zorder=2)
-            several = sum(m == method for m in self.methods().values()) > 1
-            ax.plot(per.index, per["mean"], color=color, linewidth=2, zorder=3,
-                    label=method + (f" ({name})" if several else ""))
+            ax.plot(per.index, per["mean"], color=color, linewidth=2, zorder=3, label=method)
             trained = set(table[table.trained.astype(bool)].horizon)
             for h, v in per["mean"].items():
                 ax.plot([h], [v], marker="o", markersize=6, zorder=4, markeredgewidth=1.5,
@@ -361,9 +361,9 @@ class Comparison(Experiment):
             ax.plot(list(points), list(points.values()), linestyle="none", marker="D", markersize=8, color=BASELINE,
                     markeredgecolor=SURFACE, markeredgewidth=1.5, zorder=4, label=published.get("label", "published"))
         ends.sort()
-        for k in range(1, len(ends)):                # direct labels, kept apart
+        for k in range(1, len(ends)):                # direct labels, kept apart (up to four lines)
             ends[k][0] = max(ends[k][0], ends[k - 1][0] + 0.022)
-        for v, x, method in ends:
+        for v, x, method in ends if len(ends) <= 4 else []:
             ax.text(x_end + 0.6, v, method, fontsize=8, color=INK, va="center")
         ax.set_xticks(xs_all)
         ax.set_xlim(xs_all[0] - 0.8, x_end + 7.5)
@@ -371,7 +371,8 @@ class Comparison(Experiment):
         ax.set_xlabel("horizon (moves); hollow markers: the lists' training horizons", fontsize=8.5, color=INK_2)
         style(ax, f"{short_label(bench)}: worst-case crash probability per horizon (best configuration of each method)",
               "worst-case crash probability (lower is better)")
-        ax.legend(loc="upper left", fontsize=7.5, frameon=False, labelcolor=INK_2)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=3, fontsize=7.5, frameon=False,
+                  labelcolor=INK_2)
         fig.tight_layout()
         path = self.out / f"rq1_{bench.name}_horizon.png"
         fig.savefig(path, dpi=200, facecolor=SURFACE)

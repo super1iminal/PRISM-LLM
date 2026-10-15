@@ -17,8 +17,8 @@ Targets 12-19: 8 held out (each list's own training instances are left out).
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 3.75 | 3.75 | 7 | 7.0 | 3.75 | – | – |
 | Rule-list search | Rule-list search | ✓ | – | 4.50 | 4.50 | 7 | 7.0 | 2.75 | – | – |
-| PPO | PPO with our features (1 unchecked) |  | – | – | – | – | – | – | – | – |
-| PPO | PPO with a MiniGrid-style local view (1 unchecked) |  | – | – | – | – | – | – | – | – |
+| PPO | PPO with our features | ✓ | – | 5.50 | 5.50 | 7 | 8.0 | 5.50 | – | – |
+| PPO | PPO with a MiniGrid-style local view |  | – | 0.75 | 0.75 | 2 | 2.0 | 0.75 | – | – |
 | Hand-written template | Hand-written template | ✓ | – | 6.00 | 6.00 | 6 | 6.0 | 6.00 | – | – |
 
 ![Random grids (grid_20_large; trained on sets of three 9x9-13x13 grids, held out: 12-19)](rq1_grids.png)
@@ -46,9 +46,9 @@ Targets 16-35,76-95,136-155: 60 held out (each list's own training instances are
 | Ours (Sonnet 5.5) | **Ours, Sonnet 5.5** | ✓ | 3 | 14.00 (12.67–15.00) | 32.33 (29.00–36.67) | 19 | 54.3 (45.0–59.0) | – | 67% | 0.787 (0.663–0.932) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 12.33 | 20.33 | 19 | 43.0 | 12.33 | – | – |
-| Rule-list search | Rule-list search | ✓ | – | 6.00 | 11.00 | 10 | 21.0 | – | – | – |
+| Rule-list search | Rule-list search | ✓ | – | 6.00 | 11.00 | 10 | 21.0 | 3.00 | – | – |
 | PPO | PPO with our features | ✓ | – | 12.67 | 16.67 | 19 | 38.0 | 12.67 | – | – |
-| PPO | PPO with a MiniGrid-style local view (1 unchecked) |  | – | – | – | – | – | – | – | – |
+| PPO | PPO with a MiniGrid-style local view |  | – | 1.33 | 1.33 | 4 | 4.0 | 1.33 | – | – |
 | Hand-written template | Hand-written template | ✓ | – | 4.67 | 14.00 | 14 | 14.0 | 4.67 | – | – |
 
 Per group (certified per rule list on its own group):
@@ -61,7 +61,7 @@ Per group (certified per rule list on its own group):
 | 1-2-3-Go! with our features | 2.0 | 19.0 | 16.0 |
 | Rule-list search | 10.0 | 7.0 | 1.0 |
 | PPO with our features | 19.0 | 0.0 | 19.0 |
-| PPO with a MiniGrid-style local view | – | – | – |
+| PPO with a MiniGrid-style local view | 4.0 | 0.0 | 0.0 |
 | Hand-written template | 0.0 | 0.0 | 14.0 |
 
 ![Gridworld families (trained on three 6x6-8x8 members of a family, held out: 10x10-14x14 members)](rq1_families.png)
@@ -87,6 +87,6 @@ Targets 0-7,9: 6 held out (each list's own training instances are left out).
 
 ![Pac-Man (trained on horizons 14, 16, 18; 6 held out: 8, 10, 12, 20, 25, 30)](rq1_pacman.png)
 
-Worst-case crash of each method's frozen lists (best configuration) per horizon, up to 30: horizons 50 and 100 are Pac-Man's sealed test set and stay out until the test pass (200: PRISM cannot build it). Line: mean over the lists, band: their range; hollow markers: a list's own training horizons. 1-2-3-Go! (published, different setup): 0.5511 at 5, 0.869 at 25, 0.99998 at 200 (200 beyond the axis).
+Worst-case crash of each method's frozen lists (best configuration) per horizon, up to 30: horizons 50 and 100 are Pac-Man's sealed test set and stay out until the test pass (200: PRISM cannot build it). Line: mean over the lists, band: their range; hollow markers: a list's own training horizons. 1-2-3-Go! (published, different setup): 0.5511 at 5, 0.869 at 25, 0.99998 at 200 (200 beyond the axis). The figure shows Ours (Haiku 5.5), 1-2-3-Go! (reimplemented), PPO; the other methods are in the table above.
 
 ![Worst-case crash probability per horizon](rq1_pacman_horizon.png)

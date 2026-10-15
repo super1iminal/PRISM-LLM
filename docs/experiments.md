@@ -78,7 +78,7 @@ Started but unfinished runs are listed as pending and never launched over. Delet
 | `reference` | ablations: the reference cell's name (default: the first) |
 | `baselines` | comparisons: {`name`, `code`, `method`, `config` (benchmark -> `configs/baselines/*.yaml`), `sources` (benchmark -> list, or group -> list), `ties` (false: one action per state, so nothing to leave open)} |
 | `method` (cells and baselines) | comparisons: the method a configuration belongs to (default: its name); figures show each method's best configuration |
-| `horizon_figure` | comparisons: a value against the horizon, one line per method: {`benchmark`, `value` (the transfer CSVs' `worst_<value>`), `horizon` (the target dataset's column), `optimum`, `threshold`, `max_horizon` (and `why_max`), `published` ({`label`, `points`: horizon -> value})}. Sealed targets are always left out |
+| `horizon_figure` | comparisons: a value against the horizon, one line per method: {`benchmark`, `methods` (optional: only these lines), `value` (the transfer CSVs' `worst_<value>`), `horizon` (the target dataset's column), `optimum`, `threshold`, `max_horizon` (and `why_max`), `published` ({`label`, `points`: horizon -> value})}. Sealed targets are always left out |
 | `prices` | model -> [$ per M prompt tokens, $ per M output tokens] |
 | `budget` | ablations: comparisons at equal cost, fixed before the runs (`rq2_feedback.yaml`): {`plot` (a `configs/plot/` file for `viz/plot_budget_transfer.py`), `reference`, `cost` (dollars), `level`, `note`, `planned`: list of {`name`, `metric` (certified or solved), `cell`, `at` (fraction of the reference's mean spend)}}. The report then opens with the planned comparisons and the budget figure |
 
