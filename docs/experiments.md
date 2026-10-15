@@ -11,9 +11,12 @@ RQ1 covers transfer with and without gridworld's shortest-path feature `closer` 
 python src/run_experiment.py configs/experiments/rq2_feedback.yaml                 # plan + report from what exists
 python src/run_experiment.py configs/experiments/rq2_*.yaml --run --check          # launch missing repeats, certify
 python src/run_experiment.py configs/experiments/rq1_comparison.yaml --check --baselines
+python src/run_experiment.py --index                                                # which cells miss runs
 ```
 
-Reports: `out/results/experiments/<experiment>/REPORT.md`, a figure (ablations) and `runs.csv` (one row per run).
+Reports: `out/results/experiments/<experiment>/REPORT.md`, figures and `runs.csv` (one row per run). The index, `out/results/experiments/README.md` (`--index`), lists every experiment's cells per benchmark with their runs, pending and missing repeats, and each baseline's certification; it also draws `rq2_overview.png`, every ablation cell against the core configuration.
+
+**Best configuration per method (RQ1).** Each configuration (cell or baseline) has a `method` (e.g. trees over raw variables and over our features are both 1-2-3-Go!). Per benchmark, a method's best configuration is the one with the highest mean certified per list on the validation targets, then the larger library, then the lower cost; only fully certified configurations compete. The tables show every configuration, the figures (`rq1_<benchmark>.png`, and Pac-Man's `rq1_pacman_horizon.png`) only the best of each method. The choice is written to `chosen.csv`; the test pass uses it and never re-chooses on test results. A baseline is counted on the same held-out targets as our lists (on Pac-Man, without our training horizons).
 
 ## Datasets and splits
 
@@ -31,7 +34,7 @@ Reports: `out/results/experiments/<experiment>/REPORT.md`, a figure (ablations) 
 
 ## Methods
 
-The cells and `baselines` of `rq1_comparison.yaml`: ours with Haiku 5.5 and with Sonnet 5.5; 1-2-3-Go! reimplemented (trees over the raw state variables, `src/baselines/decision_tree.py`) and the same trees over our features; the search over the rule language (`src/baselines/feature_search.py`); PPO over our features (`ppo.py`; a MiniGrid-style local view is the `ppo_view_*` configs); the hand-written template (`domains/gridworld/data/template_policy.py`); hand-written maze rules for Pac-Man. The per-instance optimum (`src/ceilings.py`) is the ceiling, not a transfer method. Every method's output is certified by PRISM in `transfer.py`'s CSV format.
+The cells and `baselines` of `rq1_comparison.yaml`: ours with Haiku 5.5 and with Sonnet 5.5; 1-2-3-Go! reimplemented (trees over the raw state variables, `src/baselines/decision_tree.py`) and the same trees over our features; the search over the rule language (`src/baselines/feature_search.py`); PPO over our features and over a MiniGrid-style local view (`ppo.py`, the `ppo_features_*` and `ppo_view_*` configs; one method, two configurations); the hand-written template (`domains/gridworld/data/template_policy.py`); hand-written maze rules for Pac-Man. The per-instance optimum (`src/ceilings.py`) is the ceiling, not a transfer method. Every method's output is certified by PRISM in `transfer.py`'s CSV format.
 
 - **Trees** follow the paper: one reachability objective (every goal in order, nothing entered early, no collision), CART on the training instances' optimal actions, frozen, then certified.
 - **Baselines** (`src/baselines/`): one module per method, each a `Baseline` (`base.py`), run by `src/run_baseline.py configs/baselines/<name>.yaml` (keys in `configs/baselines/README.md`). Results: `out/results/baselines/<config stem>/transfer_<dataset stem>.csv`, the transfer CSV plus `method`. The search and the trees rank candidates with a numpy model of the gridworld (`gridworld_mdp.py`); PRISM certifies what they keep.
@@ -71,7 +74,9 @@ Started but unfinished runs are listed as pending and never launched over. Delet
 | `repeats` | runs per cell (a cell may set its own) |
 | `cells` | {`name` (descriptive, used in tables), `code` (short, figures), `set` (overrides: a list for every benchmark, or benchmark -> list), `condition` (benchmark -> a condition other than the base, e.g. the Sonnet one), `only` (benchmarks), `repeats`, `launch` (false: only existing runs; Sonnet needs Asher's go-ahead)}. A cell whose `set` or `condition` is given per benchmark runs only on the benchmarks it names, never as the base configuration on the others |
 | `reference` | ablations: the reference cell's name (default: the first) |
-| `baselines` | comparisons: {`name`, `config` (benchmark -> `configs/baselines/*.yaml`), `sources` (benchmark -> list, or group -> list), `ties` (false: one action per state, so nothing to leave open)} |
+| `baselines` | comparisons: {`name`, `code`, `method`, `config` (benchmark -> `configs/baselines/*.yaml`), `sources` (benchmark -> list, or group -> list), `ties` (false: one action per state, so nothing to leave open)} |
+| `method` (cells and baselines) | comparisons: the method a configuration belongs to (default: its name); figures show each method's best configuration |
+| `horizon_figure` | comparisons: a value against the horizon, one line per method: {`benchmark`, `value` (the transfer CSVs' `worst_<value>`), `horizon` (the target dataset's column), `optimum`, `threshold`, `max_horizon` (and `why_max`), `published` ({`label`, `points`: horizon -> value})}. Sealed targets are always left out |
 | `prices` | model -> [$ per M prompt tokens, $ per M output tokens] |
 | `budget` | ablations: comparisons at equal cost, fixed before the runs (`rq2_feedback.yaml`): {`plot` (a `configs/plot/` file for `viz/plot_budget_transfer.py`), `reference`, `cost` (dollars), `level`, `note`, `planned`: list of {`name`, `metric` (certified or solved), `cell`, `at` (fraction of the reference's mean spend)}}. The report then opens with the planned comparisons and the budget figure |
 

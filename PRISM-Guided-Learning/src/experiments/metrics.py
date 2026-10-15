@@ -8,6 +8,7 @@ Transfer numbers, over held-out targets only (a source's own training instances 
   * certified_all: the same on every target, whatever the group (a family's list on all families);
   * certified_best: the best single list's `certified`;
   * library: targets certified by at least one of the lists (certification at run time picks one that passes);
+    library_by_group: the same per group of targets (any list, whatever its group);
   * met_share: share of requirements met in the worst case.
 """
 import json
@@ -35,9 +36,10 @@ def transfer_numbers(path: Path, targets: List[int], groups: Optional[Dict[str, 
     df = df.assign(certified=df.certified.fillna(False).astype(bool) if "certified" in df else False)
     everywhere = df.groupby(df.source.astype(str)).certified.sum()
     library = int(df[df.certified].target.nunique())
-    group_of = {}
+    group_of, library_by_group = {}, {}
     if groups:
         members = {g: set(parse_ids(spec)) for g, spec in groups.items()}
+        library_by_group = {g: len(set(df[df.certified].target) & ts) for g, ts in members.items()}
         of_target = {t: g for g, ts in members.items() for t in ts}
         wanted = {str(s): (source_groups or {}).get(str(s)) for s in df.source.unique()}
         df = df.assign(source=[f"{s}@{of_target.get(t)}" if wanted[str(s)] == "*" else str(s)
@@ -51,7 +53,7 @@ def transfer_numbers(path: Path, targets: List[int], groups: Optional[Dict[str, 
     return {"checked": checked, "certified": per_source.mean(), "certified_best": per_source.max(),
             "certified_all": everywhere.mean(), "library": library, "met_share": met,
             "by_target": df.certified.groupby(df.target).mean().to_dict(), "by_group": by_group,
-            "per_source": per_source.to_dict()}
+            "library_by_group": library_by_group, "per_source": per_source.to_dict()}
 
 
 def model_of(run_dir: Path) -> str:

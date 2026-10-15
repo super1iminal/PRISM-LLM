@@ -7,6 +7,14 @@ FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback con
                  "Model": "#008300", "Rule vocabulary": "#e34948"}
 
 
+# RQ1 methods (configs/experiments/rq1_comparison.yaml, `method`), one colour each in every figure that tells them apart
+# by colour; bar figures draw ours in OURS and every baseline in BASELINE, since the bars are labelled
+OURS, BASELINE = "#2a78d6", "#9e9d98"
+METHOD_COLORS = {"Ours (Haiku 5.5)": "#2a78d6", "1-2-3-Go! (reimplemented)": "#eb6834", "PPO": "#1baf7a",
+                 "Hand-written maze rules": "#eda100", "Rule-list search": "#e87ba4", "Ours (Sonnet 5.5)": "#008300",
+                 "Hand-written template": "#4a3aa7", "LLM-written program": "#e34948"}
+
+
 def style(ax, title, ylabel=None, pad=10):
     """Bold left-aligned title, light horizontal grid, only the bottom spine. `pad=None`: matplotlib's default."""
     ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=pad)

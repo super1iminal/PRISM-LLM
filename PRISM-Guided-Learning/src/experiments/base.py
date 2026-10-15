@@ -54,6 +54,7 @@ class Cell:
     repeats: int
     launch: bool = True                         # false: only use existing runs (e.g. Sonnet, which needs approval)
     note: str = ""
+    method: str = ""                            # comparisons: the method this configuration belongs to
 
 
 @dataclass
@@ -130,7 +131,7 @@ def load_experiment(path: Path) -> dict:
                           set={b: list(sets.get(b) or []) for b in names},
                           condition=dict(spec.get("condition") or {}), only=_cell_benches(spec, names),
                           repeats=spec.get("repeats", data.get("repeats", 3)), launch=spec.get("launch", True),
-                          note=spec.get("note", "")))
+                          note=spec.get("note", ""), method=spec.get("method", "")))
     return {**data, "benchmarks": benches, "cells": cells, "path": Path(path)}
 
 
@@ -249,7 +250,7 @@ class Experiment:
         runs = self.collect()
         self.out.mkdir(parents=True, exist_ok=True)
         if not runs.empty:
-            runs.drop(columns=[c for c in runs if c.startswith("by_") or c.endswith("by_group_open")
+            runs.drop(columns=[c for c in runs if c.startswith("by_") or c.endswith(("by_group", "by_group_open"))
                                or c == "per_source"]).to_csv(self.out / "runs.csv", index=False)
         page = self.report(runs)
         path = self.out / "REPORT.md"
