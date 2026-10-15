@@ -1,6 +1,7 @@
 """src/baselines/: the rule-list search, the decision trees, and the runner's output format."""
 import shutil
 
+import numpy as np
 import pytest
 import yaml
 
@@ -90,3 +91,30 @@ def test_polish_deletes_only_conjuncts_of_plain_conjunctions():
     assert conjuncts("a & (b | c)") is None and conjuncts("a") is None
     cands = [c for c, _ in candidates([("a & b", "up"), ("true", "down")])]
     assert [("true", "down")] in cands and [("b", "up"), ("true", "down")] in cands and [("a", "up"), ("true", "down")] in cands
+
+
+@needs_prism
+@pytest.mark.parametrize("inputs", ["raw", "features"])
+def test_an_explicit_tree_compiles_into_rules_that_pick_its_action(inputs):
+    """1-2-3-Go! on the explicit model: trained on Pac-Man horizon 8, its rules (one per action, the tree as an
+    if-then-else) pick the tree's action in every decision state of horizon 10, and its leaves are as many rules."""
+    from baselines.decision_tree import ExplicitDecisionTree
+    from baselines.explicit_mdp import ExplicitMDP
+    cfg = load_config("pacman_baseline")
+    domain = load_domain("pacman")
+    inst = {int(i.id): i for i in domain.load_instances("pacman_transfer.csv")}
+    tree = DecisionTree(domain, {"model": "explicit", "inputs": inputs, "sets": {"h8": [0]},
+                                 "features": ["moves_left", "wall", "nearer_g0", "nearer_g1"]})
+    assert isinstance(tree, ExplicitDecisionTree)
+    tree.config = cfg
+    tree.fit([inst[0]])
+    source = f"tree_{inputs}_h8"
+    info = tree.summary()[source]
+    assert info["leaves"] == len(info["rules"]) == tree.trees[source].get_n_leaves() and tree.training(source) == [0]
+    mdp = ExplicitMDP(domain, inst[1], cfg)
+    vocab = mdp.spec.vocabulary(cfg.rules)
+    nested, leaves = (mdp.spec.policy(r, vocab) for r in (tree.rules(inst[1])[source], info["rules"]))
+    acts = tree.actions_on(mdp, source)
+    for s in np.flatnonzero(mdp.decision):
+        valuation = mdp.valuation(mdp.obs[s])
+        assert nested.allowed(valuation) == leaves.allowed(valuation) == [mdp.actions[acts[s]]]
