@@ -43,8 +43,11 @@ class Ablation(Experiment):
 
     def report(self, runs: pd.DataFrame) -> str:
         ref = self.reference()
-        lines = [f"# {self.title}", "", self.spec.get("question", "").strip(), "",
-                 f"Reference: **{ref}**. Certified: held-out targets certified per rule list (mean over runs, range "
+        lines = [f"# {self.title}", "", self.spec.get("question", "").strip(), ""]
+        if self.spec.get("budget"):        # planned comparisons at equal cost and the budget figure (plan 03)
+            from budget_transfer import report_section
+            lines += report_section(self)
+        lines += [f"Reference: **{ref}**. Certified: held-out targets certified per rule list (mean over runs, range "
                  "over runs). Δ: difference of means to the reference, with a 90% bootstrap interval over runs (few "
                  "runs: read it as a rough guide). Ties open: certified with the action orders left open, i.e. "
                  "however ties are broken. Library: targets certified by at least one of a run's lists.", ""]
