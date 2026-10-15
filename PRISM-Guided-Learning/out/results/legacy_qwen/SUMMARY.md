@@ -1,4 +1,4 @@
-# Legacy per-state planner vs the symbolic loop (qwen3:14b) (auto-generated 2026-10-08 09:20)
+# Legacy per-state planner vs the symbolic loop (qwen3:14b)
 
 Gridworld, 20 grids (19 solvable), qwen3:14b, 5 rounds, obstacle phase visible to rules and legacy. Legacy has one seed (preliminary; a second seed was not run), the default loop two. Symbolic numbers are worst case; legacy's policy is deterministic, so its best and worst case coincide. The paired test (the default loop against legacy, per grid) is exploratory, not pre-registered. Legacy logs only per-run token totals, so it has no spend curve: its whole run averages about 151k tokens per grid, 8x the default loop.
 

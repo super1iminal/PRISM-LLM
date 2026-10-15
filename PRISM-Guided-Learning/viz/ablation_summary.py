@@ -9,7 +9,6 @@ Settings: the plot config (PlotConfig below): which conditions, their families a
 budget groups, the cost weights, the planned comparisons, the UUV section and the text. Grid counts, model
 and round budgets come from the runs.
 """
-import datetime
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -431,8 +430,7 @@ def uuv_table(root: Path, condition: str) -> str:
 
 
 def write_markdown(out_dir, table, budget, planned, pending, uuv, cfg: PlotConfig, batch: Batch, config_path: str):
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# {cfg.heading} (auto-generated {now})", "", batch.text(cfg.intro), "",
+    lines = [f"# {cfg.heading}", "", batch.text(cfg.intro), "",
              f"Regenerate: `python viz/ablation_summary.py {config_path}`.", ""]
     if pending:
         lines += ["**Pending runs:** " + ", ".join(pending), ""]

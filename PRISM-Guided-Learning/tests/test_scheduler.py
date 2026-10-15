@@ -55,7 +55,7 @@ def _flat(d, prefix=""):
 def saved_run(name):
     """A saved `<condition>/seed_<n>` run: its condition's config with its seed, and its samples.
 
-    The run's config.json may predate today's schema, so the config comes from the condition file; every
+    The run's config.json may not load under the run schema, so the config comes from the condition file; every
     setting the run recorded that still exists must match. The exact check is off: the runs reported the
     loop's values.
     """

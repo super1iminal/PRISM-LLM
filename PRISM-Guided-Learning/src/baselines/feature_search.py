@@ -1,5 +1,5 @@
 """Search over the rule language without an LLM: beam search for a decision list of feature rules that passes as
-many training grids as possible, the first non-LLM baseline of the transfer search (docs/transfer_plan.md).
+many training grids as possible, a non-LLM baseline of the transfer search (docs/experiments.md).
 
 A rule is a conjunction of feature literals (each of `features` required true, required false, or ignored) with an
 action order; it allows the actions whose features match, and the policy takes the first allowed action in the

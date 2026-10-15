@@ -1,6 +1,6 @@
-# Rule language on grid_20_large (Haiku 5.5) (auto-generated 2026-10-08 20:55)
+# Rule language on grid_20_large (Haiku 5.5)
 
-Gridworld, 20 grids of sizes 9 to 13 (20 solvable), anthropic/claude-haiku-5.5, thinking on, restart on slow progress, obstacle phase visible. Two unseeded runs per condition, except v1 + closer (one); the paired tests are exploratory. General vocabulary: instance constants (grid size, goal coordinates), per-action features (v1: wall, hazard, toward; v2 adds obstacle and risky; closer where named), rules with action `any`, and no numbers but 0 and 1. In the first runs, five grids (v1: 14, 18; v2: 9, 19; v2 + closer: 19) ended with an error because a PRISM timeout did not take effect (fixed since; DECISIONS.md): they count as unsolved there and are left out of that run's means. The second runs, made with the fix, have no errors.
+Gridworld, 20 grids of sizes 9 to 13 (20 solvable), anthropic/claude-haiku-5.5, thinking on, restart on slow progress, obstacle phase visible. Two unseeded runs per condition, except v1 + closer (one); the paired tests are exploratory. General vocabulary: instance constants (grid size, goal coordinates), per-action features (v1: wall, hazard, toward; v2 adds obstacle and risky; closer where named), rules with action `any`, and no numbers but 0 and 1. In the seed_none_1 runs, five grids (v1: 14, 18; v2: 9, 19; v2 + closer: 19) ended with an error because a PRISM timeout did not take effect (DECISIONS.md): they count as unsolved there and are left out of that run's means. The seed_none_2 runs, made with the timeout fixed, have no errors.
 
 Regenerate: `python viz/ablation_summary.py configs/plot/rule_language_grid.yaml`.
 

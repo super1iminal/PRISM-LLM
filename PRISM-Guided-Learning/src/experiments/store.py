@@ -1,13 +1,13 @@
 """Runs indexed by what they did, so that experiments share them instead of repeating them.
 
-A run's identity is its resolved config (recorded in <run>/config.json, read over today's defaults) without the
+A run's identity is its resolved config (recorded in <run>/config.json; keys it lacks take their default) without the
 settings that cannot change its results: the condition's name, parallelism and scheduler, timeouts and client
 retries, and the seed, which only labels a repeat. Runs made under different condition names with the same identity
 are repeats of one configuration. A code change that alters what a run does must therefore come with a config key
 (as every behaviour change here does), or the store would mix runs made before and after it.
 
-A run's optional <run>/identity.json corrects what its config.json could not record, e.g. features added to the
-domain after the run (its prompts never showed them, as if hidden): {"note": ..., "<section>": {"<key>": value}}.
+A run's optional <run>/identity.json corrects what its config.json could not record, e.g. domain features its
+prompts never showed although its config does not hide them (recorded as hidden): {"note": ..., "<section>": {"<key>": value}}.
 """
 import hashlib
 import json
@@ -47,7 +47,7 @@ def fingerprint(cfg: Config) -> str:
 
 
 def recorded_config(run_dir: Path) -> Config:
-    """The settings a run had: its config.json over today's defaults, corrected by its identity.json if any."""
+    """The settings a run had: its config.json over the run defaults, corrected by its identity.json if any."""
     data = _merge(_read_yaml(RUN_CONFIG_DIR / "default.yaml"),
                   json.loads((run_dir / "config.json").read_text(encoding="utf-8")))
     fix = run_dir / "identity.json"

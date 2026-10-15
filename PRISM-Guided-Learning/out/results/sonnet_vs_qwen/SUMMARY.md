@@ -1,4 +1,4 @@
-# Claude vs qwen (auto-generated 2026-10-08 09:20)
+# Claude vs qwen
 
 Gridworld, 20 grids (19 solvable), 5 rounds, obstacle phase visible to the rules. Models: qwen3:14b / anthropic/claude-sonnet-5 / anthropic/claude-sonnet-5.5 / anthropic/claude-haiku-5.5. The qwen conditions have 2 seeds each (local Ollama, q4_K_M, thinking off). Each Claude condition is one unseeded run on OpenRouter, Anthropic's endpoint (no Claude endpoint accepts a seed): Sonnet 5 with thinking off, Sonnet 5.5 with thinking on (its endpoints refuse to turn it off) and a 16k output cap, Haiku 5.5 with Sonnet 5.5's settings. Symbolic numbers are worst case; the Claude runs report the exact check's values (interval iteration), the qwen runs the loop's. Paired tests compare per-grid means against R4 with a sign-flip permutation test; with one Claude run per grid, treat p > 0.05 as noise.
 

@@ -31,7 +31,7 @@ from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
 
 def cli_overrides(args) -> List[str]:
-    """Map the old shortcut flags onto config overrides."""
+    """Map the shortcut flags (--domain, --data, ...) onto config overrides."""
     out = list(args.set or [])
     for flag, key in (("domain", "domain.name"), ("data", "domain.dataset"), ("workers", "run.workers"),
                       ("max_attempts", "planner.max_rounds"), ("limit", "run.limit")):

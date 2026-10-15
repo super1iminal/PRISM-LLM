@@ -1,4 +1,4 @@
-"""Baselines for the transfer search (docs/transfer_plan.md): one module per method, each a `Baseline`
+"""Baselines for the transfer search (docs/experiments.md, "Methods"): one module per method, each a `Baseline`
 (base.py), run from configs/baselines/<name>.yaml by src/run_baseline.py."""
 from importlib import import_module
 

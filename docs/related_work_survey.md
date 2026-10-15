@@ -67,7 +67,7 @@ The target is a generate-then-verify loop for **one Markov decision process give
   - A branch. **REFINE** (rewrite the list) when no completion can pass. **EXTEND** (append rules) otherwise; appending can only shrink the set of completions, so worst cases cannot fall.
   - Blame: rules and uncovered situations ranked by expected visits times the probability at stake. PRISM's optimal action is never revealed.
   - Around the loop: the best rule set so far is kept, and the loop restarts when progress stalls.
-- **Planned extension (families).** Rules over relative features are written on a few instances, then frozen. They are then certified one instance at a time on held-out and larger instances.
+- **Extension to families.** Rules over relative features are written on a few instances, then frozen. They are then certified one instance at a time on held-out and larger instances.
 
 The inputs (meeting notes of Sept 24 and Oct 3, Marsha's email, the meeting transcript) agree on this target. Rule transfer, dropped in the Sept 24 notes, is part of the family extension that the later email proposes.
 

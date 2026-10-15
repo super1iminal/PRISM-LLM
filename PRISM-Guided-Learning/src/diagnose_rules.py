@@ -1,4 +1,4 @@
-"""Rule lists for the transfer diagnosis (docs/transfer_plan.md, Phase 1): collect the final rule sets of runs, and
+"""Rule lists for measuring what `any` costs: collect the final rule sets of runs, and
 rewrite their `any` rules into a fixed direction order. The lists are then certified with src/run_baseline.py
 (method `rule_lists`).
 

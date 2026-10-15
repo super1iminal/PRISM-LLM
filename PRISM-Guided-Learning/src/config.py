@@ -245,8 +245,8 @@ def load_config(condition: Optional[str] = None, overrides: Sequence[str] = ()) 
 
 
 def load_run_config(run_dir) -> Config:
-    """The settings a finished run recorded in its config.json, over today's defaults (so keys added since the
-    run take their default values)."""
+    """The settings a finished run recorded in its config.json, over the run defaults (keys the run did not
+    record take their default values)."""
     recorded = json.loads((Path(run_dir) / "config.json").read_text(encoding="utf-8"))
     cfg = _build(Config, _resolve_scheduler(_merge(_read_yaml(RUN_CONFIG_DIR / "default.yaml"), recorded)))
     validate(cfg)

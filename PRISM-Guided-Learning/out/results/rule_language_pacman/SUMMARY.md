@@ -1,4 +1,4 @@
-# Rule language on Pac-Man (Haiku 5.5) (auto-generated 2026-10-13 22:40)
+# Rule language on Pac-Man (Haiku 5.5)
 
 Pac-Man (QVBS), horizons 8 to 16, crash probability <= 0.56 (optimum 0.5511), anthropic/claude-haiku-5.5, thinking on, restart on slow progress. One unseeded run per condition, so the comparison is exploratory. "Requirements met" is 0 or 1 here.
 

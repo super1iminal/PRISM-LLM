@@ -1,4 +1,4 @@
-# Haiku ablation on grid_20_large (auto-generated 2026-10-08 09:20)
+# Haiku ablation on grid_20_large
 
 Gridworld, 20 grids of sizes 9 to 13 (20 solvable), anthropic/claude-haiku-5.5, thinking on, obstacle phase visible to the rules. Two unseeded runs per condition on OpenRouter, Anthropic's endpoint (no Claude endpoint accepts a seed). Symbolic numbers are worst case; the main table reports the exact check's values, the budget curves and planned comparisons the loop's (replayed per round). The main table is each condition's full budget: 5 rounds, or 10 for pure resampling.
 

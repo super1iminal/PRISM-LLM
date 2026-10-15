@@ -7,7 +7,7 @@ Settings: the plot config (PlotConfig below; configs/plot/transfer_results.yaml 
 
 A method is an LLM condition (its runs; the bar is the mean over runs of the certified targets per rule set, the
 whisker the range over runs), a baseline's transfer CSV (`csv` and its `sources`; the bar is the mean over sources,
-the whisker their range), or explicit `values` from the numpy model (drawn hatched: PRISM certification pending).
+the whisker their range), or explicit `values` from the numpy model (drawn hatched: not certified by PRISM).
 Our methods are blue, baselines grey.
 """
 import sys
