@@ -29,7 +29,7 @@ import json
 import operator
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 Value = Union[int, bool]
 
@@ -573,6 +573,16 @@ def action_orders(actions: Sequence[str], kind: str) -> List[Tuple[str, ...]]:
     if kind == "declared":
         return [tuple(actions)]
     raise ValueError(f"unknown action orders {kind!r} (all | rotations)")
+
+
+def feature_values(variables: Sequence[Variable], actions: Sequence[str], vocabulary: Vocabulary
+                   ) -> Callable[[Dict[str, Value]], Dict[Tuple[str, Optional[str]], Value]]:
+    """A function from a valuation of `variables` to the value of each of `vocabulary`'s features, keyed by
+    `(name, None)` for a state feature and `(name, action)` for an action feature."""
+    scope = _Scope.build(variables, actions, vocabulary)
+    exprs = {(name, None): e for name, e in scope.state_features.items()}
+    exprs.update({(name, a): e for name, per in scope.action_features.items() for a, e in per.items()})
+    return lambda valuation: {key: evaluate(e, valuation) for key, e in exprs.items()}
 
 
 def atomic_rules(assignments: Iterable[Tuple[Dict[str, Value], str]]) -> List[Tuple[str, str]]:

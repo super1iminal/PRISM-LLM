@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.domain import Spec
-from core.rules import ANY, Constant, Feature, RuleError, SymbolicPolicy, Variable, Vocabulary
+from core.rules import ANY, Constant, Feature, RuleError, SymbolicPolicy, Variable, Vocabulary, feature_values
 
 VARS = [Variable("x", "int", 0, 3), Variable("y", "int", 0, 3), Variable("g1", "bool")]
 ACTIONS = ["up", "down"]
@@ -71,3 +71,11 @@ def test_spec_vocabulary_follows_the_run_config():
     assert spec.vocabulary(off) == Vocabulary()
     vocab = spec.vocabulary(on)
     assert vocab.allow_any and vocab.general and [f.name for f in vocab.features] == ["at_goal_row", "toward"]
+
+
+def test_feature_values_per_state_and_per_action():
+    """What feature-space feedback reads: boolean and integer state features, and each action feature per action."""
+    vocab = Vocabulary(VOCAB.constants, VOCAB.features + [Feature("rows_left", "rows to the goal", expr="GR - x")])
+    values = feature_values(VARS, ACTIONS, vocab)({"x": 0, "y": 1, "g1": False})
+    assert values == {("at_goal_row", None): False, ("rows_left", None): 2, ("toward", "up"): False,
+                      ("toward", "down"): True, ("wall", "up"): True, ("wall", "down"): False}

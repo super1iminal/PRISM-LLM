@@ -2,13 +2,13 @@
 domain's own) with an episode's context (core/episode.py). The planner decides which prompt comes next;
 this module only builds them.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from config import Config
 from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
 from core.episode import Episode, Kept, Member
-from core.rules import SymbolicPolicy, Vocabulary
+from core.rules import SymbolicPolicy, Vocabulary, feature_values
 from core.verifier import Verification
 
 
@@ -16,7 +16,7 @@ class Prompts:
     def __init__(self, domain: Domain, config: Config):
         self.domain = domain
         self.config = config
-        self._feature_policies: Dict[tuple, SymbolicPolicy] = {}   # (member, feature, action) -> `feature -> action`
+        self._feature_values: Dict[int, Callable] = {}   # id(member) -> its `feature_values` function
 
     # ---------------------------------------------------------------- context
 
@@ -110,22 +110,24 @@ class Prompts:
 
     def _state(self, member: Member, valuation: Dict[str, Any]) -> str:
         """How feedback names a state: the domain's rendering of its valuation, or (`feedback.space: features`) its
-        boolean variables and the features that hold, per action, without positions."""
+        boolean variables, the state features (by name if boolean and true, as `name=value` if integer) and, per
+        action, the action features that hold. Integer variables (positions) are left out."""
         if self.config.feedback.space != "features":
             return self.domain.format_state(valuation)
         spec, vocab = member.verifier.spec, member.vocabulary
-        actions = list(spec.actions)
-
-        def holds(feature: str, action: str) -> bool:
-            key = (id(member), feature, action)
-            if key not in self._feature_policies:
-                self._feature_policies[key] = spec.policy([(feature, action)], vocab)
-            return self._feature_policies[key].allowed(valuation) == [action]
+        if id(member) not in self._feature_values:
+            self._feature_values[id(member)] = feature_values(spec.variables, list(spec.actions), vocab)
+        values = self._feature_values[id(member)](valuation)
 
         flags = [f"{k}={str(v).lower()}" for k, v in valuation.items() if isinstance(v, bool)]
-        flags += [f.name for f in vocab.features if not f.is_action_feature and holds(f.name, actions[0])]
-        moves = [f"{a}: {', '.join(f.name for f in vocab.features if f.is_action_feature and holds(f.name, a)) or 'none'}"
-                 for a in actions]
+        for f in vocab.features:
+            value = values.get((f.name, None))
+            if isinstance(value, bool):
+                flags += [f.name] if value else []
+            elif value is not None:
+                flags.append(f"{f.name}={value}")
+        moves = [f"{a}: {', '.join(f.name for f in vocab.features if f.is_action_feature and values[(f.name, a)]) or 'none'}"
+                 for a in spec.actions]
         return " & ".join(flags) + (" | " if flags else "") + "; ".join(moves)
 
     def _merged(self, member: Member, hotspots) -> List[Dict[str, Any]]:

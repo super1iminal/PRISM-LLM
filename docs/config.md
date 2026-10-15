@@ -52,7 +52,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `feedback.horizon` | 100 | mass-analysis occupancy horizon in steps, or `domain` for the domain's own (UUV: the mission deadline, 30 / 70; U1 sets it) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
 | `feedback.trajectory` | `false` | also show one likely way the rules fail (a trace from the start) in REFINE/EXTEND prompts | `rq2_verifier_output` |
-| `feedback.space` | `states` | how feedback names states: `states` (their valuations) or `features` (boolean variables and, per action, the features that hold; no positions) | `haiku_ts_features` |
+| `feedback.space` | `states` | how feedback (blame, uncovered hotspots, the failing trace) names states: `states` (their valuations) or `features` (boolean variables, state features (`name=value` if integer, e.g. Pac-Man's `moves_left`) and, per action, the action features that hold; integer variables such as positions and headings are left out). Integer state features came with plan 04; before that Pac-Man could not run `features`, and gridworld's prompts are unchanged | `haiku_ts_features`, `rq2_verifier_output` |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | catch-all ablation (single-seed runs) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
 | `prompt.generality` | `false` | say that the rules will be certified unchanged on unseen, larger instances and must not single one out | `haiku_ts_generality` (transfer search) |

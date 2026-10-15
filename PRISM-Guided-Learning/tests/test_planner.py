@@ -1,5 +1,6 @@
 """SymbolicPlanner.solve on the tiny grid with scripted LLM answers: the loop's branches and its records."""
 import logging
+import re
 import shutil
 
 import pytest
@@ -185,3 +186,18 @@ def test_a_likely_failing_trace_is_shown_when_asked(tiny_grid):
     assert "## A likely way to fail `goal1`" in prompt and "1. In x=0 & y=0" in prompt and "rule 1 chose left" in prompt
     plain, _ = solve(tiny_grid, [LEFT, LEFT], 2)
     assert "A likely way to fail" not in plain["iterations"][1]["prompt"]
+
+
+def test_feature_space_feedback_names_no_position(tiny_grid):
+    """With `feedback.space: features`, blame, uncovered hotspots and the trace name states by the goal flags and
+    the features that hold per action, never by the agent's cell or the obstacle's phase."""
+    features = ["feedback.space=features", "feedback.trajectory=true", "rules.extended=true", "rules.general=true"]
+    refined, _ = solve(tiny_grid, [LEFT, LEFT], 2, *features)
+    extended, _ = solve(tiny_grid, [EMPTY, EMPTY], 2, *features)
+    assert modes(refined) == ["initial", "refine"] and modes(extended) == ["initial", "extend"]
+    for result, section in ((refined, "## Where probability is lost"),
+                            (extended, "## Uncovered states where probability is lost")):
+        prompt = result["iterations"][1]["prompt"]
+        feedback = prompt[prompt.index(section):prompt.index("## Task")]
+        assert "## A likely way to fail" in feedback and "g1=false & g2=false | up: wall" in feedback
+        assert not re.search(r"\b(x|y|obs_idx)=", feedback)

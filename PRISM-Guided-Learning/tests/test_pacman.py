@@ -1,5 +1,7 @@
 """The Pac-Man domain reproduces the QVBS benchmark and its thresholds separate the reference policies."""
 import json
+import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -7,9 +9,11 @@ import pytest
 
 from config import load_config
 from core.domain import Instance, load_domain
+from core.planner import SymbolicPlanner
 from core.prism import PrismRunner
 from core.rules import SymbolicPolicy
 from core.verifier import PolicyVerifier
+from fakes import ScriptedBackend, answer
 
 ROOT = Path(__file__).resolve().parent.parent
 CFG = load_config()
@@ -64,3 +68,18 @@ def test_thresholds_separate_reference_policies(domain):
 
 def test_horizon(domain):
     assert domain.horizon(instance(10)) == 33
+
+
+def test_feature_space_feedback_names_no_position(domain):
+    """Feature-space feedback on Pac-Man (horizon 8) names states by `moves_left` and the action features, never by
+    a position, a heading or the step count; the integer feature `moves_left` reads as `name=value`."""
+    cfg = load_config("haiku_mi_pacman_long", ["planner.max_rounds=2", "llm.seed=1", "prism.exact_check=false",
+                                               "run.train_sets=[]", "feedback.space=features",
+                                               "feedback.trajectory=true"])
+    llm = ScriptedBackend([answer(("nearer_g0", "right"))])
+    result = SymbolicPlanner(domain, llm, cfg).solve(instance(8), logging.getLogger("test_pacman"))
+    assert [it["mode"] for it in result["iterations"]] == ["initial", "extend"]
+    prompt = result["iterations"][1]["prompt"]
+    feedback = prompt[prompt.index("## Uncovered states where probability is lost"):prompt.index("## Task")]
+    assert "## A likely way to fail `crash`" in feedback and "moves_left=8 | right: " in feedback
+    assert not re.search(r"\b(xP|yP|dP|xG0|yG0|dG0|xG1|yG1|dG1|steps)=", feedback)
