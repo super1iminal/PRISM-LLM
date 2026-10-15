@@ -1,7 +1,9 @@
-"""Budget curves at equal cost (plan 03): held-out targets certified per rule list, and training sets solved, against
-the spend per training set, one line per cell of an experiment (mean over runs, band: range over runs), one column
-per benchmark. Data: each run's budget_transfer.csv (src/budget_transfer.py). Keep-best makes every line rise, so
-read the lines against each other at equal spend, never a line's rise on its own.
+"""Budget curves at equal cost (plan 03), against the spend per training set: the kept list's training score
+(requirements met in the worst case, summed over the training members), above the held-out targets it certifies, and
+training sets solved. One line per cell of an experiment (mean over runs, band: range over runs), one column per
+benchmark. A training score that rises while held-out certification stays flat is feedback patching the training
+instances. Data: each run's budget_transfer.csv (src/budget_transfer.py). Keep-best makes every line rise, so read
+the lines against each other at equal spend, never a line's rise on its own.
 
 Usage (from PRISM-Guided-Learning/):
     python viz/plot_budget_transfer.py configs/plot/budget_transfer.yaml
@@ -56,13 +58,15 @@ def draw(data: pd.DataFrame, exp, cfg: PlotConfig, marks: Dict[str, List[float]]
     from budget_transfer import COSTS
     benches = [b for b in exp.spec["benchmarks"].values() if (data.bench == b.name).any()]
     cells = [c for c in exp.spec["cells"] if (data.cell == c.name).any()]
-    fig, axes = plt.subplots(2, len(benches), figsize=(4.6 * len(benches) + 0.6, 7.6), squeeze=False)
+    fig, axes = plt.subplots(3, len(benches), figsize=(4.6 * len(benches) + 0.6, 10.6), squeeze=False)
     fig.patch.set_facecolor(SURFACE)
     of = getattr(exp, "_of", lambda b: "")
     for col, bench in enumerate(benches):
         b = data[data.bench == bench.name]
-        for row, (metric, ylabel) in enumerate([("certified", f"held-out targets certified per list ({of(bench)})"),
-                                                ("solved", "training sets solved")]):
+        rows = [("train_met", f"training requirements met per list (of {b.train_requirements.max():.0f})"),
+                ("certified", f"held-out targets certified per list ({of(bench)})"),
+                ("solved", "training sets solved")]
+        for row, (metric, ylabel) in enumerate(rows):
             ax = axes[row][col]
             style(ax, (bench.label or bench.name).split(" (")[0] if row == 0 else "", ylabel if col == 0 else None)
             if col:
@@ -80,7 +84,7 @@ def draw(data: pd.DataFrame, exp, cfg: PlotConfig, marks: Dict[str, List[float]]
             for x in marks.get(bench.name, []):
                 ax.axvline(x, color=INK_2, linestyle=(0, (2, 3)), linewidth=0.9, zorder=1)
             f = firsts[firsts.bench == bench.name] if not firsts.empty else firsts
-            if not f.empty and cfg.cost in f:
+            if not f.empty and cfg.cost in f and metric in f:
                 ax.scatter(f[cfg.cost], f[metric], marker="x", s=64, color=INK, linewidths=1.6, zorder=5,
                            label="LLM's first answer, no feedback (all cells)")
             ax.xaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 5, 10]))

@@ -27,7 +27,7 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -49,19 +49,36 @@ def rules_hash(rules: Sequence) -> str:
     return hashlib.sha1(json.dumps([list(r) for r in rules]).encode()).hexdigest()[:12]
 
 
-def kept_lists(record: dict) -> List[dict]:
+def training_met(it: dict, instance, requirements_of: Callable[[int], list]) -> Tuple[int, int]:
+    """Requirements an iteration's rules meet in the worst case, summed over the training members shown to the LLM
+    (the sample's own instance when it has no members), and how many requirements that is: the training score."""
+    members = [(m["instance"], m["worst"]) for m in it.get("members", []) if not m.get("hidden")] or \
+              [(instance, it["worst"])]
+    met = total = 0
+    for iid, worst in members:
+        reqs = requirements_of(int(iid))
+        met += sum(r.satisfied(worst[r.name]) for r in reqs)
+        total += len(reqs)
+    return met, total
+
+
+def kept_lists(record: dict, requirements_of: Optional[Callable[[int], list]] = None) -> List[dict]:
     """Per round of one sample record: the round whose rules keep-best holds after it, those rules, the prompt and
-    output tokens spent so far, and whether the kept rules pass every member in the worst case."""
+    output tokens spent so far, and whether the kept rules pass every member in the worst case. With
+    `requirements_of` (instance id -> its requirements), also the kept rules' training score (`training_met`)."""
     out, kept, prompt, output = [], None, 0, 0
     for it in record.get("iterations", []):
         prompt += it.get("llm_prompt_tokens") or 0
         output += it.get("llm_output_tokens") or 0
         if kept is None or it.get("improved"):
             kept = it
-        out.append({"round": int(it["iteration"]), "kept_round": int(kept["iteration"]),
-                    "rules": [(r["condition"], r["action"]) for r in kept["rules"]],
-                    "prompt_tokens": prompt, "output_tokens": output,
-                    "solved": bool(kept.get("worst_case_success"))})
+        entry = {"round": int(it["iteration"]), "kept_round": int(kept["iteration"]),
+                 "rules": [(r["condition"], r["action"]) for r in kept["rules"]],
+                 "prompt_tokens": prompt, "output_tokens": output, "solved": bool(kept.get("worst_case_success"))}
+        if requirements_of is not None:
+            entry["train_met"], entry["train_requirements"] = training_met(kept, record.get("instance"),
+                                                                           requirements_of)
+        out.append(entry)
     return out
 
 
@@ -106,8 +123,16 @@ def budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional
     own = {sid: [t for t in parse_ids(source_targets[str(sid)]) if t in wanted]
            if source_targets and str(sid) in source_targets else wanted for sid in records}
     trained = training_instances(run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
+    own_instances = instances if Path(dataset).name == Path(cfg.domain.dataset).name else \
+        {int(t.id): t for t in domain.load_instances(cfg.domain.dataset)}
+    requirements = {}
 
-    rounds = [{"source": sid, **entry} for sid, rec in records.items() for entry in kept_lists(rec)]
+    def requirements_of(iid: int) -> list:
+        if iid not in requirements:
+            requirements[iid] = list(domain.spec(own_instances[iid]).requirements)
+        return requirements[iid]
+
+    rounds = [{"source": sid, **entry} for sid, rec in records.items() for entry in kept_lists(rec, requirements_of)]
     lists = {rules_hash(r["rules"]): r["rules"] for r in rounds}
     cache = _seed_cache(run_dir, dataset, records)
     todo: Dict[int, Dict[str, list]] = {}
@@ -135,7 +160,8 @@ def budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional
             rows.append({"source": r["source"], "round": r["round"], "kept_round": r["kept_round"],
                          "first_answer": r["round"] == 1, "rules_hash": h, "num_rules": len(r["rules"]),
                          "prompt_tokens": r["prompt_tokens"], "output_tokens": r["output_tokens"],
-                         "dollars": dollars, "solved": r["solved"], "target": t,
+                         "dollars": dollars, "solved": r["solved"], "train_met": r["train_met"],
+                         "train_requirements": r["train_requirements"], "target": t,
                          "trained": t in trained.get(r["source"], []), **cache[(h, t)]})
     df = pd.DataFrame(rows)
     df.to_csv(run_dir / BUDGET_CSV, index=False)
@@ -145,11 +171,12 @@ def budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional
 # ---------------------------------------------------------------- reading the curves
 
 def rounds_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Per source and round of a budget CSV: the cost so far, solved, and the held-out targets its kept list
-    certifies (`certified`, of `held_out` checked; a source's own training instances left out)."""
+    """Per source and round of a budget CSV: the cost so far, solved, the kept list's training score (`train_met`
+    of `train_requirements`) and the held-out targets it certifies (`certified`, of `held_out` checked; a source's
+    own training instances left out)."""
     keys = ["source", "round"]
-    meta = df.groupby(keys)[["kept_round", "first_answer", "prompt_tokens", "output_tokens", "dollars",
-                             "solved"]].first()
+    meta = df.groupby(keys)[["kept_round", "first_answer", "prompt_tokens", "output_tokens", "dollars", "solved",
+                             "train_met", "train_requirements"]].first()
     held = df[~df.trained.astype(bool)]
     counts = held.assign(certified=held.certified.fillna(False).astype(bool)).groupby(keys).certified.agg(
         certified="sum", held_out="size")
@@ -164,11 +191,13 @@ def at_budget(table: pd.DataFrame, budget: float, cost: str = "dollars") -> pd.D
     for source, g in table.sort_values("round").groupby("source"):
         within = g[g[cost] <= budget * (1 + 1e-9)]
         if within.empty:
-            rows.append({"source": source, "round": np.nan, "spent": 0.0, "certified": 0.0, "solved": False})
+            rows.append({"source": source, "round": np.nan, "spent": 0.0, "certified": 0.0, "solved": False,
+                         "train_met": 0.0})
         else:
             last = within.iloc[-1]
             rows.append({"source": source, "round": last["round"], "spent": last[cost],
-                         "certified": float(last.certified), "solved": bool(last.solved)})
+                         "certified": float(last.certified), "solved": bool(last.solved),
+                         "train_met": float(last.train_met)})
     return pd.DataFrame(rows)
 
 
@@ -238,8 +267,8 @@ def reference_spend(tables: Dict[Path, pd.DataFrame], cost: str = "dollars") -> 
 
 
 def curves(exp, cost: str = "dollars", points: int = 121) -> pd.DataFrame:
-    """Per benchmark, cell and run: certified per list and share of sets solved at budgets from 0 to the largest
-    spend of the benchmark's runs."""
+    """Per benchmark, cell and run: the training score (requirements met on the training members), certified per
+    list and share of sets solved, at budgets from 0 to the largest spend of the benchmark's runs."""
     rows = []
     for bench in exp.spec["benchmarks"].values():
         units = [u for u in exp.units if u.bench.name == bench.name]
@@ -254,7 +283,10 @@ def curves(exp, cost: str = "dollars", points: int = 121) -> pd.DataFrame:
                     picked = at_budget(table, x, cost)
                     rows.append({"bench": bench.name, "cell": u.cell.name, "code": u.cell.code,
                                  "run": f"{run.parent.name}/{run.name}", "x": x,
-                                 "certified": picked.certified.mean(), "solved": picked.solved.astype(float).mean()})
+                                 "train_met": picked.train_met.mean(),
+                                 "train_requirements": table.train_requirements.max(),
+                                 "certified": picked.certified.mean(),
+                                 "solved": picked.solved.astype(float).mean()})
     return pd.DataFrame(rows)
 
 
@@ -267,9 +299,39 @@ def first_answers(exp) -> pd.DataFrame:
                   for t in unit_tables(u).values()]
         if firsts:
             f = pd.concat(firsts)
-            rows.append({"bench": bench.name, "lists": len(f), "certified": f.certified.mean(),
+            rows.append({"bench": bench.name, "lists": len(f), "train_met": f.train_met.mean(),
+                         "train_requirements": f.train_requirements.max(), "certified": f.certified.mean(),
                          "solved": f.solved.astype(float).mean(), "dollars": f.dollars.mean(),
                          "output_tokens": f.output_tokens.mean()})
+    return pd.DataFrame(rows)
+
+
+def overfitting(exp) -> pd.DataFrame:
+    """Per benchmark and cell: the kept lists' training score and held-out certified count after round 1 and at the
+    reference cell's mean spend (mean over runs of each run's mean over its lists). A training score that rises
+    while held-out certification stays flat is the loop patching the training instances."""
+    spec = exp.spec.get("budget") or {}
+    ref = spec.get("reference") or exp.reference()
+    cost = spec.get("cost", "dollars")
+    rows = []
+    for bench in exp.spec["benchmarks"].values():
+        units = [u for u in exp.units if u.bench.name == bench.name]
+        ref_units = [u for u in units if u.cell.name == ref]
+        if not ref_units:
+            continue
+        spend = reference_spend(unit_tables(ref_units[0]), cost)
+        for u in units:
+            tables = list(unit_tables(u).values())
+            if not tables:
+                continue
+            first = [at_round(t, 1) for t in tables]
+            later = [at_budget(t, spend, cost) for t in tables]
+            rows.append({"bench": bench.name, "cell": u.cell.name, "runs": len(tables), "budget": spend,
+                         "train_requirements": max(t.train_requirements.max() for t in tables),
+                         "train_first": np.mean([f.train_met.mean() for f in first]),
+                         "train_at": np.mean([x.train_met.mean() for x in later]),
+                         "certified_first": np.mean([f.certified.mean() for f in first]),
+                         "certified_at": np.mean([x.certified.mean() for x in later])})
     return pd.DataFrame(rows)
 
 
@@ -307,7 +369,8 @@ def planned(exp) -> pd.DataFrame:
 
 def report_section(exp) -> List[str]:
     """The report's budget section (an experiment file with `budget:`): the planned comparisons, the LLM's first
-    answers, and the budget figure (viz/plot_budget_transfer.py)."""
+    answers, the overfitting readout (with the file's `budget.overfitting` sentence), and the budget figure
+    (viz/plot_budget_transfer.py)."""
     import sys
     from settings import PROJECT_ROOT
     sys.path.insert(0, str(PROJECT_ROOT / "viz"))
@@ -346,15 +409,30 @@ def report_section(exp) -> List[str]:
         labels = {b.name: b.label or b.name for b in exp.spec["benchmarks"].values()}
         for r in firsts.itertuples():
             lines.append(f"| {labels[r.bench]} | {r.lists} | {r.certified:.2f} | {r.solved:.0%} | ${r.dollars:.4f} |")
+    over = overfitting(exp)
+    if not over.empty:
+        lines += ["", "Training against held-out (overfitting readout): the kept lists' requirements met in the worst "
+                  "case, summed over the training members, beside the held-out targets they certify, after round 1 "
+                  f"and at **{ref}**'s mean spend. Training rising while held-out stays flat means the loop patches "
+                  "the training instances.", "",
+                  "| benchmark | condition | runs | training met: round 1 → at spend | held-out certified: round 1 → "
+                  "at spend |", "|---|---|---|---|---|"]
+        labels = {b.name: b.label or b.name for b in exp.spec["benchmarks"].values()}
+        for r in over.itertuples():
+            lines.append(f"| {labels[r.bench]} | {r.cell} | {r.runs} | {r.train_first:.1f} → {r.train_at:.1f} "
+                         f"(of {r.train_requirements:.0f}) | {r.certified_first:.2f} → {r.certified_at:.2f} |")
+        if spec.get("overfitting"):
+            lines += ["", spec["overfitting"].strip()]
     data = curves(exp, cost, plot.points)
     if not data.empty:
         marks = {b: sorted(set(g.budget.dropna())) for b, g in table.groupby("bench")} if not table.empty else {}
         plot.cost = cost
         path = draw(data, exp, plot, marks, firsts)
         data.to_csv(exp.out / "budget_transfer.csv", index=False)
-        lines += ["", f"![certified and solved against spend]({path.name})", "",
-                  "Each line: a cell's mean over runs, the band its range over runs; vertical lines: the budgets of "
-                  "the planned comparisons; ×: the LLM's first answer. Curve data: `budget_transfer.csv`."]
+        lines += ["", f"![training score, certified and solved against spend]({path.name})", "",
+                  "Rows: training requirements met per list, held-out targets certified per list, training sets "
+                  "solved. Each line: a cell's mean over runs, the band its range over runs; vertical lines: the "
+                  "budgets of the planned comparisons; ×: the LLM's first answer. Curve data: `budget_transfer.csv`."]
     return lines + [""]
 
 
