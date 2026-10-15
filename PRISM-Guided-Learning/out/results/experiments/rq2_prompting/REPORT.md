@@ -38,4 +38,16 @@ Per group (certified per rule list on its own group, mean over runs):
 | Tie-breaking explained | 3.0 | 1.0 | 17.3 |
 | No worked examples | 8.7 | 0.0 | 13.7 |
 
+## Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)
+
+Targets 0-7 (each list's own training instances left out); certified of 5.
+
+| condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
+|---|---|---|---|---|---|---|---|---|---|
+| Core prompt (generality instruction) | Core | 3 | 3.00 | reference | – | 3.0 | 67% (0%–100%) | 4.0 (3.0–5.0) | 4,649 (3,555–6,328) |
+| No generality instruction | No general | 0 | – | – | – | – | – | – | – |
+| Strategy in words first | Strategy | 0 | – | – | – | – | – | – | – |
+| Tie-breaking explained | Ties | 0 | – | – | – | – | – | – | – |
+| No worked examples | No examples | 0 | – | – | – | – | – | – | – |
+
 ![RQ2c: prompting](rq2_prompting.png)

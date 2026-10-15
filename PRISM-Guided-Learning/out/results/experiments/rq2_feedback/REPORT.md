@@ -35,4 +35,15 @@ Per group (certified per rule list on its own group, mean over runs):
 | Feedback, restart after 2 rounds without gain | 8.0 | 0.7 | 11.7 |
 | Restarts only (no feedback) | 10.0 | 4.7 | 14.7 |
 
+## Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)
+
+Targets 0-7 (each list's own training instances left out); certified of 5.
+
+| condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
+|---|---|---|---|---|---|---|---|---|---|
+| Feedback, no restarts (core) | F | 3 | 3.00 | reference | – | 3.0 | 67% (0%–100%) | 4.0 (3.0–5.0) | 4,649 (3,555–6,328) |
+| Feedback, restart when a round gains < 0.05 | F+R gain | 0 | – | – | – | – | – | – | – |
+| Feedback, restart after 2 rounds without gain | F+R stall | 0 | – | – | – | – | – | – | – |
+| Restarts only (no feedback) | R | 0 | – | – | – | – | – | – | – |
+
 ![RQ2a: feedback, restarts, or both](rq2_feedback.png)

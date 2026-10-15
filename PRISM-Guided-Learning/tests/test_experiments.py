@@ -14,6 +14,7 @@ from experiments.store import RunStore, fingerprint, identity
 from results_io import RESULT_FILES
 
 ACTIONS = ["up", "right", "down", "left"]
+GRID_ONLY_FEATURES = {"hazard", "risky", "toward", "closer", "obstacle", "patrol", "early"}
 
 
 def test_open_ties_inverts_fixed_order():
@@ -91,6 +92,24 @@ def test_cells_share_runs_and_name_new_ones(tmp_path):
     assert units[("No closer", "families")].cfg.rules.hidden_features == ["closer", "hazard"]
 
 
+def test_cell_given_per_benchmark_skips_the_others(tmp_path):
+    """A cell whose `set` (or `condition`) names some benchmarks only is skipped on the others, never run there as
+    the base configuration; `only` cannot name a benchmark the mapping leaves out."""
+    path = _experiment(tmp_path, [
+        {"name": "Reference"},
+        {"name": "Families only", "set": {"families": ["rules.hidden_features=[closer, hazard]"]}},
+        {"name": "Other model", "condition": {"grids": "haiku_ts_norestart"}}])
+    exp = base.experiment(path, RunStore([tmp_path / "results"]))
+    assert sorted((u.cell.name, u.bench.name) for u in exp.units) == [
+        ("Families only", "families"), ("Other model", "grids"), ("Reference", "families"), ("Reference", "grids")]
+    with pytest.raises(ValueError, match="leaves out"):
+        base.experiment(_experiment(tmp_path, [{"name": "Bad", "only": ["grids", "families"],
+                                                "set": {"families": ["rules.any_order=none"]}}]), RunStore([]))
+    with pytest.raises(ValueError, match="unknown benchmarks"):
+        base.experiment(_experiment(tmp_path, [{"name": "Typo", "set": {"pacman": ["rules.any_order=all"]}}]),
+                        RunStore([]))
+
+
 def test_shared_configuration_launches_once(tmp_path):
     root = tmp_path / "results"
     a = base.experiment(_experiment(tmp_path, [{"name": "Worst case", "set": ["rules.any_order=none"],
@@ -131,3 +150,15 @@ def test_experiment_files_load():
     for path in sorted(base.EXPERIMENTS_DIR.glob("rq*.yaml")):
         exp = base.experiment(path, RunStore([]))
         assert exp.units, path
+        for u in exp.units:      # no gridworld override reaches another domain
+            rows = len(pd.read_csv(base.PROJECT_ROOT / "domains" / u.cfg.domain.name / "data" / u.cfg.domain.dataset))
+            ids = [i for key in ("train_sets", "hidden_sets", "pool_sets") for s in getattr(u.cfg.run, key) for i in s]
+            assert all(i < rows for i in ids), (path, u.cell.name, u.bench.name)
+            if u.cfg.domain.name != "gridworld":
+                assert not set(u.cfg.rules.hidden_features) & GRID_ONLY_FEATURES, (path, u.cell.name)
+
+
+def test_held_out_leaves_out_training_targets():
+    shared = base.benchmark_specs({"benchmarks": "rq2"})
+    bench = {name: base.Benchmark(name=name, **spec) for name, spec in shared.items()}
+    assert len(base.held_out(bench["pacman"])) == 5 and len(base.held_out(bench["grids"])) == 8

@@ -3,7 +3,7 @@
 The paper asks two kinds of question, and the code has one harness for each, sharing the runs.
 
 - **RQ1, comparison** (`src/experiments/comparison.py`, `configs/experiments/rq1_comparison.yaml`): our best configuration per benchmark against each baseline's best. Its cells are the **core** runs (`out/results/core/`).
-- **RQ2, ablations** (`src/experiments/ablation.py`, `configs/experiments/rq2_*.yaml`): one factor at a time against a reference cell (the core configuration). Runs go to `out/results/ablations/`.
+- **RQ2, ablations** (`src/experiments/ablation.py`, `configs/experiments/rq2_*.yaml`): one factor at a time against a reference cell (the core configuration), on random grids, the gridworld families and Pac-Man (the `rq2` set in `configs/experiments/benchmarks.yaml`; cells that only make sense on gridworld say `only: [grids, families]`). Runs go to `out/results/ablations/`.
 
 RQ1 covers transfer with and without gridworld's shortest-path feature `closer` (the `grids_noclose` benchmark). Two further questions come from the same runs: cost (tokens and dollars per training set, in every report) and larger instances (grids up to 20x20 and Pac-Man horizon 25, below). Readability (rules against tree nodes and network weights) has no metric in the harness.
 
@@ -22,7 +22,7 @@ Reports: `out/results/experiments/<experiment>/REPORT.md`, a figure (ablations) 
   - every member is jointly solvable (the joint query);
   - the template or generic greedy rules fail some members, so the family is not trivial;
   - some single rule list certifies every member checked, so transfer is possible.
-- **Pac-Man**: the loop trains on `pacman.csv` (horizons 8-16); frozen rules are certified on `pacman_transfer.csv` (horizons 8-25).
+- **Pac-Man**: the core configuration (`haiku_mi_pacman_long`) trains one rule list on horizons 14, 16 and 18 (`pacman_transfer.csv` ids 3-5); frozen rules are certified on every horizon of `pacman_transfer.csv` (8-25), so 5 are held out (8, 10, 12, 20, 25). Older conditions train on `pacman.csv` (horizons 8-16).
 - **Sealed test sets** (`sealed` in `configs/transfer/default.yaml`; `transfer.py` and `run_baseline.py` refuse their targets without `--unseal`):
   - `grid_test_large.csv`: the 30 grids of sizes 9-13 in `grid_100_balanced.csv` that are not in `grid_20_large.csv` (6 per size), plus 4 each of 15x15, 17x17 and 20x20 from `datagen.py` (seeds 515, 517, 520). No LLM run trains on them.
   - The 15x15-20x20 members of `families_v0.csv` (ids 36-59, 96-119, 156-179).
@@ -69,7 +69,7 @@ Started but unfinished runs are listed as pending and never launched over. Delet
 | `title`, `question` | for the report |
 | `benchmarks` | name -> {`base` condition, `targets`, optional `dataset` (targets from another dataset), `groups` and `source_groups` when each rule list belongs to one group (families), `label`}; or the name of a set in `benchmarks.yaml` |
 | `repeats` | runs per cell (a cell may set its own) |
-| `cells` | {`name` (descriptive, used in tables), `code` (short, figures), `set` (overrides: a list for every benchmark, or benchmark -> list), `condition` (benchmark -> a condition other than the base, e.g. the Sonnet one), `only` (benchmarks), `repeats`, `launch` (false: only existing runs; Sonnet needs Asher's go-ahead)} |
+| `cells` | {`name` (descriptive, used in tables), `code` (short, figures), `set` (overrides: a list for every benchmark, or benchmark -> list), `condition` (benchmark -> a condition other than the base, e.g. the Sonnet one), `only` (benchmarks), `repeats`, `launch` (false: only existing runs; Sonnet needs Asher's go-ahead)}. A cell whose `set` or `condition` is given per benchmark runs only on the benchmarks it names, never as the base configuration on the others |
 | `reference` | ablations: the reference cell's name (default: the first) |
 | `baselines` | comparisons: {`name`, `config` (benchmark -> `configs/baselines/*.yaml`), `sources` (benchmark -> list, or group -> list), `ties` (false: one action per state, so nothing to leave open)} |
 | `prices` | model -> [$ per M prompt tokens, $ per M output tokens] |

@@ -44,4 +44,18 @@ Per group (certified per rule list on its own group, mean over runs):
 | States named by their features | – | – | – |
 | Plus a failing trace | 7.3 | 0.0 | 14.7 |
 
+## Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)
+
+Targets 0-7 (each list's own training instances left out); certified of 5.
+
+| condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
+|---|---|---|---|---|---|---|---|---|---|
+| Full feedback (core) | Full | 3 | 3.00 | reference | – | 3.0 | 67% (0%–100%) | 4.0 (3.0–5.0) | 4,649 (3,555–6,328) |
+| Blame by one-step regret | Regret | 0 | – | – | – | – | – | – | – |
+| Random blame (placebo) | Random | 0 | – | – | – | – | – | – | – |
+| No blame | No blame | 0 | – | – | – | – | – | – | – |
+| Results table only | Table | 0 | – | – | – | – | – | – | – |
+| States named by their features | Feature space | 0 | – | – | – | – | – | – | – |
+| Plus a failing trace | Trace | 0 | – | – | – | – | – | – | – |
+
 ![RQ2b: what the verifier tells the LLM](rq2_verifier_output.png)

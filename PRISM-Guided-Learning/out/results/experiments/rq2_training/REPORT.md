@@ -41,4 +41,12 @@ Per group (certified per rule list on its own group, mean over runs):
 | More rounds (8 grids, 10 families) | 9.3 | 4.7 | 16.3 |
 | More rounds, failing instances added to the set | 8.0 | 6.3 | 16.0 |
 
+## Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)
+
+Targets 0-7 (each list's own training instances left out); certified of 5.
+
+| condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
+|---|---|---|---|---|---|---|---|---|---|
+| Three instances per set, 5 rounds (core) | Core | 3 | 3.00 | reference | – | 3.0 | 67% (0%–100%) | 4.0 (3.0–5.0) | 4,649 (3,555–6,328) |
+
 ![RQ2e: training sets and rounds](rq2_training.png)

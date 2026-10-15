@@ -10,7 +10,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 
-from experiments.base import Experiment, span
+from experiments.base import Experiment, held_out, span
 from experiments.store import ABLATIONS_PATH
 from settings import PROJECT_ROOT
 from transfer import parse_ids
@@ -39,7 +39,7 @@ class Ablation(Experiment):
         if bench.groups:
             sizes = {len(parse_ids(t)) for t in bench.groups.values()}
             return f"of {sizes.pop()} in its own group" if len(sizes) == 1 else "in its own group"
-        return f"of {len(parse_ids(bench.targets))}"
+        return f"of {len(held_out(bench))}"
 
     def report(self, runs: pd.DataFrame) -> str:
         ref = self.reference()
@@ -58,7 +58,8 @@ class Ablation(Experiment):
                       "| condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | "
                       "rounds / set | output tokens / set |",
                       "|---|---|---|---|---|---|---|---|---|---|"]
-            for cell in self.spec["cells"]:
+            cells = [c for c in self.spec["cells"] if bench.name in c.only]
+            for cell in cells:
                 g = b[b.cell == cell.name]
                 if g.empty:
                     lines.append(f"| {cell.name} | {cell.code} | 0 | – | – | – | – | – | – | – |")
@@ -76,7 +77,7 @@ class Ablation(Experiment):
             if bench.groups:
                 lines += ["", "Per group (certified per rule list on its own group, mean over runs):", "",
                           "| condition | " + " | ".join(bench.groups) + " |", "|---|" + "---|" * len(bench.groups)]
-                for cell in self.spec["cells"]:
+                for cell in cells:
                     g = b[b.cell == cell.name]
                     cells = [pd.Series([d.get(k) for d in g.by_group.dropna()], dtype=float).mean()
                              for k in bench.groups] if not g.empty else [float("nan")] * len(bench.groups)

@@ -16,7 +16,6 @@ Targets 12-19 (each list's own training instances left out); certified of 8.
 | No slip feature `risky` | -risky | 0 | – | – | – | – | – | – | – |
 | No obstacle-timing feature `obstacle` | -obstacle | 0 | – | – | – | – | – | – | – |
 | `hazard` split into `patrol` and `early` | Split | 0 | – | – | – | – | – | – | – |
-| `hazard` as one feature | Unsplit | 0 | – | – | – | – | – | – | – |
 | No features (coordinates and goal constants only) | None | 0 | – | – | – | – | – | – | – |
 
 ## Gridworld families
@@ -30,7 +29,6 @@ Targets 16-35,76-95,136-155 (each list's own training instances left out); certi
 | Local features only (no `closer`, no `toward`) | Local | 0 | – | – | – | – | – | – | – |
 | No slip feature `risky` | -risky | 0 | – | – | – | – | – | – | – |
 | No obstacle-timing feature `obstacle` | -obstacle | 0 | – | – | – | – | – | – | – |
-| `hazard` split into `patrol` and `early` | Split | 0 | – | – | – | – | – | – | – |
 | `hazard` as one feature | Unsplit | 0 | – | – | – | – | – | – | – |
 | No features (coordinates and goal constants only) | None | 0 | – | – | – | – | – | – | – |
 
@@ -43,8 +41,15 @@ Per group (certified per rule list on its own group, mean over runs):
 | Local features only (no `closer`, no `toward`) | – | – | – |
 | No slip feature `risky` | – | – | – |
 | No obstacle-timing feature `obstacle` | – | – | – |
-| `hazard` split into `patrol` and `early` | – | – | – |
 | `hazard` as one feature | – | – | – |
 | No features (coordinates and goal constants only) | – | – | – |
+
+## Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)
+
+Targets 0-7 (each list's own training instances left out); certified of 5.
+
+| condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
+|---|---|---|---|---|---|---|---|---|---|
+| All features (core) | All | 3 | 3.00 | reference | – | 3.0 | 67% (0%–100%) | 4.0 (3.0–5.0) | 4,649 (3,555–6,328) |
 
 ![RQ2d: the domain's features](rq2_features.png)

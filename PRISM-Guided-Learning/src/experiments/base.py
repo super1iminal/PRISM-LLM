@@ -83,10 +83,31 @@ def slug(text: str) -> str:
 
 
 def _per_bench(value, benches: List[str]) -> Dict[str, Any]:
-    """A YAML value given once for every benchmark, or as a mapping benchmark -> value."""
-    if isinstance(value, dict) and set(value) <= set(benches) and value:
+    """A YAML value given once for every benchmark, or as a mapping benchmark -> value (only those it names)."""
+    if isinstance(value, dict):
+        unknown = set(value) - set(benches)
+        if unknown:
+            raise ValueError(f"unknown benchmarks {sorted(unknown)} (the experiment has {', '.join(benches)})")
         return dict(value)
     return {b: value for b in benches}
+
+
+def _cell_benches(spec: dict, benches: List[str]) -> List[str]:
+    """The benchmarks a cell runs on: `only` (default: all), and, when its `set` or `condition` is given per
+    benchmark, only those the mapping names. A benchmark the mapping leaves out is skipped, never run as the base
+    configuration; naming it in `only` is an error."""
+    named = set(benches)
+    for key in ("set", "condition"):
+        if isinstance(spec.get(key), dict) and spec[key]:
+            named &= set(_per_bench(spec[key], benches))
+    if spec.get("only"):
+        _per_bench(dict.fromkeys(spec["only"]), benches)            # unknown benchmarks
+        missing = [b for b in spec["only"] if b not in named]
+        if missing:
+            raise ValueError(f"cell {spec['name']!r}: `only` names {missing}, which its per-benchmark `set` or "
+                             "`condition` leaves out")
+        return list(spec["only"])
+    return [b for b in benches if b in named]
 
 
 def benchmark_specs(data: dict) -> Dict[str, dict]:
@@ -107,7 +128,7 @@ def load_experiment(path: Path) -> dict:
         sets = _per_bench(spec.get("set") or [], names)
         cells.append(Cell(name=spec["name"], code=spec.get("code", spec["name"]),
                           set={b: list(sets.get(b) or []) for b in names},
-                          condition=dict(spec.get("condition") or {}), only=list(spec.get("only") or names),
+                          condition=dict(spec.get("condition") or {}), only=_cell_benches(spec, names),
                           repeats=spec.get("repeats", data.get("repeats", 3)), launch=spec.get("launch", True),
                           note=spec.get("note", "")))
     return {**data, "benchmarks": benches, "cells": cells, "path": Path(path)}
@@ -256,6 +277,17 @@ def jobs(experiments: List["Experiment"], run: bool, check: bool, baselines: boo
     return out + checks + extra
 
 
+def held_out(bench: Benchmark) -> List[int]:
+    """The benchmark's targets a rule list of its base condition is certified on: without the training instances
+    when they are among the targets (Pac-Man's training horizons are in `pacman_transfer.csv`)."""
+    cfg = load_config(bench.base)
+    targets = parse_ids(bench.targets)
+    if bench.dataset and Path(bench.dataset).name != Path(cfg.domain.dataset).name:
+        return targets
+    trained = {i for s in cfg.run.train_sets for i in s}
+    return [t for t in targets if t not in trained]
+
+
 def transfer_done(run_dir: Path, dataset: str, targets: List[int], rules: str = "final") -> bool:
     """Whether the run's transfer CSV for `dataset` (and `rules`) already has every target in `targets`."""
     path = csv_path(run_dir, dataset, rules)
@@ -283,7 +315,7 @@ def core_names() -> List[str]:
         for spec in data["cells"]:
             benches = list(specs)
             sets = _per_bench(spec.get("set") or [], benches)
-            for b in spec.get("only") or benches:
+            for b in _cell_benches(spec, benches):
                 condition = (spec.get("condition") or {}).get(b, specs[b]["base"])
                 names.append(condition + (f"+{slug(spec['name'])}" if sets.get(b) else ""))
     return sorted(set(names))
