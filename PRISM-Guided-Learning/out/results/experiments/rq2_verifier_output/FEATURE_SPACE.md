@@ -26,3 +26,10 @@ Findings:
 Decisions:
 - Integer-valued state features are shown as `name=value`; integer variables stay out, headings included: under `rules.general` a rule can only write the numbers 0 and 1, so a heading code could not be used.
 - `feedback.space: features` keeps its name: on gridworld, the only domain it ran on, nothing changes (checked by replaying a `haiku_ts_features` training set, step 2), and on Pac-Man it never ran.
+
+## Step 3: smoke test
+
+Haiku, the core condition of each benchmark with `feedback.space=features`, the first training set, 3 rounds (`run.limit=1`, `planner.max_rounds=3`), outside the run store. Every REFINE prompt of rounds 2-3 was read; none names a position, and the feedback reads as intended:
+- Pac-Man: `moves_left=12 | right: nearer_g1; up: nearer_g0, nearer_g1; left: nearer_g0; down: wall`. Hotspots of one rule often differ only in `moves_left`. Round 3's answer dropped two conditions (crash 0.776 to 0.675 on the focus member).
+- Families: `g1=false & g2=false & g3=false | up: none; right: toward, closer; down: none; left: wall`. The answers added `!patrol & toward` conditions; `avoid_moving_seg1` rose from 0.52 to 0.75.
+- Grids: the same form; several blamed states are after the last goal (`g1=true & g2=true & g3=true | up: hazard; right: risky; …`). Round 3's answer still wrote a position rule on its own, `!g1 & x + 1 = G1R & y = G1C & !wall & !hazard`: feature-space feedback does not stop the LLM from reading positions, it only stops naming them.
