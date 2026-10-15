@@ -158,6 +158,28 @@ def test_experiment_files_load():
                 assert not set(u.cfg.rules.hidden_features) & GRID_ONLY_FEATURES, (path, u.cell.name)
 
 
+def test_best_configuration_per_method(tmp_path):
+    """Per benchmark and method: the highest mean certified, then the larger library, then the lower cost; a
+    configuration with an unchecked run does not compete."""
+    exp = base.experiment(_experiment(tmp_path, [{"name": "A", "method": "Ours"}, {"name": "B", "method": "Ours"},
+                                                 {"name": "C", "method": "Ours"}, {"name": "D"}],
+                                      kind="comparison"), RunStore([]))
+    rows = [("grids", "A", True, 6, 8, 0.01), ("grids", "A", True, 7, 8, 0.01), ("grids", "B", True, 6.5, 7, 0.5),
+            ("grids", "C", False, 9, 8, 0.0), ("families", "A", True, 5, 30, 0.02), ("families", "B", True, 5, 30, 0.01),
+            ("grids", "D", True, 1, 1, 0.0)]
+    runs = pd.DataFrame(rows, columns=["bench", "cell", "checked", "certified", "library", "dollars"])
+    runs = runs.assign(method=runs.cell.map(exp.methods()))
+    assert exp.chosen(runs) == {("grids", "Ours"): "A", ("families", "Ours"): "B", ("grids", "D"): "D"}
+
+
+def test_index_lists_every_cell_and_baseline():
+    from experiments.index import experiment_files, index_page
+    exps = [base.experiment(p, RunStore([])) for p in experiment_files()]
+    page = index_page(exps, None)
+    assert all(c.name in page for e in exps for c in e.spec["cells"])
+    assert "(baseline)" in page and "**Missing:**" in page
+
+
 def test_held_out_leaves_out_training_targets():
     shared = base.benchmark_specs({"benchmarks": "rq2"})
     bench = {name: base.Benchmark(name=name, **spec) for name, spec in shared.items()}
