@@ -272,7 +272,8 @@ def reference_spend(tables: Dict[Path, pd.DataFrame], cost: str = "dollars") -> 
 
 def curves(exp, cost: str = "dollars", points: int = 121) -> pd.DataFrame:
     """Per benchmark, cell and run: the training score (requirements met on the training members), certified per
-    list and share of sets solved, at budgets from 0 to the largest spend of the benchmark's runs."""
+    list and share of sets solved, at budgets up to the largest spend of the benchmark's runs, from the first at
+    which every set of the run holds a list."""
     rows = []
     for bench in exp.spec["benchmarks"].values():
         units = [u for u in exp.units if u.bench.name == bench.name]
@@ -283,7 +284,8 @@ def curves(exp, cost: str = "dollars", points: int = 121) -> pd.DataFrame:
         grid = np.linspace(0, max(spends), points)
         for u in units:
             for run, table in tables[u.cell.name].items():
-                for x in grid:
+                start = table[table["round"] == 1][cost].max()     # every set has its first list from here on
+                for x in grid[grid >= start]:
                     picked = at_budget(table, x, cost)
                     rows.append({"bench": bench.name, "cell": u.cell.name, "code": u.cell.code,
                                  "run": f"{run.parent.name}/{run.name}", "x": x,
@@ -400,7 +402,8 @@ def report_section(exp) -> List[str]:
         money = f"${r.budget:.4f}" if cost == "dollars" else f"{r.budget:,.0f}"
         delta = "–" if np.isnan(r.diff) else (f"{r.diff * 100:+.0f} pts [{r.lo * 100:+.0f}, {r.hi * 100:+.0f}]"
                                               if r.metric == "solved" else f"{r.diff:+.2f} [{r.lo:+.2f}, {r.hi:+.2f}]")
-        lines.append(f"| {r.label} | {r.comparison} | {r.cell} | {money} | {r.runs_ref} v {r.runs_other} | "
+        lines.append(f"| {r.label.split(' (')[0]} | {r.comparison} | {r.cell} | {money} | "
+                     f"{r.runs_ref} v {r.runs_other} | "
                      f"{format(r.ref_value, fmt) if r.runs_ref else '–'} | "
                      f"{format(r.other_value, fmt) if r.runs_other else '–'} | {delta} | "
                      + ("–" if np.isnan(r.p) else f"{r.p:.3f}") + " | "
@@ -410,7 +413,7 @@ def report_section(exp) -> List[str]:
         lines += ["", "The LLM's first answer (round 1, before any feedback; the same initial prompt in every cell, "
                   "so pooled over all their lists): an \"LLM alone\" point.", "",
                   "| benchmark | lists | certified per list | sets solved | dollars per set |", "|---|---|---|---|---|"]
-        labels = {b.name: b.label or b.name for b in exp.spec["benchmarks"].values()}
+        labels = {b.name: (b.label or b.name).split(" (")[0] for b in exp.spec["benchmarks"].values()}
         for r in firsts.itertuples():
             lines.append(f"| {labels[r.bench]} | {r.lists} | {r.certified:.2f} | {r.solved:.0%} | ${r.dollars:.4f} |")
     over = overfitting(exp)
@@ -421,7 +424,7 @@ def report_section(exp) -> List[str]:
                   "the training instances.", "",
                   "| benchmark | condition | runs | training met: round 1 → at spend | held-out certified: round 1 → "
                   "at spend |", "|---|---|---|---|---|"]
-        labels = {b.name: b.label or b.name for b in exp.spec["benchmarks"].values()}
+        labels = {b.name: (b.label or b.name).split(" (")[0] for b in exp.spec["benchmarks"].values()}
         for r in over.itertuples():
             lines.append(f"| {labels[r.bench]} | {r.cell} | {r.runs} | {r.train_first:.1f} → {r.train_at:.1f} "
                          f"(of {r.train_requirements:.0f}) | {r.certified_first:.2f} → {r.certified_at:.2f} |")

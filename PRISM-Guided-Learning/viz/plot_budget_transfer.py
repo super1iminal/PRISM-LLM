@@ -63,8 +63,8 @@ def draw(data: pd.DataFrame, exp, cfg: PlotConfig, marks: Dict[str, List[float]]
     of = getattr(exp, "_of", lambda b: "")
     for col, bench in enumerate(benches):
         b = data[data.bench == bench.name]
-        rows = [("train_met", f"training requirements met per list (of {b.train_requirements.max():.0f})"),
-                ("certified", f"held-out targets certified per list ({of(bench)})"),
+        rows = [("train_met", f"training requirements met\nper list (of {b.train_requirements.max():.0f})"),
+                ("certified", f"held-out targets certified\nper list ({of(bench)})"),
                 ("solved", "training sets solved")]
         for row, (metric, ylabel) in enumerate(rows):
             ax = axes[row][col]
@@ -76,9 +76,10 @@ def draw(data: pd.DataFrame, exp, cfg: PlotConfig, marks: Dict[str, List[float]]
                 g = b[b.cell == cell.name]
                 if g.empty:
                     continue
-                stats = g.groupby("x")[metric].agg(["mean", "min", "max"]).reset_index()
-                st = _line_style(cfg, cell.code)
                 runs = g.run.nunique()
+                stats = g.groupby("x")[metric].agg(["mean", "min", "max", "count"]).reset_index()
+                stats = stats[stats["count"] == runs]                # from where every run has its lists
+                st = _line_style(cfg, cell.code)
                 ax.fill_between(stats.x, stats["min"], stats["max"], color=st["color"], alpha=0.10, linewidth=0)
                 ax.plot(stats.x, stats["mean"], label=f"{cell.name} ({runs} runs)", **st)
             for x in marks.get(bench.name, []):
@@ -90,15 +91,16 @@ def draw(data: pd.DataFrame, exp, cfg: PlotConfig, marks: Dict[str, List[float]]
             ax.xaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 5, 10]))
             ax.xaxis.set_major_formatter(_money(cfg.cost))
             ax.set_xlim(left=0)
-            ax.set_ylim(bottom=0)
+            if metric != "train_met":                                # the training score sits near its maximum
+                ax.set_ylim(bottom=0)
             if metric == "solved":
                 ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
                 ax.set_xlabel(COSTS.get(cfg.cost, cfg.cost), color=INK_2, fontsize=8)
     handles, labels = axes[0][0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=min(3, len(labels)), frameon=False, fontsize=8.5,
                labelcolor=INK)
-    fig.suptitle(f"{exp.title}: certified and solved against spend (equal cost)", x=0.01, ha="left", fontsize=11,
-                 fontweight="bold", color=INK)
+    fig.suptitle(f"{exp.title}: training score, held-out certified and sets solved against spend", x=0.01,
+                 ha="left", fontsize=11, fontweight="bold", color=INK)
     fig.tight_layout(rect=(0, 0.04 + 0.025 * ((len(labels) + 2) // 3), 1, 0.97))
     out = Path(cfg.out) if cfg.out else exp.out / "budget_transfer.png"
     out.parent.mkdir(parents=True, exist_ok=True)
