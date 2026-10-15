@@ -4,20 +4,25 @@ Usage (from PRISM-Guided-Learning/):
     python src/run_baseline.py configs/baselines/<name>.yaml [--set key=value ...]
 Settings: the baseline config (BaselineConfig below; configs/baselines/README.md documents each key). Writes
 out/results/baselines/<name>/transfer_<dataset stem>.csv in src/transfer.py's format (one row per source policy and
-target, `trained` marking the training instances) plus `method`, and prints certified targets per source. Rows
+target, `trained` marking the instances that source was fitted on) plus `method`, `fit.json` for methods that
+report what their fit produced (e.g. a tree's size and rules), and prints certified targets per source. Methods
+whose policies are per-state (`Baseline.explicit`) are certified through each target's explicit model
+(baselines/explicit_mdp.py), the others through their rules. Rows
 of an existing CSV for targets this run does not check are kept. `--rules open` certifies the same lists with their
 action orders left open (core.rules.open_ties), into transfer_<dataset stem>_open.csv: certified however ties are
 broken.
 """
 import argparse
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from baselines import load_method
+from baselines.explicit_mdp import ExplicitMDP
 from config import load_config, load_file
 from core.domain import load_domain
 from core.prism import PrismRunner
@@ -53,27 +58,47 @@ def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH, rules:
     instances = {int(i.id): i for i in domain.load_instances(settings.dataset)}
     train = parse_ids(settings.train) if settings.train else []
     baseline = load_method(settings.method)(domain, settings.params)
+    baseline.config = cfg
     baseline.fit([instances[i] for i in train])
 
-    runner = PrismRunner(cfg.prism)
     target_dataset = settings.target_dataset or settings.dataset
     same = Path(target_dataset).name == Path(settings.dataset).name
     pool_of = instances if same else {int(i.id): i for i in domain.load_instances(target_dataset)}
     targets = [pool_of[i] for i in parse_ids(settings.targets)]
-    actions = list(domain.spec(targets[0]).actions)
-    lists = {int(t.id): {s: (open_ties(r, actions) if rules == "open" else r) for s, r in baseline.rules(t).items()}
-             for t in targets}
-    with ThreadPoolExecutor(settings.workers) as pool:
-        parts = pool.map(lambda t: certify(domain, cfg, runner, t, lists[int(t.id)], settings.exact_near), targets)
-        rows = [row for part in parts for row in part]
+    if baseline.explicit:
+        if rules == "open":
+            raise SystemExit("--rules open: per-state policies have no ties to leave open")
+        rows = certify_explicit(domain, cfg, baseline, targets)
+    else:
+        runner = PrismRunner(cfg.prism)
+        actions = list(domain.spec(targets[0]).actions)
+        lists = {int(t.id): {s: (open_ties(r, actions) if rules == "open" else r) for s, r in baseline.rules(t).items()}
+                 for t in targets}
+        with ThreadPoolExecutor(settings.workers) as pool:
+            parts = pool.map(lambda t: certify(domain, cfg, runner, t, lists[int(t.id)], settings.exact_near), targets)
+            rows = [row for part in parts for row in part]
     df = pd.DataFrame(rows).sort_values(["source", "target"], key=lambda c: c.astype(str))
-    df["trained"] = df.target.isin(train) if same else False
+    df["trained"] = [same and t in (baseline.training(s) or train) for s, t in zip(df.source, df.target)]
     df["method"] = settings.method
     suffix = "_open" if rules == "open" else ""
     out = out_root / config_path.stem / f"transfer_{Path(target_dataset).stem}{suffix}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     merge(df, out).sort_values(["source", "target"], key=lambda c: c.astype(str)).to_csv(out, index=False)
+    if baseline.summary():
+        (out.parent / "fit.json").write_text(json.dumps(baseline.summary(), indent=1), encoding="utf-8")
     return df
+
+
+def certify_explicit(domain, cfg, baseline, targets) -> List[dict]:
+    """Per-state policies certified through each target's explicit model (baselines/explicit_mdp.py), one target at
+    a time, since a model of millions of states takes gigabytes."""
+    rows = []
+    for t in targets:
+        mdp = ExplicitMDP(domain, t, cfg)
+        rows += mdp.certify(baseline.policies(mdp))
+        print(f"  certified on {t.id} ({mdp.S} states)", flush=True)
+        del mdp
+    return rows
 
 
 def main(argv=None):

@@ -6,8 +6,15 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from config import Config
 from core.domain import Domain, Instance, Spec
-from core.prism import PrismError, PrismResult, PrismRunner, PrismSteps, StateKey, run_now
+from core.prism import Choice, PrismError, PrismResult, PrismRunner, PrismSteps, StateKey, run_now
 from core.rules import SymbolicPolicy, Value
+
+
+def forced(choices: List[Choice], actions: Set[str]) -> bool:
+    """Whether the policy cannot change anything in a state with these choices: among the choices labelled with a
+    policy action (in `actions`), fewer than two distinct successor distributions."""
+    controlled = {tuple(sorted((t, round(p, 12)) for t, p in c.successors)) for c in choices if c.action in actions}
+    return len(controlled) <= 1
 
 
 @dataclass
@@ -170,12 +177,7 @@ class PolicyVerifier:
             else:
                 result = yield from self.runner.run_steps(self.model, [], export_transitions=True)
             actions = set(self.spec.actions)
-            self._forced = set()
-            for state, choices in zip(result.states, result.choices):
-                controlled = {tuple(sorted((t, round(p, 12)) for t, p in c.successors))
-                              for c in choices if c.action in actions}
-                if len(controlled) <= 1:
-                    self._forced.add(state)
+            self._forced = {state for state, choices in zip(result.states, result.choices) if forced(choices, actions)}
         return self._forced
 
     def policy_valuation(self, result: PrismResult, state_index: int) -> Dict[str, Value]:
