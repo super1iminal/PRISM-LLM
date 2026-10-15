@@ -19,6 +19,7 @@ Suggested; commit it to the top of `rq1_comparison.yaml` as a comment, and to `d
   - on no benchmark is the lower end of its 90% interval below −1 target.
 - If it costs more than twice the core's dollars per set, it must also win at equal cost, read off plan 03's budget curves.
 - **Solver choices** (any `rules.any_order` value, hidden members, polishing) may enter while Asher allows PRISM to choose. Each keeps its feedback-only counterpart reported next to it.
+- **Feedback in feature space** (plan 04) enters the core unless clearly worse (Asher's preference, Oct 15). "Clearly worse": the lower end of its 90% interval below −1 target on any benchmark; then ask Asher.
 - **Memory** (plan 07) never enters this core. If Asher wants it, it becomes a separate `-memory` RQ1 cell.
 - **Features:** `closer` stays in the core for now (Asher, Oct 15). `grids_noclose` stays as a second random-grid benchmark, ready for a later attempt without it.
 

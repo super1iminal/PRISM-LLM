@@ -85,8 +85,9 @@ Plan 01 copies these into `DECISIONS.md`, deleting the **[REVIEW]** items they s
 4. **Thresholds for the new benchmark models** (plan 08): the optimum plus 5% of it per instance (minus 5% when maximizing).
 5. **Sonnet: none for now.** Haiku only until we truly think we have found an improvement or the final method. Then ask Asher.
 6. **`closer` stays in the configuration we claim, for now.** Removing it may be tried again later, so the no-`closer` benchmark and ablation cells stay.
+7. **Feedback should be in feature space, not coordinates.** Plan 04 makes it complete and tests it. It enters the core unless clearly worse.
 
 ## Still open
 
-7. **Simulation feedback instead of model checking** (plan 04, step 5). Each round, the loop would *simulate* the rules on the training instances instead of asking PRISM: run, say, 1,000 sampled episodes per instance, estimate each requirement's probability from them, and tell the LLM those estimates plus one failed episode. PRISM would only certify the final list. It answers "does the exact verifier help, or would any way of scoring the rules do?". That is the closest our loop gets to related work that debugs LLM policies by running them. Plan 12 already makes the outside-baseline version of this: LLM-written programs with simulation feedback. **Recommendation: don't build it now.** Revisit for ICAPS if plan 12 lands close to us.
-8. **Commit `plans/`?** Sessions in worktrees only see these files once they are committed. Otherwise point them at the absolute path, as the session briefs do.
+8. **Simulation feedback instead of model checking** (plan 04, step 5). Each round, the loop would *simulate* the rules on the training instances instead of asking PRISM: run, say, 1,000 sampled episodes per instance, estimate each requirement's probability from them, and tell the LLM those estimates plus one failed episode. PRISM would only certify the final list. It answers "does the exact verifier help, or would any way of scoring the rules do?". That is the closest our loop gets to related work that debugs LLM policies by running them. Plan 12 already makes the outside-baseline version of this: LLM-written programs with simulation feedback. **Recommendation: don't build it now.** Revisit for ICAPS if plan 12 lands close to us.
+9. ~~Commit `plans/`?~~ Committed on `rule-language`.
