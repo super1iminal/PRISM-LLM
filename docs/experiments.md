@@ -73,6 +73,7 @@ Started but unfinished runs are listed as pending and never launched over. Delet
 | `reference` | ablations: the reference cell's name (default: the first) |
 | `baselines` | comparisons: {`name`, `config` (benchmark -> `configs/baselines/*.yaml`), `sources` (benchmark -> list, or group -> list), `ties` (false: one action per state, so nothing to leave open)} |
 | `prices` | model -> [$ per M prompt tokens, $ per M output tokens] |
+| `budget` | ablations: comparisons at equal cost, fixed before the runs (`rq2_feedback.yaml`): {`plot` (a `configs/plot/` file for `viz/plot_budget_transfer.py`), `reference`, `cost` (dollars), `level`, `note`, `planned`: list of {`name`, `metric` (certified or solved), `cell`, `at` (fraction of the reference's mean spend)}}. The report then opens with the planned comparisons and the budget figure |
 
 ## Metrics (`src/experiments/metrics.py`)
 
@@ -87,6 +88,8 @@ All metrics are computed on held-out targets only; a list's own training instanc
 | **ties open** | certified with the lists' action orders left open (`core.rules.open_ties`, `transfer.py --rules open`): the worst case over every way of breaking ties. A list that passes this way needs no solver choice at all |
 
 Ablation reports add the difference to the reference, with a 90% bootstrap interval over runs. With 3–5 runs per cell, read the interval as a rough guide.
+
+**Budget curves** (`src/budget_transfer.py`, PRISM only): per training set and round, the list keep-best holds after that round (the last improved iteration's rules, `any` already resolved), the tokens and dollars spent so far, whether the set is solved, and the list's certification on the benchmark's targets, cached by a hash of the list (`<run>/budget_transfer.csv`). Round 1 is the LLM's first answer, before any feedback. Read at a budget per training set, a run's value is that of the list held after its last round within the budget. Keep-best makes every curve rise, so the curves only compare cells at equal spend (`budget` in an experiment file).
 
 `src/tie_analysis.py` (gridworld, numpy model) reports how much the orders decide:
 - how many actions the deciding rule allows per reachable state;
