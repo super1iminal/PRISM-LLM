@@ -25,7 +25,7 @@ Reports: `out/results/experiments/<experiment>/REPORT.md`, figures and `runs.csv
   - every member is jointly solvable (the joint query);
   - the template or generic greedy rules fail some members, so the family is not trivial;
   - some single rule list certifies every member checked, so transfer is possible.
-- **Pac-Man**: the core configuration (`haiku_mi_pacman_long`) trains one rule list on horizons 14, 16 and 18 (`pacman_transfer.csv` ids 3-5); frozen rules are certified on every horizon of `pacman_transfer.csv` (8-25), so 5 are held out (8, 10, 12, 20, 25). Older conditions train on `pacman.csv` (horizons 8-16).
+- **Pac-Man**: the core configuration (`haiku_mi_pacman_long`) trains one rule list on horizons 14, 16 and 18 (`pacman_transfer.csv` ids 3-5); frozen rules are certified on every horizon of `pacman_transfer.csv` (8-25), so 5 are held out (8, 10, 12, 20, 25). Older conditions train on `pacman.csv` (horizons 8-16). The bare model grows fast with the horizon: 498 states at 5, 0.41M at 18, 3.7M at 25 (317k decision states), 8.3M at 30; PRISM's explicit engine builds 30 in about 2 minutes with a 4 GB heap and runs out of memory on 50 (past 13.8M states). The optimum is 0.5511 at every horizon up to 30.
 - **Sealed test sets** (`sealed` in `configs/transfer/default.yaml`; `transfer.py` and `run_baseline.py` refuse their targets without `--unseal`):
   - `grid_test_large.csv`: the 30 grids of sizes 9-13 in `grid_100_balanced.csv` that are not in `grid_20_large.csv` (6 per size), plus 4 each of 15x15, 17x17 and 20x20 from `datagen.py` (seeds 515, 517, 520). No LLM run trains on them.
   - The 15x15-20x20 members of `families_v0.csv` (ids 36-59, 96-119, 156-179).
