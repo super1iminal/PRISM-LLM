@@ -46,7 +46,7 @@ The cell "States named by their features" (`feedback.space=features`, otherwise 
 
 - Grids: a small loss whose interval excludes 0; every feature-space run certified 5.5–6.0 per list, the coordinate runs 5.5–7.0. Library 8 of 8 in both.
 - Families: lower on each family (rooms 6.8 against 8.4, crossing 2.8 against 4.6, adjacent 13.0 against 16.0), within the families' large run-to-run spread.
-- Pac-Man: level. Horizon 30 (plan 02 added it to the targets after these runs were certified) is being certified for the feature-space runs; seed 1 does not pass it, and at 0.56 nothing passes beyond horizon 18, so the counts should not move.
+- Pac-Man: level. Horizon 30 (added by plan 02 after these runs were first checked) is certified for all ten runs; no list passes it, as nothing passes beyond horizon 18 at 0.56.
 - Cost is the same: output tokens per set 10,834 against 11,315 (grids), 9,416 against 9,947 (families).
 
 ## Step 5: instance-specific rules, measured
