@@ -66,17 +66,27 @@ Per group (certified per rule list on its own group):
 
 ![Gridworld families (trained on three 6x6-8x8 members of a family, held out: 10x10-14x14 members)](rq1_families.png)
 
-## Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)
+## Pac-Man (trained on horizons 14, 16, 18; 6 held out: 8, 10, 12, 20, 25, 30)
 
-Targets 0-7: 5 held out (each list's own training instances are left out).
+Targets 0-7,9: 6 held out (each list's own training instances are left out).
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 2.40 (1.00–3.00) | 2.40 (1.00–3.00) | 2 (1–3) | 2.4 (1.0–3.0) | 1.50 (1.00–2.00) | 40% (0%–100%) | 0.006 (0.004–0.008) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 2.40 (1.00–3.00) | 2.40 (1.00–3.00) | 2 (1–3) | 2.4 (1.0–3.0) | 2.40 (1.00–3.00) | 40% (0%–100%) | 0.006 (0.004–0.008) |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) | ✓ | – | 4.00 | 4.00 | 4 | 4.0 | 4.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! trained on horizon 5 (as the paper) |  | – | 2.00 | 2.00 | 2 | 2.0 | 2.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features |  | – | 2.00 | 2.00 | 2 | 2.0 | 2.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features, trained on horizon 5 |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| PPO | PPO with our features | ✓ | – | 3.00 | 3.00 | 3 | 3.0 | 3.00 | – | – |
+| PPO | PPO over raw variables |  | – | 3.00 | 3.00 | 3 | 3.0 | 3.00 | – | – |
+| Uniform random policy | Uniform random policy | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Best of 1000 random policies | Best of 1000 random policies | ✓ | – | 3.00 | 3.00 | 3 | 3.0 | 3.00 | – | – |
+| Strategy of one instance | Strategy of horizon 18, by moves made | ✓ | – | 2.00 | 2.00 | 2 | 2.0 | 2.00 | – | – |
+| Strategy of one instance | Strategy of horizon 18, by moves left |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | Hand-written maze rules | Hand-written maze rules | ✓ | – | 1.00 | 1.00 | 1 | 1.0 | 1.00 | – | – |
 
-![Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)](rq1_pacman.png)
+![Pac-Man (trained on horizons 14, 16, 18; 6 held out: 8, 10, 12, 20, 25, 30)](rq1_pacman.png)
 
-Worst-case crash of each method's frozen lists (best configuration) per horizon, up to 30: longer horizons are Pac-Man's sealed test set and stay out until the test pass. Line: mean over the lists, band: their range; hollow markers: a list's own training horizons. 1-2-3-Go! (published, different setup): 0.5511 at 5, 0.869 at 25, 0.99998 at 200 (200 beyond the axis).
+Worst-case crash of each method's frozen lists (best configuration) per horizon, up to 30: horizons 50 and 100 are Pac-Man's sealed test set and stay out until the test pass (200: PRISM cannot build it). Line: mean over the lists, band: their range; hollow markers: a list's own training horizons. 1-2-3-Go! (published, different setup): 0.5511 at 5, 0.869 at 25, 0.99998 at 200 (200 beyond the axis).
 
 ![Worst-case crash probability per horizon](rq1_pacman_horizon.png)

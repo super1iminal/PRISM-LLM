@@ -183,4 +183,4 @@ def test_index_lists_every_cell_and_baseline():
 def test_held_out_leaves_out_training_targets():
     shared = base.benchmark_specs({"benchmarks": "rq2"})
     bench = {name: base.Benchmark(name=name, **spec) for name, spec in shared.items()}
-    assert len(base.held_out(bench["pacman"])) == 5 and len(base.held_out(bench["grids"])) == 8
+    assert base.held_out(bench["pacman"]) == [0, 1, 2, 6, 7, 9] and len(base.held_out(bench["grids"])) == 8
