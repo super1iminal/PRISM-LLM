@@ -59,7 +59,7 @@ python src/run_symbolic.py --set llm.backend=openrouter --set llm.model=qwen/qwe
 - Lockstep and event: `llm_tasks.jsonl` has one line per task, and no result carries an `error`.
 - OpenRouter's *Activity* page: every request was served by the pinned provider, the reasoning tokens are 0, and the cost is as expected.
 
-**Afterwards.** Add a short entry under "LLM tasks, backends and schedulers" in `DECISIONS.md`: model id, provider and its quantization, whether thinking was off, tokens and time per round against the local runs, cost, and any errors. The runs go to `out/results/smoke/openrouter_*`, which is gitignored (like the Ollama smoke runs in `out/results/smoke/`), so they are never committed; delete them when done.
+**Afterwards.** Report to the user: model id, provider and its quantization, whether thinking was off, tokens and time per round against the local runs, cost, and any errors. Add to `DECISIONS.md` only a decision it changes (e.g. a provider to pin). The runs go to `out/results/smoke/openrouter_*`, which is gitignored (like the Ollama smoke runs in `out/results/smoke/`), so they are never committed; delete them when done.
 
 ### If something fails
 
@@ -74,4 +74,4 @@ python src/run_symbolic.py --set llm.backend=openrouter --set llm.model=qwen/qwe
 
 ## For a Claude Code session running the smoke test
 
-Follow the steps above in order and stop at the first failure. Each step after 1 spends money, so confirm with the user before step 2. Never print, log or commit the API key. Report the checks above as a short table (step, pass/fail, tokens, time, provider) and propose the `DECISIONS.md` entry; do not commit the run directories.
+Follow the steps above in order and stop at the first failure. Each step after 1 spends money, so confirm with the user before step 2. Never print, log or commit the API key. Report the checks above as a short table (step, pass/fail, tokens, time, provider); do not commit the run directories.

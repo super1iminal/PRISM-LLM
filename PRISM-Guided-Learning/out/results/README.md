@@ -12,7 +12,7 @@
 - `transfer_search/`: the transfer search's summary pages (`SUMMARY.md`, `FAMILIES.md`), diagnosis files and
   launcher logs.
 - `ceilings/`, `regression/`, and the other top-level directories (single-seed qwen runs, their comparisons and the
-  summary pages of `viz/ablation_summary.py`): as described in `DECISIONS.md`.
+  summary pages of `viz/ablation_summary.py`), each with its own report or summary page.
 
 Experiments find their runs by identity, not by name (`src/experiments/store.py`, `docs/experiments.md`). A run's
 `identity.json`, if present, corrects what its `config.json` could not record (features its prompts never showed).

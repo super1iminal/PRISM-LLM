@@ -1,0 +1,65 @@
+# RQ1: LLM-written rule lists against the baselines (validation)
+
+How many held-out instances does one frozen rule list certify, per method, and how many does a library of a run's lists cover? Our cells use the core configuration (the verifier resolves `any` into the best action order on the training members each round, no restarts, the generality instruction).
+
+Certified: held-out targets certified per rule list (on its own group's targets where there are groups). Every target: the same over all targets, whatever the group. Library: targets certified by at least one of a run's (or baseline's) lists. Ties open: certified with the action orders left open, i.e. however ties are broken. Ours: mean over runs, range in parentheses.
+
+## Random grids (grid_20_large; trained on sets of three 9x9-13x13 grids, held out: 12-19)
+
+Targets 12-19 (8); each list's own training instances are left out.
+
+| method | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|
+| **Ours, Haiku 5.5** | 5 | 6.25 (5.50–7.00) | 6.25 (5.50–7.00) | 7 (6–8) | 8.0 | 5.50 (5.00–6.25) | 10% (0%–25%) | 0.010 (0.008–0.012) |
+| **Ours, Sonnet 5.5** | 3 | 6.67 (5.75–7.25) | 6.67 (5.75–7.25) | 8 (7–8) | 8.0 | – | 75% | 0.493 (0.420–0.621) |
+| 1-2-3-Go! (reimplemented: trees over raw variables) (1 unchecked) | – | – | – | – | – | – | – | – |
+| 1-2-3-Go! with our features (1 unchecked) | – | – | – | – | – | – | – | – |
+| Rule-list search | – | 4.50 | 4.50 | 7 | 7.0 | – | – | – |
+| PPO with our features (1 unchecked) | – | – | – | – | – | – | – | – |
+| Hand-written template | – | 6.00 | 6.00 | 6 | 6.0 | 6.00 | – | – |
+
+## Random grids without the shortest-path feature `closer`
+
+Targets 12-19 (8); each list's own training instances are left out.
+
+| method | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|
+| **Ours, Haiku 5.5** | 5 | 3.40 (3.00–3.75) | 3.40 (3.00–3.75) | 4 (4–5) | 6.0 (5.0–7.0) | 0.00 | 0% | 0.011 (0.010–0.012) |
+| 1-2-3-Go! with our features (1 unchecked) | – | – | – | – | – | – | – | – |
+| Rule-list search (1 unchecked) | – | – | – | – | – | – | – | – |
+| Hand-written template | – | 6.00 | 6.00 | 6 | 6.0 | 6.00 | – | – |
+
+## Gridworld families (trained on three 6x6-8x8 members of a family, held out: 10x10-14x14 members)
+
+Targets 16-35,76-95,136-155 (60); each list's own training instances are left out.
+
+| method | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|
+| **Ours, Haiku 5.5** | 5 | 9.67 (5.67–15.00) | 19.20 (9.33–30.67) | 17 (12–19) | 33.8 (24.0–56.0) | – | 40% (33%–67%) | 0.008 (0.007–0.011) |
+| **Ours, Sonnet 5.5** | 3 | 14.00 (12.67–15.00) | 32.33 (29.00–36.67) | 19 | 54.3 (45.0–59.0) | – | 67% | 0.787 (0.663–0.932) |
+| 1-2-3-Go! (reimplemented: trees over raw variables) | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| 1-2-3-Go! with our features | – | 12.33 | 20.33 | 19 | 43.0 | 12.33 | – | – |
+| Rule-list search | – | 6.00 | 11.00 | 10 | 21.0 | – | – | – |
+| PPO with our features | – | 12.67 | 16.67 | 19 | 38.0 | 12.67 | – | – |
+| Hand-written template | – | 4.67 | 14.00 | 14 | 14.0 | 4.67 | – | – |
+
+Per group (certified per rule list on its own group):
+
+| method | rooms (of 20) | crossing (of 20) | adjacent (of 20) |
+|---|---|---|---|
+| Ours, Haiku 5.5 | 8.4 | 4.6 | 16.0 |
+| Ours, Sonnet 5.5 | 17.7 | 6.7 | 17.7 |
+| 1-2-3-Go! (reimplemented: trees over raw variables) | 0.0 | 0.0 | 0.0 |
+| 1-2-3-Go! with our features | 2.0 | 19.0 | 16.0 |
+| Rule-list search | 10.0 | 7.0 | 1.0 |
+| PPO with our features | 19.0 | 0.0 | 19.0 |
+| Hand-written template | 0.0 | 0.0 | 14.0 |
+
+## Pac-Man (trained on horizons 14, 16, 18; held out: 8, 10, 12, 20, 25)
+
+Targets 0-7 (8); each list's own training instances are left out.
+
+| method | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|
+| **Ours, Haiku 5.5** | 3 | 3.00 | 3.00 | 3 | 3.0 | – | 67% (0%–100%) | 0.005 (0.004–0.007) |
+| Hand-written maze rules (1 unchecked) | – | 1.00 | 1.00 | 1 | 1.0 | – | – | – |

@@ -1,545 +1,87 @@
-# Decisions log
+# Decisions
 
-Design decisions and results, to review together. Each entry has the decision and why. Items marked **[REVIEW]** are the ones I'm least sure about.
+Design decisions and the reasons for them, and the open questions. **[REVIEW]** marks what I'm least sure about or what waits on someone; delete it once settled.
 
-Paper target: **SEAMS 2027** research track (Oct 23 AoE; IEEE, 10 pages + 2 of references, double-anonymous), mainly for the reviews, then **ICAPS 2027** (Dec 7 abstract), where generalized policies are a core topic. Gridworld and Pac-Man come first; the benchmark-set families and PAYNT only if time allows (Asher). Story (Asher): the LLM writes a generic strategy, and the verifier refines it (feedback, and the order that resolves `any` rules) and certifies it on every held-out instance. Write first, then finish. Rajan helps with implementation.
+Specs live elsewhere: `docs/semantics.md` (rules, loop), `docs/config.md` (settings), `docs/experiments.md` (protocol, datasets, methods, metrics), `docs/scheduler.md`, `docs/positioning.md` (claims against related work). Results live in generated pages, rebuilt from the runs:
+- `out/results/experiments/<experiment>/REPORT.md`: RQ1 comparison and RQ2 ablations (`src/run_experiment.py`);
+- `out/results/<page>/SUMMARY.md`: Haiku feedback vs resampling (`haiku_large`), Claude vs qwen (`sonnet_vs_qwen`), the rule language (`rule_language_grid`, `rule_language_pacman`), the qwen ablations (`ablations/summary`, `legacy_qwen`), the transfer search (`transfer_search`);
+- `viz/figures/uuv*.md`: UUV against the paper's controller.
 
-## Story: Option A, narrowed (Marsha, Oct 8 email)
-- **Committed to Option A; Option B (model engineering) is parked.** B has the attribution problem (if the LLM writes model and policy, we can't tell which failed, and there is no ground truth), would compete with LLM-as-domain-generator work at ICAPS, and would split effort across two unfinished papers.
-- **The claim:** one readable controller for a parametric family of instances, with probabilistic guarantees checked per instance: "certified on every instance we check, including held-out larger ones", not correctness for all sizes. "PRISM and related work handle one instance at a time" won't survive review (families of MDPs, multi-environment MDPs, LLM-written generalized policies exist). Large instances alone aren't a gap either: checking a policy on a big model costs about as much as synthesizing the optimum on it.
-- **Main design step: relative features.** Rules over absolute coordinates (`x = 1 & y = 2 -> left`) can't transfer; rules need features such as the direction to the next goal or an adjacent obstacle.
-- **Experiments:** gridworld: generate rules on a few grids, freeze them, verify on held-out and larger grids (up to about 20x20). UUV: one rule set for both North Sea and Caribbean, plus a sweep over failure rates ("one certified controller across changing conditions, without re-synthesis on board"). No ATC (no PRISM model, too little time). Baselines: the per-instance PRISM optimum, and a strategy synthesized on one instance applied to the others.
-- **Motivation (SEAMS):** adaptive systems that need a certified controller as conditions change, not agents misusing tools.
-- An **energy budget is expressible in PRISM** (the paper's Table 2 uses rewards). Reward requirements close a gap in *our core*, not in PRISM, so they don't support an expressiveness argument by themselves.
+A result appears here only where it drove a decision. The earlier log, with per-run results and meeting notes: `git show 14fcb22:DECISIONS.md`.
 
-## Rule language: constants, features, `any` rules, general mode
-Inspired by generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bonet, Francès and Geffner): policies that refer to goals and features rather than to specific objects, and rules that allow every action with a stated property. Spec in `docs/semantics.md` ("Extended vocabulary"); off by default, and with it off the base language, prompts and encoding are those the saved-run replays check byte for byte.
-- **Constants** (`spec.yaml.j2` `constants`): named instance values, e.g. gridworld's `N`, `G1R`, `G1C`; Pac-Man's `MAXSTEPS`. Replaced by their value when parsed.
-- **Features** (`features`): conditions the domain computes, written in the rule language. A state feature has one expression (Pac-Man `moves_left`); an action feature has one per action and, in a rule, means its value for the rule's action (gridworld `wall`, `hazard`, `toward`, `closer`; Pac-Man `wall`, `nearer_g0`, `nearer_g1`). Each feature a rule uses becomes one PRISM `formula`, and Python evaluates it once per state.
-- **`any` rules:** allow every action whose condition holds (Fern et al.'s rules pick an action by its properties; Bonet–Geffner rules allow transitions with stated feature changes). Several allowed actions stay enabled, and the worst case covers all of them, so soundness is unchanged.
-- **General mode** (`rules.general`): only the numbers 0 and 1 in conditions, so a rule set names instance values and has a meaning on every instance (as their grammars never name specific objects). `src/transfer.py` freezes each instance's final rules from a run and certifies them on every instance of a dataset.
-- **Loop:** when every situation is covered but the worst case still fails, the gap comes from `any` rules allowing harmful actions, so the next round refines (appending cannot change covered states). Impossible in the base language, where full coverage gives best = worst.
-- **Code:** `core/rules.py` (`Vocabulary`, `Constant`, `Feature`, `ActionRef`/`FeatureCall`, `bind`; `Rule.allows` per action), `Spec.vocabulary(rules config)`, the planner's schema adds `any`, `_problem.md.j2` renders the vocabulary, `_vocabulary.yaml.j2` is the shared spec partial, `Domain.examples(extended=)` picks `examples_extended.md.j2`, `config.load_run_config`. Config: `rules.extended`, `rules.general`, `rules.hidden_features`. Tests: `tests/test_vocabulary.py`.
-- **[REVIEW]** Gridworld's `closer` (shortest path through free cells) makes navigation easy. The core grid conditions show it, and RQ1 also compares without it (`grids_noclose`); whether the configuration we claim keeps it, and any feature added for the transfer search, is Asher's call. Pac-Man's `nearer_g*` look only at rows and columns, not at the maze.
-- **Pac-Man, Haiku 5.5, general vocabulary** (`haiku_rl_pacman`, one run; page `out/results/rule_language_pacman/`):
-  - Solved 3 of 5 horizons (8, 10, 14), against 2 with the base vocabulary (`haiku_pacman`).
-  - The horizon-14 rule set has 6 rules and names no positions: `!wall & !nearer_g0 & !nearer_g1 -> any`, `wall & !nearer_g0 & !nearer_g1 -> any`, `dP = 0 & !wall & !nearer_g0 -> right`, `!wall & !nearer_g0 -> any`, `!wall & !nearer_g1 -> any`, `true -> up`.
-  - **Transfer** (`transfer_pacman_transfer.csv`, horizons 8–25): frozen, that rule set holds the optimum 0.5511 on horizons 8–18, including 16 and 18, which neither Haiku solved directly nor Sonnet's base rules survive. It reaches 0.680 at 20 and 0.843 at 25 (not certified against 0.56).
-  - At horizon 25 that is better than 1–2–3–Go!'s tree (0.869) and than Sonnet 5.5's best base-vocabulary rule set (0.990). The other rule sets transfer less far (from 8, 10, 12: 0.5511 only up to 10; 0.78 from 12).
-- **Pac-Man, Sonnet 5.5, general vocabulary** (`sonnet5_5_rl_pacman`, one run): solved horizons 8, 10, 12 (base vocabulary: 8–14). **Its horizon-10 rule set (6 rules: `!wall & !nearer_g0 & !nearer_g1` -> each direction in turn, then `wall -> any`, `true -> any`) holds the optimum on horizons 8–18**, so a rule set written for 10 moves is certified for 12, 14, 16 and 18, including 16, which Sonnet could not solve directly with either vocabulary. It reaches 0.639 at horizon 20 and 0.763 at 25, against 1–2–3–Go!'s 0.869 at 25. The horizon-12 rule set behaves the same.
-- **Reading (Pac-Man):** general rules carry across horizons much further than base-vocabulary rules (which fail from 16 on, 0.99 at 25), with one model call per instance and no rule changes. None is certified beyond 18 against the 0.56 threshold; one run per condition.
-- **Gridworld, general vocabulary on `grid_20_large`** (two unseeded runs per condition, one for v1 + closer; restart on slow progress; page `out/results/rule_language_grid/`, config `configs/plot/rule_language_grid.yaml`). Feature sets: v1 = `wall`, `hazard`, `toward`; v2 adds `obstacle` (the moving obstacle on the target cell after the move) and `risky` (a slip could land on a hazard); `+ closer` adds the shortest-path feature. Against the base vocabulary (`haiku_large_R4`, 2 runs: 12/20 solved, 8.18 met):
-  - Mean over runs: Haiku v1: 5.5/20 solved (runs 6, 5), 6.42 met (−1.77, p = 0.001). Haiku v1 + closer (one run): 9/20, 7.90 (−0.28, p = 0.26). Haiku v2: 3.5/20 (3, 4), 6.42 (−1.75, p = 0.001). Haiku v2 + closer: 9.5/20 (9, 10), 8.03 (−0.17, p = 0.50). Exploratory tests.
-  - Sonnet 5.5 v1 (`sonnet5_5_rl_grid_large`, not on the page: different prices): **19/20 solved**.
-  - In the `seed_none_1` runs, five Haiku grids (v1: 14, 18; v2: 9, 19; v2 + closer: 19) ended with an error: their joint LP query ran past `prism.timeout_s` without being stopped (the Windows timeout issue in "Solvers, joint queries and seeds"). They count as unsolved and are left out of that run's means. The `seed_none_2` runs, made with timeouts that stop PRISM, have no errors; some joint queries there took 13–15 min.
-- **Gridworld transfer** (`transfer.py`, each run's final rules frozen and certified on all 20 grids; `<run>/transfer_grid_20_large.csv`):
+## Paper and claim
+- **Target:** SEAMS 2027 research track (Oct 23 AoE; IEEE, 10 pages + 2 of references, double-anonymous), mainly for the reviews, then ICAPS 2027 (Dec 7 abstract), where generalized policies are a core topic. Gridworld and Pac-Man first; benchmark-set families and PAYNT only if time allows (Asher). Write first, then finish. Rajan helps with implementation.
+- **Story (Asher):** the LLM writes a generic strategy, and the verifier refines it (feedback, and the order that resolves `any` rules) and certifies it on every held-out instance.
+- **Claim:** one readable controller for a parametric family of instances, with probabilistic guarantees checked per instance: "certified on every instance we check, including held-out larger ones", never "correct for all sizes" or "maximally permissive". What to say and not say: `docs/positioning.md`.
+- **SEAMS angle:** a library of frozen rule sets, certified at run time on the instance met; the system adapts by switching to one that certifies (the "library" metric in RQ1).
+- **Option B (the LLM also writes the model) is parked** (Marsha): with model and policy both written by the LLM, a failure can't be attributed and there is no ground truth; it would also compete with LLM-as-domain-generator work and split effort.
+- **The domain provides the rule vocabulary.** The LLM-written vocabulary (branch `rule-language-generation`) is parked: two moving parts at once would make results unreadable (Asher).
+- **The bar:** the closest work is 1–2–3–Go! (trees over raw state variables, learned on small instances, certified per larger instance). Its trees over raw variables fail on our families, so the honest bar is the hand-written template, the best searched rule list and 1–2–3–Go!'s trees over our features.
 
-  | run | certified on own grid | on the other grids | best single rule set | grids any rule set certifies |
-  |---|---|---|---|---|
-  | Sonnet 5.5 v1 | 19/20 | 9/380 (2%) | 3 | 19 |
-  | Haiku v1, run 1 / 2 | 6/18, 5/20 | 2/342, 3/380 (1%) | 3, 2 | 7, 5 |
-  | Haiku v2, run 1 / 2 | 3/18, 4/20 | 3/342, 8/380 (1–2%) | 3, 2 | 5, 5 |
-  | Haiku v1 + closer | 9/20 | 138/380 (36%) | 9 | 9 |
-  | Haiku v2 + closer, run 1 / 2 | 9/19, 10/20 | 132/361, 115/380 (37%, 30%) | 9, **14** | 9, 14 |
+## Method
+- **Kickoff choices:** one LLM call over the whole state space (no per-goal decomposition); rules form an ordered decision list, first match wins; feedback locates states and rules but never reveals PRISM's optimal action.
+- **Success means every requirement holds in the worst case** over all completions of the rules (a sound permissive strategy); the best case is reported separately. REFINE when no completion can pass, EXTEND (append) otherwise; keep-best by (worst failures, best failures, worst shortfall, best shortfall). Spec: `docs/semantics.md`.
+- **Blame by probability mass:** expected visits within H steps × probability still at stake. V^opt stays in the loop (Marsha); one-step regret is an ablation. Rejected: a performance-difference decomposition, which gives about 0 mass when the adversary stalls the agent in loops through uncovered states (the main failure mode), because without discounting its residual term does not vanish.
+- **Rule language** (`docs/semantics.md`, "Extended vocabulary"): instance constants, domain features, `any` rules and general mode, after generalized planning (Fern, Yoon and Givan; Martín and Geffner; Bonet, Francès and Geffner). Rules over absolute coordinates cannot transfer. General mode does not stop instance-specific rules: relations between constants (`G2R = G3R + 1`) and offsets (`G2C - 1`) still single out instances.
+- **Multi-instance training** (`run.train_sets`): rules written for one grid overfit to it, even in general mode, so one rule list is written for and verified on several instances each round.
+- **`any` resolved in the loop** (`rules.any_order`): each round the verifier picks the action order that does best on the training members. It gave the transfer search's best validation numbers, where prompting changes did not move them. Whether the solver may choose is open (below).
+- **Core configuration:** multi-instance training, the generality instruction, no restarts, `rules.any_order: all` (Pac-Man: `rotations`). Core runs are the RQ1 cells, in `out/results/core/`; other runs go to `out/results/ablations/`, baselines to `out/results/baselines/`. If memory is ever added to the rule language, its conditions and runs get a `-memory` suffix (Asher).
+- **Gridworld features:**
+  - `closer` (shortest path through free cells) routes through the patrol only where no other route exists (each patrol cell costs n·n): family members whose only passage crosses the patrol need it.
+  - `hazard` is the union of `patrol` and `early`. The split exists because Haiku wrote `!hazard` into every rule and never crossed a patrol, which the crossing and rooms families need.
+  - Conditions that predate a feature hide it (`rules.hidden_features`), so their prompts stay those of their runs.
+- **Output and parsing:** JSON-schema structured output with the actions as an enum, capped at 64 rules and 200-character conditions (without the caps qwen falls into repetition loops). Parsing accepts common LLM spellings (`==`, `&&`, `and`, a trailing `-> action`). An invalid answer is re-asked with the error up to 2 times; after that the round counts as an empty policy. Rule listings and examples use the answer's JSON-per-line shape, because qwen copies the notation of examples into conditions.
+- **First-match compilation:** each rule's guard negates only the earlier rules that can overlap it (found by enumeration up to 200k valuations), so 500-rule legacy policies stay compact.
+- **The default prompt keeps the catch-all instruction and example** (`prompt.*`): with qwen, removing the example halved the catch-all rules, and partial policies lose under the worst case.
+- **Default retry `gain:0.05`** (start over when the last round cut total worst-case shortfall by less than 0.05, so after any round without improvement): it won the qwen retry sweep. B2 and the conditions compared with it use `stall:2`.
+- **Forced states** (every policy-labelled choice has the same successor distribution) are not situations: no rule can change them, so they are left out of coverage, hotspots and blame. Decision states count only choices labelled with a policy action; Pac-Man's unlabelled arbiter step is environment nondeterminism.
+- **Reward requirements** (`R{r}` bounds): shortfalls and blame stakes are relative to the threshold, so energy does not swamp the probabilities; infinite expected rewards are capped in the mass analysis; prompts mention cost only when a reward requirement fails.
+- **Seeds:** each call's seed derives from the run seed and the call's index (`seed * 1_000_003 + n`), since one fixed seed made every repeat of a prompt return the same answer. Claude endpoints take no seed, so their repeats are unseeded (`--unseeded N`).
 
-  - Without `closer`, rule sets are specific to their grid even though they name no coordinates: Sonnet's pass their own grid and almost nothing else. With `closer`, Haiku writes generic "move closer" rule sets that mostly pass the same grids, the ones it solved.
-  - **One exception:** in the second v2 + closer run, the rule set written for grid 7 (10x10) certifies **14/20 grids** (every 10x10–13x13 grid but 9 and 12; no 9x9 grid), including 4 that Haiku did not solve directly in that run, against 10/20 for the hand-written template (positioning checks, above). It has 10 rules: shortest-path moves that hit no wall or hazard and cannot slip onto a hazard (`closer & !wall & !hazard & !risky -> any`, per goal stage), then the same without `!risky`, then `!wall & !hazard -> any`, `!wall -> any`, `true -> up`. In v1 + closer (no `risky`) no rule set passes more than 9.
-  - Heatmap of Sonnet v1 and Haiku v1 + closer: `viz/figures/transfer_grid.png` (`configs/plot/transfer_grid.yaml`, `viz/plot_transfer.py`).
-- **Reading (gridworld):** rules written for one grid mostly do not transfer: they overfit to it, or (with `closer`) are generic and only solve the grids a generic policy solves. With `closer` and `risky`, one rule set did generalise to 14/20, which is close to the policy a person would write given those features; whether `closer` is fair game is open (**[REVIEW]** above). This is the case for **multi-instance training** (one rule set verified on several training grids per round, solved only when it passes all of them, then frozen and certified on held-out and larger grids; below). So transfer holds on Pac-Man; on gridworld, not in these single-grid runs.
+## Solvers and numerics
+- **Gauss-Seidel in the loop** (`prism.method`): rules that read `obs_idx` can make the induced chain periodic, where plain value iteration does not converge. Fallback: modified policy iteration (a real qwen rule set converged with neither Gauss-Seidel nor plain policy iteration). If every method fails, the round scores as an empty policy.
+- **Exact check of the final policy** (Asher): interval iteration at 1e-9, or Gauss-Seidel at 1e-12 where it does not converge. Gauss-Seidel stops when an iteration changes little, which bounds nothing: on a slowly leaking chain it reported a `goal3` of 0.587 whose exact value is 0.799. The loop keeps Gauss-Seidel because interval iteration takes minutes on such chains and the loop only needs a ranking.
+- **Joint queries use exact LP.** LP cannot do step-bounded objectives, so for UUV the joint query is undecided and the loop uses the per-requirement branch.
+- **Timeouts:** on Windows, killing `prism.bat` leaves its JVM running, so `PrismRunner` kills the process tree. A joint query that times out is undecided.
+- **Regression** (`src/regression.py`): the symbolic gridworld MDP equals the legacy DTMC to 5e-10 over 100 legacy policies. It uses interval iteration because at default settings the worst case of nested-until properties stops early, by up to 4e-3.
 
-## Multi-instance training
-- **Design** (`core/training.py`, `run.train_sets`; semantics in `docs/semantics.md`, "Training sets"): a training set is a group of instances; one rule list is written for all of them. Each round the LLM sees every member (description, map, constant values); the rules are parsed for each member (constants differ) and verified on each; keep-best sums the members' scores; the set is solved only when every member passes in the worst case. Feedback (branch, results, blame, joint query) is about the member that fails worst, with a per-member summary table; variables whose range or description differs between members are listed per member. A single instance is a training set of one: prompts are byte-identical and the saved-run replays pass. `transfer.py` marks the targets each rule set was trained on (`trained`); `plot_transfer.py` draws training-set rows.
-- **Code:** an episode (`core/episode.py`) holds a list of members (`Member`: instance, verifier, analyzer, vocabulary, prompt context; one for a single instance), and a round's candidate is a `Check` (the rules parsed for each member and each verification); `core/prompts.py` builds the prompts, including the training-set context. `run_symbolic.py` builds training sets when `run.train_sets` is set; a set's sample id is its index, and its result lists the members under `members`. Tests: `tests/test_training.py` (two tiny grids where `true -> right` passes one and fails the other).
-- **First experiment** (unseeded runs: three per Haiku condition, one for Sonnet; 5 rounds, vocabulary v2; four training sets of a 9x9, a 10x10 and an 11x11 grid from `grid_20_large`: ids [0,4,8], [1,5,9], [2,6,10], [3,7,11]; 12x12 and 13x13 never trained on; figure `viz/figures/transfer_mi_grid.png`, config `configs/plot/transfer_mi_grid.yaml`):
+## Running and comparing
+- **Feedback must beat resampling at equal cost, on the same plot** (Marsha). A budget curve that rises every round is guaranteed by keep-best, so it is no evidence for feedback, and feedback rounds cost more tokens than fresh ones, so equal rounds is not equal cost. With qwen on small grids, resampling was level or ahead. With Haiku 5.5 on `grid_20_large`, feedback beat it in all four comparisons fixed before the runs (`out/results/haiku_large/SUMMARY.md`).
+- **Ablation model and dataset: Haiku 5.5 on `grid_20_large`** (Asher). Sonnet 5.5 solves every solvable `grid_20_balanced` grid, most in round 1, and 13x13 grids too, which leaves no headroom; qwen's results are limited by the model, not the loop (`out/results/sonnet_vs_qwen/SUMMARY.md`).
+- **OpenRouter runs are a condition of their own** (Asher): hosted weights (FP8/BF16) and seeds differ from the local 4-bit model. Pin a provider (`llm.openrouter.providers`) and name model, provider and quantization in results. Every request requires the schema and seed parameters.
+- **Tokens are the cost measure.** Wall-clock times are not comparable across schedulers or between parallel and sequential runs.
+- **Legacy baseline:** the predecessor's planner (`src/legacy/`, gridworld only), changed only for fairness (obstacle visibility). Same model, grids and rounds as symbolic; the prompts differ by design (legacy has worked examples). Legacy runs on qwen only: one call per goal and obstacle phase per round would be expensive on a hosted model. The predecessor's other planners are on `main`.
+- **The planner is a generator** (it yields LLM tasks and PRISM calls), chosen over a blocking client behind a barrier, a state machine or asyncio: the loop reads top to bottom, each batch is an explicit list, and it cannot deadlock. If pausing inside an instance (crash recovery) is ever needed, its locals can move into a state object without changing schedulers or backends. `docs/scheduler.md`.
+- **Config:** one folder per tool, and each `default.yaml` is the only place its defaults live (Asher). `docs/config.md`.
 
-  | condition | sets solved | training grids certified | held-out certified per rule set (of 17) | of which 12x12/13x13 (of 8) | single-grid training, held-out per rule set (of 19) |
-  |---|---|---|---|---|---|
-  | Haiku v2 (`haiku_mi_grid_large`), runs 1 / 2 / 3 | 0/4 each | 1, 0, 0 of 12 | 0,0,0,0 / 0,0,1,0 / 0,0,0,0 | 0 in every run | 0.2–0.4 |
-  | Haiku v2 + closer (`haiku_mi_grid_large_closer`), runs 1 / 2 / 3 | 0/4 each | 4, 6, 3 of 12 | 8,3,8,8 / 8,3,11,12 / 8,3,10,8 | 6,3,6,6 / 6,3,6,7 / 6,3,6,6 | 5.8–7.0 |
-  | Sonnet 5.5 v2 (`sonnet5_5_mi_grid_large`) | 1/4 | 7/12 | 3, 2, 5, 2 | 2, 2, 2, 1 | 0.45 (Sonnet v1) |
+## Case studies
+- **Gridworld:** a symbolic PRISM template (formulas for move, slip and bounce) rather than enumerated cells. `grid_20_balanced` is the first 4 grids of each size 4–8 of `grid_50_balanced`; the other datasets and splits are in `docs/experiments.md`.
+- **UUV** (Päßler et al., iFM 2023):
+  - The MDP follows the paper's ProFeat artifact, not the extended model on that repository's main branch.
+  - Visibility limits are modelled by clamping, so every action is enabled everywhere and each state's distinct choices are exactly the paper's.
+  - The policy sees what the paper's controller monitors (`s`, `alt`, `water_visib`).
+  - The description lists the integer levels of each visibility band, because qwen copied decimal thresholds into conditions, which the integer rule language rejects.
+  - The mass horizon is the mission deadline (`feedback.horizon: domain`, Asher).
+  - PRISM's multi-objective query understates a concrete policy's value (0.795 vs 0.807), so calibration does not use it.
+- **Pac-Man** (QVBS `pacman`, version 2): the benchmark's model with `MAXSTEPS` set per instance, chosen because 1–2–3–Go! fails on it and its choices are labelled actions. Requirement: crash ≤ 0.56 (the optimum is 0.5511 at every horizon). The loop trains on short horizons; longer ones only certify frozen rules. The 1–2–3–Go! artifact holds no Pac-Man values, so we compare with its published ones (0.869 at horizon 25).
 
-  - Sonnet's solved set (2: grids 2, 6, 10, in 2 rounds) has 24 rules: a greedy policy (towards the next goal, no wall, hazard or risky slip, directions in a fixed order; then safe moves) plus patches. Two patches avoid stepping into goal 2 early (`!g1 & x = G2R & y = G2C - 1 -> left`); five apply only when `G2R = G3R + 1`, a relation between goal coordinates that singles out particular grids. **General mode does not stop instance-specific rules**: relations between constants can still identify an instance.
-  - Cost per training set: Haiku 31–34k input and 6–8k output tokens, 1–6 min; Sonnet 51k input and 67k output tokens (long thinking), 2–20 min. Sets run in parallel (`run.workers: 4`), so each run took about as long as its slowest set.
-- **Reading:** Sonnet's held-out transfer is higher after training on three grids (about 3 grids per rule set, including 1–2 of the 8 larger grids, against 0.45 after single-grid training), but **the comparison is confounded**: the single-grid Sonnet run used vocabulary v1 (no `obstacle`, `risky`), the multi-instance run v2, and `risky` is what lifted Haiku's single-grid transfer. A clean comparison needs Sonnet single-grid with v2 (or multi-instance with v1). Most held-out grids still fail, and only one set was solved in 5 rounds. On the never-seen 12x12/13x13 grids, trained on 1 vs 3 grids: Haiku v2 0.13 vs 0 of 8 per rule set, Haiku v2 + closer 4.4 vs 5.3, Sonnet 0.17 (v1) vs 1.75 (v2). Haiku cannot write rules that pass three grids at once without `closer` (0 of 12 sets solved over three runs; at most 1 of the 68 held-out rule-set/grid pairs certified per run); with it, multi-instance training adds little over single-grid training, and the three runs give nearly the same generic rule sets (set 1, grids 1, 5, 9, certifies 3 test grids every time). **Open:** more rounds for training sets, and whether the rules' instance-specific patches (constant relations) are what fails on held-out grids.
-- **Prompt wart, not fixed:** gridworld's `description.md.j2` runs two bullets together ("it starts at 0.- The agent keeps moving"), in every prompt with the obstacle visible. Fixing it changes every gridworld prompt and the saved-run replays, so it waits for a deliberate prompt revision.
-
-## Transfer search (protocol: `docs/experiments.md`)
-- **Protocol (Asher):**
-  - Grids 12–19 are the validation set; the sealed test sets (`docs/experiments.md`) give only the final numbers.
-  - "Working" means Haiku solves at least half of the training sets and each frozen rule set certifies at least 7 of 8 validation grids on average.
-  - Generated families are the main gridworld setting. The random grids of `grid_20_large` share no structure, so they stay as the harder, unrelated case.
-  - The rule-list search without an LLM is a baseline.
-- **Tools.**
-  - `src/run_search.py` runs conditions in parallel, then each run's transfer check on `--targets` (default the validation grids 12-19).
-  - `transfer.py --targets` merges into an existing CSV. Transfer checks re-verify with the exact solvers when a worst case is within `exact_near` (0.03) of its threshold.
-  - `viz/transfer_summary.py` (`configs/plot/transfer_search.yaml`) builds `out/results/transfer_search/SUMMARY.md`.
-  - Baselines live in `src/baselines/`, run by `src/run_baseline.py configs/baselines/<name>.yaml`, with results in the transfer CSV format. Methods: fixed rule lists, the hand-written template, a beam search over the rule language, and 1-2-3-Go!-style decision trees.
-  - `src/baselines/gridworld_mdp.py` is a numpy model of the gridworld: features and requirement values of a deterministic policy in 20-60 ms instead of a 2 s PRISM run. It agrees with PRISM's exact values to 1e-9, and its features match the core rule evaluator (`tests/test_gridworld_mdp.py`). The search and the trees rank candidates with it; PRISM certifies what they keep.
-- **`closer` routes through the patrol only where no other route exists.** The patrol costs n*n per cell entered (Dijkstra) instead of being blocked. On `grid_20_large` this agrees with blocking the patrol on every cell with a route around it; only patrol cells and 12 cells cut off by a patrol get a distance. Families whose only passage crosses the patrol need it: with the patrol blocked, `closer` would be false everywhere beyond it.
-- **Search over the rule language** (beam of 4, up to 6 rules, each a conjunction of feature literals with one of 4 fixed action orders, ending `true -> up`; trained on the same sets as the LLM; PRISM-certified):
-  - Of the four standard training sets only `[2,6,10]` is solvable by such a list; the others stop at 2 of 3 grids. Every standard set contains a 9x9 grid, and no generic rule set has passed grids 0, 1 or 3 held-out.
-  - The list found on `[2,6,10]` has two rules: `!hazard & !risky & closer` in the order down, right, up, left, then `wall & !risky` (wait by moving into a wall), then `true -> up`. It certifies **15/20 grids and 7 of the 8 validation grids**, including grid 12, which no rule set of the prompting conditions below passes held-out. That is more than the template (6) and any Haiku condition's mean in the table below (at most 6.42).
-  - Over the four standard sets, the search's lists certify 4, 1, 7 and 6 validation grids (mean 4.5); on all 12 training grids at once, 2. The search fits its training set closely.
-  - Without `closer`, its lists pass 2-5 of the 20 grids (at most 2 validation grids).
-- **1-2-3-Go!-style trees** (`src/baselines/decision_tree.py`, a reimplementation):
-  - Optimal strategies of the training grids for one reachability objective: every goal in order, nothing entered early, no collision. Ties go to the fastest optimal action; an arbitrary optimal action can cycle where the probability is 1 anyway.
-  - CART on the states' optimal actions. Over the raw state variables, as in the paper: 0 validation grids for every standard set. Over our features (with the goal flags): 7, 3, 3, 3 (mean 4.0). These numbers come from the numpy model.
-- **Haiku keeps writing the same generic list:** `closer`/`toward` moves with `!wall & !hazard (& !risky)`, all `any`, then `!wall -> any`, `true -> up`. This holds even with the tie-break explanation. With restarts on slow progress, rounds 3-5 of a training set are mostly fresh starts, so the loop resamples rather than refines.
-- **Haiku conditions on `grid_20_large`** (three repeats each, standard training sets unless stated; validation grids certified per rule set, of 8; no condition solved a training set; page `out/results/transfer_search/SUMMARY.md`):
-
-  | condition | validation certified (of 8) |
-  |---|---|
-  | baseline (multi-instance + `closer`) | 5.33 |
-  | generality instruction | 5.92 |
-  | strategy in words first | 5.92 |
-  | tie-break explanation | 5.58 |
-  | training sets one generic list can solve | 5.50 |
-  | one set of all 12 training grids | 6.00 |
-  | generality, no restarts | 5.83 |
-  | feedback in feature space (with generality, no restarts) | 5.58 (4.25-6.25) |
-  | hint to wait by moving into a wall (with tie-break, generality, no restarts) | 6.25 (one training set solved) |
-  | **`any` resolved in the loop** (`rules.any_order: all`, with generality, no restarts) | **6.42** (6.00-7.00); best rule set 8/8; 17% of sets solved |
-
-  - Every condition lies within 5.3-6.0 of 8, about the noise between repeats. Grids 13, 17 and 18 always pass, 14-16 mostly, 19 rarely, 12 never. Prompting does not move transfer here.
-  - Haiku writes nearly the same generic list in every condition (`closer`/`toward` moves without walls or hazards, all `any`). The hint and the tie-break explanation did not make it use fixed orders or waiting.
-- **Determinizing `any`** (`src/determinize.py`; `transfer.py --rules determinized`; `run_search.py --determinize`):
-  - Each `c -> any` becomes one rule per action in a fixed order, and the order is chosen by PRISM on the rule set's own training instances (all 24 orders).
-  - Numpy model, per rule set: on 29 feature-only Haiku rule sets, grids certified rise from 7.6 to 10.9 of 20 with the best order. Choosing the order on validation would give up to 8/8 (two rule sets), but that selects on validation.
-  - Chosen on the training grids, as it must be: baseline 5.33 -> 5.73, feature-space feedback 5.58 -> 6.0, generality 5.92 -> 5.89 (validation, of 8); all 20 grids about 7.6 -> 11. The gain is mostly on the training sizes. `any`'s worst case costs grids, but it is not what limits validation.
-  - **In the loop** (`rules.any_order`, `docs/semantics.md`): each round, the answer's `any` rules are resolved into the order (of 24) that scores best on the training members, and verification, feedback and keep-best all use the resolved list. Haiku then sees how the deterministic policy fails, not how the adversary exploits `any`.
-    - On `grid_20_large` this is the best condition: 6.42 of 8 validation grids per rule set. Grid 12 is certified by half the rule sets (no held-out rule set of the prompting conditions passes it), one rule set certifies all 8, and 2 of 12 training sets are solved.
-    - That is above the template (6), the rule-list search (4.5) and 1-2-3-Go! with our features (4.0) on the same training sets.
-    - Cost about $0.010 per training set (more rounds of PRISM: 24 orders x 3 members per round).
-- **Gridworld families** (`domains/gridworld/data/families.py`, `families_v0.csv`). Three layouts over sizes 6-20 with seeds 0-3 (180 instances), each with some scattered obstacles:
-  - *rooms*: doors, and a patrol in front of a door;
-  - *crossing*: a wall with one gap and a patrol along it;
-  - *adjacent*: goals 1 and 3 side by side.
-
-  Results:
-  - All 15 sampled members are jointly feasible.
-  - The template certifies 47 of 180 (PRISM; the numpy model agrees on every member): adjacent 78%, crossing and rooms 0%.
-  - Search on each family's 6x6-8x8 members solves them, but passes 26-33 of each family's 60 members.
-  - Trees over raw variables pass 0-3 of 60; over our features adjacent 49, crossing 53, rooms 8.
-  - Validation members (sizes 10-14, 20 per family), certified:
-
-    | method | rooms | crossing | adjacent |
-    |---|---|---|---|
-    | template (cautious) | 0 | 0 | 14 |
-    | 1-2-3-Go! reimplemented (raw variables) | 0 | 0 | 0 |
-    | 1-2-3-Go! with our features | 2 | 19 | 16 |
-    | rule-list search | 10 | 7 | 5 |
-    | Haiku (`haiku_fam_v0`, mean of 3 runs) | 0 | 0 | 16 |
-
-    Template and Haiku are PRISM-certified; trees and search come from the numpy model.
-  - Haiku solved the adjacent training set in all three runs, and never crossing or rooms. It writes `!hazard` into every rule, so it never steps onto the patrol path, and both crossing and rooms need that.
-  - So the vocabulary also has `patrol` (the move enters the patrol path; safe when `!obstacle`) and `early` (the move enters a goal not yet due), and `hazard` is their union. The conditions that predate the two hide them, so their prompts stay those of their runs. Condition `haiku_fam_split` uses them instead of `hazard`.
-- **Pac-Man, multi-horizon training** (`haiku_mi_pacman`: training sets of horizons 8-12, 10-14 and 12-16; generality; no restarts; three runs; certified on horizons 8-25):
-  - 7 of 9 rule sets solved their training horizons (crash 0.5511, the optimum, on every member); single-horizon Haiku runs had solved 8, 10 and 14 only.
-  - Every solved rule set holds the optimum on horizons 8-18 and reaches 0.680 at 20 and 0.843 at 25. 1-2-3-Go!'s published value at 25 is 0.869; neither is certified against 0.56 beyond 18.
-  - Fixed action orders (all 24, one rule set, horizon 20): 0.621-0.680, still above 0.56. `nearer_g0`/`nearer_g1` compare rows and columns, not distances through the maze. Pac-Man also has `closer_g0`/`closer_g1` (the first step shortens the maze distance to the ghost; hidden in the conditions that predate them).
-  - The 1-2-3-Go! artifact (`third_party/123go`, not committed; `third_party/README.md`) has run statuses and times but no Pac-Man values, so its published numbers are what we compare against.
-  - Hand-written lists over the maze-distance features are worse: 0.776-0.955 at horizons 18-20. Fleeing by maze distance is not the optimal strategy.
-  - **Longer training horizons with in-loop order resolution** (`haiku_mi_pacman_long`: one training set of horizons 14, 16 and 18; `rules.any_order: rotations`; three runs):
-    - 2 of 3 runs solved all three horizons at the optimum.
-    - Frozen, they hold the optimum on horizons 8-18 and reach 0.662 at 20 and **0.749 at 25**. The 8-16 training gave 0.843 at 25, and 1-2-3-Go! reports 0.869. The best rotation was right, up, left, down every round.
-  - **[REVIEW] Threshold for the larger horizons.** At 0.56, just above the 0.5511 optimum, nothing is certified beyond 18 (ours, or 1-2-3-Go!'s 0.869). A threshold per horizon, e.g. a fixed slack over each horizon's optimum, or the UUV-style "best over reference policies plus slack", would turn the 0.749-vs-0.869 gap into certified vs not certified. That is Asher's call.
-- **Core runs and ablations are kept apart.**
-  - The core configuration: multi-instance training, the generality instruction, no restarts, and `any` resolved in the loop (`rules.any_order: all`; Pac-Man `rotations`).
-  - The core runs are the cells of the RQ1 comparison (`configs/experiments/rq1_comparison.yaml`): the method's main configuration on each case study, which the paper's main results come from. They are `haiku_ts_order`, `haiku_ts_order_noclose`, `haiku_fam_order`, `haiku_mi_pacman_long`, `sonnet5_5_ts_order` and `sonnet5_5_fam_order`.
-  - The launchers write core runs to `out/results/core/` and every other condition to `out/results/ablations/`; baselines stay in `out/results/baselines/` (`out/results/README.md`).
-  - If memory is ever added to the rule language, its conditions and run directories get a `-memory` suffix (Asher).
-- **Sonnet 5.5, one repeat, core settings** (Asher approved one repeat):
-  - Random grids: 3 of 4 training sets solved, 7.25 of 8 validation grids per rule set, best 8.
-  - Families: rooms / crossing / adjacent 19 / 9 / 17 of 20.
-  - Each rule set has about 7-8 feature conditions; its crossing rules wait by moving into a wall.
-  - About $0.62 per training set.
-- **PPO baseline** (`src/baselines/ppo.py`; policy network over our features, 2M steps per family; numpy model): rooms 19, crossing 0 (it never learns to cross), adjacent 18. Every baseline fails at least one family; Sonnet's worst family is 9.
-- **A library of rule sets with certification at run time** (analysis of existing runs, no new runs):
-  - Store several frozen rule sets and use, on each instance, one that certifies.
-  - Random grids, validation: one Haiku run's 4 rule sets cover all 8 grids in every run (one rule set alone: 6.25). Without `closer`: 6 of 8 per run, 7 of 8 over all runs.
-  - The baselines' libraries of 4 cover 7 of 8 with `closer` (search, feature trees) and 3 of 8 without (feature trees).
-  - Families (five Haiku runs; mean over every choice of k runs, out of 60 members): one run 29.0 (17-45), two 37.7, three 42.6 (32-50), four 46.4, all five 50.
-    - The best single baselines cover 37 (feature trees, PPO), but they have no library here: the trees are deterministic, and PPO would need several training seeds.
-    - The first three runs give 49 of 60, one of the best choices of three.
-  - Every single Haiku run's own four rule sets cover all 8 validation grids (five runs out of five); so do the fixed-declared-order runs.
-  - This is the SEAMS angle: the system certifies stored controllers on the instance it meets and adapts by switching to one that certifies.
-- **Ablation batch, results** (Haiku, three repeats each, otherwise the core settings).
-
-  Random grids (validation grids certified per rule set, of 8):
-
-  | condition | certified |
-  |---|---|
-  | core: best order chosen each round | 6.25 (5 runs) |
-  | fixed declared order | **7.17** |
-  | hidden training members | 6.58 |
-  | counterexample-driven training sets (8 rounds) | 6.50 |
-  | 8-round control | 6.00 |
-  | failing traces | 5.92 |
-  | best order reported only | 5.42 |
-
-  Families (rooms / crossing / adjacent, of 20 each):
-
-  | condition | rooms | crossing | adjacent |
-  |---|---|---|---|
-  | core | 8.4 | 4.6 | 16.0 |
-  | 10 rounds | 9.3 | 4.7 | 16.3 |
-  | counterexamples (10 rounds) | 8.0 | 6.3 | 16.0 |
-  | hidden members | 10.3 | 0 | 16.0 |
-  | failing traces | 7.3 | 0 | 14.7 |
-  | fixed declared order | 7.0 | 1.3 | 16.3 |
-  | six training members | 6.0 | 1.0 | 15.0 |
-  | best order reported only | 0 | 0 | 12.0 |
-
-  - Reading: the spread between runs is larger than most effects, and nothing reliably beats the core setting.
-  - On the grids, a fixed order known to the LLM does best and needs no choice by the solver.
-  - On crossing, every variant without the solver's choice of order gets about 0. There the right order depends on the family.
-  - Reporting the best order as feedback, leaving the LLM to write it into its rules, is the weakest variant.
-- **PPO on the random grids** (features, 2M steps per training set; numpy model): 4, 7, 5 and 6 validation grids (mean 5.5). It solves its training grids more reliably than Haiku.
-  - PPO with a MiniGrid-style local view is far weaker: families 4 / 0 / 1 of 20, against 19 / 0 / 18 with our features.
-- **Ablation batch, setup** (Asher; three repeats each, grids and families, otherwise the core settings):
-  - `any` in the declared order (`rules.any_order: declared`; the verifier chooses nothing).
-  - The best order reported as feedback only (`report`).
-  - Hidden training members (`run.hidden_sets`; scored, shown only as a count).
-  - Failing traces in the feedback (`feedback.trajectory`).
-  - Counterexample-driven training sets (`run.pool_sets`, with 8- and 10-round controls).
-  - Polishing frozen rules by verification (`src/polish.py`; deletions kept when the training score does not drop).
-  - 10 rounds, and six training members per family.
-- **[REVIEW] The solver choosing among versions of the LLM's output** (`rules.any_order`, polishing, counterexamples). Asher would prefer the solver only to give feedback, so that the framework carries over to other solvers. It may make choices unless Marsha decides otherwise. The feedback-only variants (`declared`, `report`) are in the batch so the two can be compared.
-- **[REVIEW] What this means for the "why LLMs" claim.** With `closer`, short generic lists exist, and a 2-rule list found without an LLM certifies 7/8 validation grids. Trained on the same sets, the search and the feature trees average 4.5 and 4.0, below Haiku's 5.3-5.9, and the hand-written template gets 6. The faithful 1-2-3-Go! trees get 0. So the honest bar is the template, the best searched list and the feature trees, not the published 1-2-3-Go!. If the search ever matches the LLM on validation, the "why LLMs" story changes.
-- **Open (transfer search):**
-  - QVBS families through the 1-2-3-Go! artifact (`third_party/README.md`; Docker or WSL): reproduce two of its published numbers, then pick one family it fails on (csma or Mars rovers) and one it does well on. Each becomes a domain with a test that reproduces a published value, a vocabulary and thresholds. **[REVIEW]** How to set thresholds per instance there.
-  - Families of MDPs (PAYNT, "Policies Grow on Trees"): its robust per-state policies on a same-size gridworld subfamily against our rules on held-out grids of that size. It does not apply across sizes, so it is a positioning experiment.
-  - A strategy synthesized on one instance and applied to the others (the baseline named in the Story, top) has no implementation.
-  - Untried ideas: a closed patch language (variables compared with constants only, no relations between constants, a rule cap), best-of-N first rounds, rotating the shown members each round, and starting the training-set loop from what a run's per-grid rule sets share.
-
-## Research questions: two harnesses over one run store
-- **Two kinds of experiment, as Asher framed them** (`docs/experiments.md`):
-  - RQ1, comparison (`configs/experiments/rq1_comparison.yaml`): our best configuration per benchmark against each baseline's best.
-  - RQ2, ablations (`configs/experiments/rq2_*.yaml`): one factor at a time against the core configuration. The groups are feedback vs restarts, what the verifier tells the LLM, prompting, the domain's features, training sets and rounds, and who resolves the open choices.
-  - Both run through `src/run_experiment.py`, with a shared base (`src/experiments/base.py`) and shared metrics (`src/experiments/metrics.py`).
-- **Runs are shared through their identity, not their name** (`src/experiments/store.py`).
-  - Identity is the resolved config, minus the name, parallelism, scheduler, timeouts and seed. The model is part of it.
-  - A cell finds every finished run with its identity, so an ablation cell that equals another condition reuses its runs. For example, "worst case over the choices" reuses `haiku_ts_norestart` and `haiku_fam_split`.
-  - Runs whose prompts never showed `patrol`/`early` (or `obstacle`/`risky`, Pac-Man's `closer_g*`) although their config does not hide them carry an `identity.json` that marks those features as hidden, so they never match settings that show them. Without it, the v1 and v2 vocabulary runs (`haiku_rl_grid_large` vs `haiku_rl2_grid_large`) would look identical.
-  - **[REVIEW]** Reused runs may come from older code. The store assumes that every behaviour change comes with a config key, which holds on this branch as far as I can tell. The worst-case cells reuse runs made before in-loop order resolution existed; with `any_order: none` that code path is the same.
-- **One factor at a time** from the core configuration, 3 repeats per cell (5 for the reference). The reports give the difference to the reference with a 90% bootstrap interval over runs.
-- **New metric: certified with ties left open** (`transfer.py --rules open`, `core.rules.open_ties`). Each run of rules with one condition and every action is read as `c -> any`, and the list is certified in the worst case over every tie-break. A list that passes this way owes nothing to the verifier's choice of order. It answers Asher's question of whether `any` lets PRISM synthesise the policy.
-  - No, per `src/tie_analysis.py` on the numpy model, matching PRISM:
-    - The deciding rule allows one action in 42-56% of reachable states, two in 42-57%, and three or four in under 2%.
-    - The Sonnet rooms list certifies 59/60 family members as frozen, 51/60 with ties open, and 56-60 under every one of the 24 orders.
-    - Haiku's best grid list certifies 8/8 as frozen, 6/8 with ties open, and 7-8 under every order.
-  - PRISM's contribution to a frozen list is one order out of 24, chosen on the training members. Choosing the best action per state would give 60/60, which the method never does.
-- **Sonnet, 3 runs (core settings)**:
-  - Random grids: 6.67 of 8 per list (5.75-7.25), best list 8, every run's library 8/8, 75% of training sets solved, about $0.49 per set.
-  - Families: per list on its own family, rooms / crossing / adjacent 17.7 / 6.7 / 17.7. On all 60 members 32.3 per list. A run's library of 3 lists covers 54.3/60 (45-59). The rooms-trained list certifies 59/60 across all three families in two of the three runs.
-- **Lists carry over across families.** Scored on all 60 members instead of only their own family, Haiku's lists certify 19.2 per list against 9.7 on their own family, and Sonnet's 32.3 against 14.0. A run's library of 3 lists: Haiku 33.8 (24-56), Sonnet 54.3, against 43 for the feature trees' 3 lists and 38 for PPO's. So on families, Sonnet's library beats every baseline's, and Haiku's does not on average.
-
-## Positioning checks for the transfer experiment
-Details in `docs/positioning.md`, which builds on the related-work survey (`docs/related_work_survey.md`).
-- **The position is an intersection.** No work combines LLM-written rules, a stochastic model with several thresholds, exact certification on every instance (held-out and larger ones included) and quantitative feedback; every neighbour has two or three of these. The closest is **1–2–3–Go!** (VMCAI 2025): trees over raw state variables, learned from small instances, certified per larger instance; single reachability objective; parameters can't appear in predicates; no loop, no LLM.
-- **The rule-list form is not ours:** Fern, Yoon and Givan (JAIR 2006) learned first-match decision lists for stochastic PPDDL domains on small instances, judged by simulation.
-- **Hand-written template on gridworld** (`domains/gridworld/data/template_policy.py`; one goal-relative, wall-avoiding rule list for every grid): certifies 10/20 grids of `grid_20_balanced` and 10/20 of `grid_20_large`, against 16/19 and 14/20 for Haiku 5.5's per-instance rules. On 2–3 grids per set it is trapped for good (memoryless navigation in a pocket); the other failures are sequence requirements (slips into future goals) and the moving obstacle. Transfer on gridworld is neither trivial nor hopeless.
-- **The UUV failure-rate family is trivial** (`domains/uuv/data/failure_sweep.py`): with each member's thresholds keeping the paper scenario's slack, the paper's `stay` controller meets every requirement for failure rates 0.5×–3× in both scenarios, and `always_med` covers every North Sea member.
-- **Wording:** "certified on every instance we check" and "sound" (every allowed policy meets every threshold), never "maximally permissive" (CAV 2026: strong safety and strong permissiveness can't both hold for probabilistic safety).
-- **[REVIEW]** Transfer design: expose instance constants (goal coordinates, grid size) and generic sensors (`wall_up`) to the rule language so the LLM writes the relative conditions itself; no shortest-path feature (it would make the policy trivial); compare with 1–2–3–Go! on threshold satisfaction per instance.
-- **[REVIEW]** UUV: drop the failure-rate family, or find one where no simple policy passes (vary visibility ranges, deadlines, inspection lengths), checked with `failure_sweep.py`-style PRISM runs before any LLM run.
-
-## Setup (answers from kickoff)
-- The symbolic approach makes **one LLM call over the whole state space** (no per-goal decomposition). Rules may refer to progress variables such as `g1`.
-- Rule overlap: **ordered decision list, first match wins**.
-- Feedback for missing rules **locates** high-mass uncovered states but never reveals PRISM's optimal action.
-- qwen3 runs with **thinking off**, on **20 grids**.
-
-## Scope of this branch
-- This branch holds the symbolic approach and one baseline. The predecessor's other planners (Vanilla, VanillaPlus, Feedback, FeedbackMinus, RL), their plotting scripts and the predecessor paper's code are on `main`.
-- The baseline is FeedbackSimplified in `src/legacy/` (gridworld only): the predecessor's planner plus instrumentation (per-iteration policies, raw outputs, tokens) and the obstacle-visibility switch (`domain.visible_extra`).
-- `grid_20_balanced.csv` = the first 4 grids of each size (4–8) from `grid_50_balanced.csv`, so it is balanced by size.
-- `grid_20_large.csv` = the first 4 grids of each size 9–13 from `grid_100_balanced.csv` (same generator; its sizes 4–8 start with exactly `grid_20_balanced`'s grids). Made because Sonnet 5.5 reaches the ceiling on `grid_20_balanced`, leaving no headroom for the ablations.
-
-## Generalization: inputs (what a case study provides)
-- A case study is a directory `domains/<name>/` with a `Domain` subclass (instance loading and template context) plus Jinja2 templates. See `domains/README.md`.
-- **MDP fully user-specified in PRISM** (`model.prism.j2`). Policy actions are the *action labels* of the commands. The planner never generates dynamics, only a `policy` module that synchronizes on those labels.
-- **Requirements** are user-specified as PRISM path formulas with a bound (`>=`/`<=`) and a threshold, plus English text for the prompt. Best and worst case are `Pmax`/`Pmin` (swapped for `<=`).
-- **English description** (`description.md.j2`) and **visual** (`visual.txt.j2`) are separate user templates injected into generic core prompts. A domain can override any core prompt template by dropping a file with the same name in its directory.
-- **Policy-visible variables** are declared in the spec (ranges read from the model). For gridworld these are `x, y, g1..gN`. Config `domain.visible_extra` adds more: by default the obstacle phase `obs_idx`, for rules and legacy alike (`pre_phase_a` hides it).
-- The gridworld MDP is a symbolic PRISM template (formulas for move/slip/bounce) rather than an enumeration of cells. `tests/test_gridworld_equivalence.py` and `src/regression.py` confirm it is equivalent to the legacy DTMC (5e-10 across 100 policies under interval iteration).
-
-## Generalization: symbolic policies
-- Output: `{"rules": [{"condition", "action"}]}` via JSON-schema structured output. The action is an enum of the domain's labels.
-- Condition language: a small PRISM-compatible expression subset (`= != < <= > >= + - & | ! =>`, parentheses, `true/false`), parsed and type-checked in Python. It is lenient about common LLM spellings (`==`, `&&`, `and`, `True`, and a trailing `-> action`, which qwen writes inside conditions).
-- Invalid answers are re-asked with the error message, up to 2 extra calls per attempt. If still invalid, the attempt counts as an empty policy.
-- **First-match compilation**: rule *i*'s effective guard is `c_i & !c_j` for only those earlier rules *j* that can overlap it. Overlaps are found by enumerating the policy-visible space when it is ≤ 200k valuations, and otherwise every earlier rule is negated. This keeps 500-atom legacy policies compact.
-- Legacy per-state policies are expressible as one atomic rule per state (`core.rules.atomic_rules`, `domains/gridworld/legacy_translate.py`).
-- The rule listing shown back to the LLM uses the same JSON-per-line shape as its output, and so do the example rules (qwen copies the `cond -> action` notation of examples into the condition field).
-
-## Refinement loop
-- Success means **every requirement holds in the worst case**. The best-case pass rate is reported separately.
-- The switch follows the slides. If best case fails anything → **refine** (the LLM returns a complete new rule list). If only worst case fails → **extend** (the LLM returns *only new rules*, **appended** after existing ones). Appending means existing decisions are unchanged, so worst case can only go up. Best case can go down, which then triggers refine.
-- **Keep-best** like legacy: score = (#worst-case failures, #best-case failures, total worst shortfall, total best shortfall). Feedback is always built from the best policy so far.
-- `max_attempts=5` generation rounds, the same number as legacy. Legacy makes one call per goal and obstacle phase per round (one per goal when the phase is hidden). Symbolic makes one per round, plus re-asks for invalid answers.
-- Per instance, one extra PRISM run computes the unconstrained optimum of each requirement on the bare MDP. It is used for refine-mode blame and reported as an upper bound on what is achievable.
-
-## Feedback: probability mass
-- V^opt stays in the loop (Sept 24 meeting); one-step regret is the S5 ablation.
-- Rejected: a performance-difference decomposition (visits × local advantage). It gives ~0 mass when the adversary *stalls* the agent in loops through uncovered states, the main failure mode in testing. Without discounting or absorbing targets, the lemma's residual term doesn't vanish.
-- Used: **mass(s) = expected visits to s within H steps × probability still at stake at s** (H = `feedback.horizon`: 100 for gridworld, the mission deadline for UUV), reported as a share of the total.
-  - extend: strategy = greedy worst-case completion, stake = best(s) − worst(s), counted only on uncovered states and aggregated by policy-visible valuation (top 10 shown).
-  - refine: strategy = greedy best-case completion, stake = optimum(s) − best(s), charged to the rule deciding s (top 10 rules, each with its top 3 states).
-- Greedy strategies are computed from PRISM's per-state value vectors (`filter(printall, ...)`) and the exported transition matrix. For LTL (non-reachability) formulas those vectors are PRISM's projection from the product automaton, so the ranking is a heuristic there.
-- Feedback **locates** states and rules but never states PRISM's optimal action (per the kickoff answer).
-- The prompt table shows best, worst and threshold for every requirement, plus coverage (reachable situations vs uncovered).
-
-## Regression
-- Two checks:
-  1. *stored*: the symbolic pipeline's best case at default PRISM settings vs the values the legacy run reported (tolerance 1e-9). Same solver, so they match to rounding (observed 1e-15).
-  2. *exact*: legacy DTMC recomputed vs the domain MDP's best **and** worst, all with **interval iteration** (sound error bounds, epsilon 1e-9, tolerance 1e-7). This is the real model-equivalence test.
-- Why interval iteration: at default settings (and even at epsilon 1e-10 with plain value iteration), PRISM's worst case (Pmin) for the nested-until sequence properties stops early, by up to 4e-3 at default settings and 5e-6 at 1e-10. At 1e-10 one legacy policy doesn't converge at all. With interval iteration, best and worst agree to 1e-10.
-- Side finding: the legacy run's own reported sequence-property values carry up to ~1e-3 solver error at default settings. That's negligible for the paper's conclusions, but worth knowing.
-- Solver fallback: for one of the 100 legacy policies (grid 9, attempt 4), interval iteration does not converge at any epsilon (non-progressing loops). That policy falls back to Gauss-Seidel at epsilon 1e-12, where legacy and symbolic agree to 2e-11. PRISM's `-exact` engine can't be used because it doesn't support LTL formulas.
-- Every iteration's policy of every sample is checked, not just the final one (the legacy planner records the full policy at every iteration). Settings: `configs/regression/default.yaml`.
-
-## Comparison
-- Same model, same 20 grids, `max_attempts=5`, 2 concurrent workers for both runs, run one after the other (not concurrently) so they don't contend for the GPU.
-- LLM time is client-side wall time for both, so it includes queueing behind the other worker. Tokens are contention-free and the fairer cost measure.
-- The prompts differ in content by design. Legacy has two long worked examples with reasoning. Symbolic has a short rule-syntax example block; the worked examples are not ported. Examples are an ablation (S4 symbolic, L2 legacy; `docs/ablations.md`).
-- The legacy "final" probabilities are those of its kept-best policy (replayed with its own keep-best rule for runs without the `final_prism_probs` field).
-
-## UUV case study (`domains/uuv/`)
-- Source: Päßler et al., iFM 2023 (arXiv:2308.14663). The paper omits most probabilities, so the MDP follows its ProFeat artifact (branch `scp-ifm_artifact` of `remaro-network/auv_profeat`, Apache-2.0), not the extended model on that repo's main branch (with sonar/camera).
-- **Domain-only modelling.** ProFeat features become state variables (`follow`, `alt`). The policy is the paper's feature controller: the actions `low`/`med`/`high` pick the next altitude in search-phase states. Forced transitions use a `[step]` label, which the policy module doesn't synchronize on.
-- Visibility limits are modelled by **clamping**: requesting a higher altitude than allowed gives the highest allowed one. So every action is enabled everywhere (no deadlocks), and each state's set of distinct choices is exactly the paper's. Check: the bare MDP reproduces all reported numbers for both scenarios (Pmin F done = 1; Table 2 energy/time min/max; Pmin G safe = 0.65 / 0.32). The paper's `time`/`energy` reward structures are part of the model for this check; the planner's energy requirement uses `energy`.
-- Policy-visible: `s`, `alt`, `water_visib` (what the paper's controller monitors). Hidden: `follow`, `d_insp`, `t_failed`. `t_failed` is always 0 while searching.
-- Requirements: `no_thruster_failure` = `G !"thruster_failure"` (the paper's `G "safe"`), `done_in_time` = `F<=T "done"` (the paper's time reward turned into a deadline), and `energy_budget`, an expected-energy bound (A3 below).
-- **[REVIEW] Thresholds are tight by design.** In this model the controller has little leverage. Over all controllers, safety ranges over [0.654, 0.674] (North Sea) and [0.321, 0.355] (Caribbean). Done-in-time ranges over [0.52, 0.82] (T=30) and [0.06, 0.87] (T=70), and the low end is the adversary switching altitude back and forth. Thresholds (North Sea 0.670 / 0.80, Caribbean 0.345 / 0.862) are set so that "hold your altitude, go highest when a search starts" passes. Always-low, always-high (and, in the Caribbean, always-med) each fail at least one requirement. The best rule policy found by local search clears both by only ~0.003 / 0.002. Reproduce with `src/calibrate.py --domain uuv --data uuv_paper.csv`. Looser thresholds would make any sensible complete policy pass, so the case study would then mostly test coverage.
-- PRISM's multi-objective query (`multi(Pmax [F<=T], P>=p [G ..])`) gives a value below a concrete policy's (0.795 vs 0.807), so it isn't used for calibration.
-- `done_in_time` is step-bounded, so the per-state vectors used by the mass analysis assume the full T steps remain from every state. The ranking is a heuristic there, as for LTL.
-
-## UUV results (qwen3:14b, uuv_paper, 5 attempts, thinking off)
-- `out/results/symbolic_uuv`: a run on the two probability requirements (no energy budget). Figures `viz/figures/uuv.png` (`viz/plot_domain.py`, which works for any domain and plots final policies against the domain's `reference_policies.json` and the range any controller achieves) and `viz/figures/uuv_summary.png`.
-- North Sea: success in 2 attempts (0.6723 / 0.8064). Caribbean: fails. The final policy behaves like always-high (0.348 / 0.860 vs 0.862 needed).
-- There is no legacy baseline for UUV (legacy is gridworld-only). The non-LLM reference to beat is `stay`, the only reference policy that passes both scenarios, energy budget included (26.43, 62.17).
-- Comparison with the paper (`viz/plot_uuv_summary.py` → `viz/figures/uuv_summary.png` and `.md`):
-  - The paper doesn't synthesize a controller. Its managing subsystem is nondeterministic, and its best case per requirement is PRISM's separate maximum. No single controller reaches both best cases (always-high maximizes safety but misses the North Sea deadline).
-  - Ours is within 0.002 (safety) and 0.012 (deadline) of those separate maxima.
-  - On the paper's Table 2 measures, our North Sea policy needs 26.04 energy and 23.93 time to finish, against the paper's best possible 24.78 and 23.66.
-  - Energy budget (the rules re-verified against all three requirements): the North Sea policy is within budget (26.04 ≤ 26.5), the Caribbean one is not (62.99 > 62.5).
-  - Size: 25 rules vs ≥1,620 (North Sea) and ≥8,850 (Caribbean) states that an optimal PRISM strategy must decide (reachable states with more than one distinct choice). For the step-bounded deadline, the optimal strategy also depends on the step count.
-  - Transfer: the North Sea rules reused unchanged on the Caribbean keep safety (0.347) but not the deadline (0.824).
-
-## UUV optimization (branch `optimization`, archived on GitHub, not merged)
-- Its runs use another configuration (no energy requirement, among others), so their numbers aren't comparable with the runs above. Target: match `stay` (passes both scenarios). **Not reached.** North Sea passed reliably; Caribbean failed in all 12 runs by ~0.002. Figure and runs (`out/results/opt/e*/r*`, 1–2 repeats each) live on that branch.
-- E1 `keep` action: unused by qwen. E4 more explanation (switching arithmetic, requirement drivers): worse (0/4), not kept. E7 altitude facts in action text: no change.
-- E2 found a **domain bug**: with the visibility thresholds given as decimals (`< 5.67`), qwen copies them into conditions, and the integer rule language rejects them. The UUV description lists the integer levels of each band instead (E3).
-- **[REVIEW] Not in this branch, need a decision:**
-  - E5 (core): refine/extend feedback lists every previous attempt's worst case and flags an answer that verifies identically to an earlier one. Didn't help on UUV; never tested on gridworld.
-  - E6: hide `water_visib` from the policy (limits are enforced by clamping anyway). The most useful variant: qwen writes "hold the altitude" rules over 4–11 situations instead of per-band rules (which act like always-high), but starts low or med at `s = 11`, where the Caribbean needs high. It contradicts "policy sees what the paper's controller monitors".
-
-## Pac-Man case study (`domains/pacman/`)
-- **Source:** the Quantitative Verification Benchmark Set's Pac-Man (`benchmarks/mdp/pacman`, version 2; Junges and Könighofer, from the probabilistic-shields paper). `model.prism.j2` is the benchmark's `pacman.nm` unchanged except for `MAXSTEPS`, set per instance. Chosen because 1–2–3–Go! fails on it (the horizon is a parameter its trees cannot use) and because Pac-Man's choices are labelled actions that our policy module can synchronize on.
-- **Fidelity:** the bare MDP reproduces the benchmark's published state count (498) and minimum crash probability (0.5511) for `MAXSTEPS = 5` (`tests/test_pacman.py`).
-- **Calibration** (`src/calibrate.py --domain pacman --data pacman.csv`): the minimum crash probability is 0.5511 at every horizon, so the first moves decide it; the maximum grows (0.88 at 8–10 moves, 1.0 from 12). Requirement `crash` ≤ 0.56. At 8–10 moves simple policies (keep the heading, always right) pass; from 12 moves every reference policy fails (0.69–0.89). Dataset `pacman.csv`: horizons 8, 10, 12, 14, 16. States: 6.9k (10), 97k (15), 883k (20), 3.7M (25), so the loop runs on short horizons and longer ones are for certifying frozen rules.
-- **Core changes, generic:**
-  - The model parser reads untyped constants (`const xSize = 11;`, PRISM's default int), which the benchmark file uses.
-  - **Decision states count only choices labelled with a policy action.** Once both ghosts are gone, the arbiter's unlabelled idle step competes with the forced `[p]` move. That is environment nondeterminism the policy cannot touch; counting any two choices with different successors would make it a decision. On gridworld (every choice is a policy action) and UUV (forced states have only `[step]`) both counts agree. `docs/semantics.md` has the definition.
-  - `src/calibrate.py --domain <name> --data <dataset>` works for every domain; it reads the domain's `data/reference_policies.json` (`Domain.reference_policies`).
-- **LLM runs** (default settings, restart on slow progress; one unseeded run each; `haiku_pacman`, `sonnet5_5_pacman`):
-
-  | horizon | 8 | 10 | 12 | 14 | 16 |
-  |---|---|---|---|---|---|
-  | Haiku 5.5 | 0.5511 (1 round) | 0.5511 (1) | 0.8911 | 0.8911 | 0.8911 |
-  | Sonnet 5.5 | 0.5511 (1) | 0.5511 (1) | 0.5511 (1) | 0.5511 (5) | 0.8658 |
-
-  Worst-case crash probability of the final rules (≤ 0.56 passes; the optimum is 0.5511). Sonnet's passing rule sets have 1–6 rules. Haiku's failures equal the "keep heading" reference policy (0.8911). Costs: about $0.02 (Haiku) and $0.40 (Sonnet).
-- **Against the papers:** the QVBS optimum is 0.5511 at every horizon (Storm; our PRISM agrees). 1–2–3–Go! learns its tree from horizon 5, where every controller gives 0.5511, and reports 0.869 at horizon 25 and 0.99998 at 200 (Smart LSS 0.729 at 25; random policies 0.923).
-- **Transfer of Sonnet's rule sets across horizons** (`src/transfer.py`; the map is fixed, so base-vocabulary rules mean the same at every horizon; `out/results/ablations/sonnet5_5_pacman/seed_none_1/transfer_pacman_transfer.csv`): the rule sets from horizons 8, 12 and 14 stay at 0.5511 on horizons 8–14, then fail from 16 on (0.91–0.99 at 16–20, 0.99 at 25). So they do not reach 1–2–3–Go!'s 0.869 at horizon 25.
-
-## Forced states (core, motivated by UUV)
-- In UUV, the action has no effect in about 70% of states (following, found, done). Without special handling they would count as uncovered and appear in feedback.
-- `PolicyVerifier.forced_states()` finds the states of the bare MDP where the choices labelled with a policy action all have the same successor distribution (probabilities rounded to 1e-12). It reuses the optimum run's exported transitions, or else runs PRISM once with no properties.
-- Forced states don't count as situations: `reachable_situations`/`uncovered_situations` count only valuations with at least one reachable decision state. They're also skipped in extend hotspots **and** refine blame, because no rule can change what happens there. `Verification.decisions` marks decision states.
-- Gridworld has no forced states (checked on all 20 grids), so this doesn't affect it. UUV North Sea: a search-only policy is complete (0 of 85 situations uncovered).
-
-## Sept 24 meeting (Marsha, Aren)
-Outcomes: the paper target (top), the retry sweep and seeds (`docs/ablations.md`), and:
-- The story is open (pinned at the top). Generalization and readability are "a nice bonus", not the reason.
-- **V^opt stays in the loop**; regret is an ablation (S5), not a replacement. Ceilings are "foundational", not an experiment.
-- **Baselines are per case study** (e.g. RL for gridworld, the paper's controller for UUV). Rule transfer is the main experiment (Story, top, from the Oct 8 email).
-
-## Oct 8 email (Marsha): the ablation results and what to rerun
-- **What the qwen results don't show.** Feedback is not shown to beat restarting: pure resampling (R5) meets 4.72 requirements vs 4.45 for the ablations' reference loop (B2, restart after 2 stalls; the default retry is restart on slow progress, R4), with about half the input tokens (8.3k vs 16.8k median). A success-vs-budget curve that rises every round is guaranteed by keep-best (any sampler that keeps its best attempt is monotone), so it is not evidence that feedback helps; pure resampling's curve has to be on the same plot. With 10 comparisons and 2 seeds, one p ≈ 0.05 is what chance gives, and nothing survives a multiple-comparison correction. Withdrawn: "restarting matters a lot", "feedback quality matters", "the budget curve is the first direct evidence that feedback helps".
-- **The rerun:** only restart after 2 stalls (B2), restart on slow progress (R4, the default), pure resampling and legacy, on a stronger model. Asher's plan:
-  - **Headroom:** Sonnet 5.5 solves every solvable `grid_20_balanced` grid, 15 in round 1, where all retry policies send the same prompt. It also solves 13x13 grids from `grid_20_large`; Haiku 5.5 leaves some headroom on `grid_20_balanced` (results below, "Headroom for the rerun"). Chosen (Asher): **Haiku 5.5 on `grid_20_large`** ("Haiku ablation on grid_20_large", below).
-  - **Two runs per condition**, not 5. Claude endpoints take no seed, so repeats are unseeded (`run_ablation.py --unseeded N`, `seed_none_<k>/`).
-  - **Legacy on qwen only** (on a hosted model it would be expensive: one call per goal and obstacle phase per round).
-  - Asher chose to run it with the base vocabulary (absolute coordinates) rather than wait for relative features.
-  - **Equal iterations and equal cost, both** (Asher preferred iterations, Marsha asked for tokens): pure resampling gets 10 rounds, so both comparisons come from the same runs.
-- **Feedback rounds cost more than fresh ones**, so equal iterations is not equal cost. Median per round: qwen (restart after 2 stalls) 5.7k tokens for a refine round vs 2.7k for a fresh one (input + output); Haiku 5.5 on `grid_20_balanced` $0.0043 vs $0.0028, because it also thinks longer on refine prompts (7.6k vs 5.0k output tokens).
-- **qwen at equal tokens** (`viz/figures/budget_tokens_qwen.png`, `configs/plot/budget_tokens_qwen.yaml`; exploratory, the runs were seen first): pure resampling is above restart after 2 stalls at every spend. It reaches 4.72 at 15.1k tokens, where restart after 2 stalls is between 3.85 (14.2k) and 4.25 (18.9k); that one reaches 4.45 only at 24.0k. Restart on slow progress is level with pure resampling where both have data (4.77 at 15.6k) and goes on to 4.95 at 19.2k. The main ablation page has the same curves as a second row, and its intro calls its tests exploratory.
-- **Tooling:** `plot_budget.py` and `ablation_summary.py` take a `cost` setting (spend = input tokens × weight + output tokens × weight) and place each round budget k at the mean spend through round k; legacy runs log only per-run token totals, so they have no spend curve. `ablation_summary.py` runs a page's `planned` comparisons (`at: rounds:N` or `cost`) and Holm-corrects them together; they replace the paired panel and get their own table.
-- **Marsha's legacy check:** the single-seed legacy run (`legacy_grid20`) has the obstacle phase hidden (`pre_phase_a`). Its budget curve (4.30) against symbolic's (5.25) compares two runs in that same setup, so that pairing is matched; legacy beside the ablation conditions (obstacle visible) is not. **B1** (legacy, obstacle visible, qwen): **one seed only** (Asher: no time for a second; report as preliminary). Hosted-model runs and PRISM-only checks overlapped it on the CPU (not the GPU), so its wall times may read slightly high; tokens are unaffected.
-  - **Result** (`out/results/ablations/summary/`): requirements met 4.85, 0/19 solved, against 4.95 for restart on slow progress (the default) and 4.45 for restart after 2 stalls (+0.40 vs the latter, 95% CI [−0.17, +0.97], p = 0.24: not shown). It starts high (4.70 after round 1) and plateaus (4.85 from round 3).
-  - **Cost:** 101.5k input and 50.0k output tokens per grid, against 13–17k and 6–7k for the symbolic conditions (about 7× in all); 25.7 min per grid against 3.2–3.7.
-  - **Reading:** with the obstacle visible to both, qwen's per-state legacy planner is level with the symbolic default in requirements met, at about seven times the tokens. The single-seed hidden-obstacle comparison (4.30 vs 5.25) is not the one to cite.
-
-## Results (qwen3:14b, grid_20_balanced, 5 attempts, thinking off)
-- `out/results/comparison_grid20/report.md`, `viz/figures/grid20.png`. Symbolic numbers come from the **capped** run (`symbolic_grid20_capped`).
-- Success 0/20 legacy vs 1/20 symbolic (worst case). Mean requirements met 4.30 vs 5.25. Shortfall 3.16 vs 2.11. Output tokens 12.2k vs 5.0k. Wall time 415 s vs 170 s. LLM calls 15 vs 5.
-- Symbolic output tokens stay flat with grid size (~4–6k); legacy's grow from 5.4k (4x4) to 20.3k (8x8).
-- The two are roughly tied on 4x4 grids.
-- Loop usage: refine 63 attempts (35% improved the best so far), blind retry 10 (60%), extend 4 (100%). qwen nearly always wrote a catch-all rule, so policies were almost complete and extend rarely ran.
-- The prompt has the catch-all instruction and example (the default prompt).
-- Caveats: a single seed; the obstacle phase hidden from both (the `pre_phase_a` setting); the prompts differ (legacy has worked examples); symbolic is scored on its conservative worst case. The 2-seed ablation runs (`docs/ablations.md`) have the obstacle visible.
-
-## Catch-all ablation (qwen3:14b, grid_20_balanced, same settings)
-- Three symbolic runs: catch-all instruction and example (`symbolic_grid20_capped`); instruction removed, example kept (`symbolic_grid20_nocatchall`); both removed (`symbolic_grid20_noexample`).
-- The instruction alone barely matters: rounds ending in a catch-all are 77% with it and 72% without, because qwen copies the example rule. Removing the example too halves it (37%; 10 of 20 final policies vs 18).
-- With no catch-all at all: uncovered situations 26% of reachable (vs 9%), requirements met in worst case 4.50 (vs 5.25), shortfall 2.62 (vs 2.11). Best case 5.25, so the best-to-worst gap is 0.75 requirements. Still ahead of legacy (4.30, 3.16). Extend ran 11 times but improved only 2; refine success is 23%.
-- Reading: with this model, partial policies are a liability under the conservative worst case, and extend feedback doesn't fill coverage well. Exposing `obs_idx` (the default) should shrink the worst-case penalty for partial policies. Worth revisiting with a stronger model.
-- Figures: `viz/figures/catchall_ablation.png` (instruction only) and `viz/figures/catchall_ablation_full.png` (instruction and example).
-- The default prompt keeps both (`prompt.catch_all_instruction`, `prompt.examples`), since they give qwen better results. Run without them when studying extend, or with a stronger model.
-
-## Ceilings and budget curves
-- Ceilings (`src/ceilings.py`, `out/results/ceilings/`): what any controller achieves on the bare MDP. Gridworld: 19/20 grids jointly solvable, and almost every requirement's optimum is 1.0. Grid 17 is not solvable: `complete_sequence` can reach at most 0.70 against a 0.80 threshold. UUV: joint undecided (step-bounded deadline), but `stay` is a witness that both scenarios are solvable, energy budget included.
-- The single-seed runs against the ceilings (`src/compare.py`): solved of solvable 0/19 legacy vs 1/19 symbolic.
-- Budget curves of the single-seed runs (`viz/figures/budget_grid20.png`; the result with budget k is the kept policy after round k): symbolic starts behind (3.25 vs 4.00 requirements met after 1 round) but improves every round to 5.25; legacy plateaus at 4.30 after round 3.
-
-## Solvers, joint queries and seeds
-- **PRISM solver: Gauss-Seidel** (`prism.method`). With `obs_idx` readable, a rule set can make the induced chain periodic. PRISM's default value iteration then fails to converge, which would crash an instance mid-run (a three-rule test policy shows it). Gauss-Seidel and policy iteration agree on those models. Checks against published or recorded numbers use PRISM's defaults: the UUV paper's numbers (Gauss-Seidel gives 4726.0 for the Caribbean max energy, vs the reported 4723.29; `tests/test_uuv.py`, `configs/plot/uuv_summary.yaml`) and the regression's stored-values check.
-- **Joint queries use exact LP** (`prism.multi_method: lp`); value iteration has the same convergence problem there. LP can't handle step-bounded objectives (UUV's deadline). There, PRISM's value-iteration fallback wrongly says "not jointly feasible" even though the `stay` policy passes both scenarios. So the joint query returns *undecided*, and the loop falls back to the per-requirement branch. **[REVIEW]** This means the joint branch applies to gridworld but not UUV.
-- **PRISM timeouts:** on Windows, killing `prism.bat` leaves the JVM it starts running, and that keeps the output pipe open, so a timed-out call would still wait for PRISM to finish. `PrismRunner` kills the whole process tree, and a joint query that times out is *undecided*, like one the LP engine rejects. The first Haiku rule-language runs on 13x13 grids were made without this: two joint LP queries ran for 22 and 45 min and those grids failed with a timeout; in other runs a long PRISM call simply finished, so only their timing is affected.
-- **Legacy with the obstacle visible:** one call per (goal, obstacle phase); a short note in the prompt says which phase the per-cell policy is for. The legacy DTMC is solved with Gauss-Seidel when phases are observed (power method otherwise). **[REVIEW]** Prompt wording of that note.
-- **R4 detail:** a round that doesn't improve the kept policy has gain 0, so R4 also restarts after any non-improving round, not just slow ones.
-- **Seeds and solver fallbacks:**
-  - Each call uses a seed derived from the run seed and the call's index within the instance: reproducible, but distinct per call. A single fixed seed makes every repeat of a prompt return the identical answer (in a smoke test, R5's five rounds produced 1 distinct output, and B2 3 in 5 rounds).
-  - The fallback solver is modified policy iteration (`prism.fallback_methods`). A real qwen rule set (16 rules reading `obs_idx`) converges neither with Gauss-Seidel nor with plain policy iteration; modified policy iteration solves it and matches Gauss-Seidel exactly on the other models tried. If every method fails, the planner scores the round as an empty policy instead of losing the instance. Legacy's verifier retries with `-bgaussseidel` then `-intervaliter` before its silent all-zero fallback. **[REVIEW]** The legacy fallbacks are untested on a real non-converging case.
-
-## A3: reward requirements (UUV energy)
-- Core: a requirement may bound an expected reward (`reward: energy` in the spec, PRISM `R{"energy"}<=c [ F "done" ]`). Best and worst are `Rmin`/`Rmax`. Shortfall and blame stakes are taken relative to the threshold, so energy doesn't swamp the probability terms when they are summed. Infinite expected rewards (goal not surely reached) are capped in the mass analysis.
-- UUV has `energy_budget` (dataset column `energy_threshold`, optional), and the description spells out the paper's energy costs. Calibrated like the other thresholds (`src/calibrate.py`), so `stay` passes:
-  - North Sea: ≤ 26.5. `stay` uses 26.43, and `always_high` (27.13) fails it. `always_med` (25.98) passes everything.
-  - Caribbean: ≤ 62.5. `stay` uses 62.17, and `always_high` (62.99) fails it.
-  - Bare-MDP best and worst match the paper's Table 2 (24.78 / 59.08 min).
-  - This creates a real trade-off: higher altitude is safer but costs energy.
-- The joint query is undecided for UUV (step-bounded deadline), so UUV uses the per-requirement branch.
-- The blame/hotspot wording mentions cost only when a reward requirement is failing, so gridworld prompts never mention it.
-- **[REVIEW]** Energy thresholds and the description of the energy costs.
-
-## Settings of the qwen ablation conditions
-- **UUV mass horizon = the mission deadline** (Asher): U1's run config (`configs/run/conditions/U1.yaml`) sets `feedback.horizon: domain`, which asks `Domain.horizon(instance)`: North Sea 30, Caribbean 70. The run config never names a domain; each kind of run has its own condition file.
-- **Story:** A, narrowed by the Oct 8 email (top); B parked.
-- **S1 (table feedback):** after a failure, every round shows the results table and the previous rules and asks for a complete new list. No blame, no REFINE/EXTEND framing, no appending. Retry as in B2.
-- **S5 (regret blame):** one-step regret of the rule's action on the best-case values, with Q from the bare MDP. Successors the policy never reaches take their optimum value, which slightly favours deviating (a heuristic). Extend ranks uncovered states by the local gap best − worst, without occupancy. The prompt wording describes the signal it shows. **[REVIEW]**
-- **V1 (random blame)** is a placebo: same number of rules/states as B2, equal shares, and B2's wording. **V2** drops the blame section but keeps the framing.
-- **L1:** legacy's retry uses the same `stall:k` rule as symbolic; a blind-retry round regenerates every (goal, phase) from the initial prompt, then keep-best applies as usual.
-
-## Config folders
-- `configs/` has one folder per tool (Asher): `run/` (`default.yaml` + `conditions/<name>.yaml`), `ablation/`, `regression/` (each with a `default.yaml`) and `plot/` (one file per figure or report). The run config says what a run does; domains are defined in `domains/<name>/`, not in configs.
-- Each `default.yaml` is the only place its defaults live (no Python defaults; a missing key is an error).
-- Figures and reports read run facts (dataset, model, round budget) from each run's `config.json`; runs without one read as a fixed record (`results_io.PRE_CONFIG_RUNS`). Metrics use each domain's `Requirement` thresholds and bounds.
-
-## Default retry policy
-- **`planner.retry` defaults to `gain:0.05`** (restart when the last round cut total worst-case shortfall by less than 0.05, including no improvement). It won the retry sweep: 4.95 requirements met vs 4.45 for B2's `stall:2` (p = 0.055) and 4.72 for pure resampling (p = 0.31; better on 10 grids, worse on 6).
-- B2, S1, S4, S5, V1, V2, U1 and `pre_phase_a` set `retry: "stall:2"` in their condition files, matching each run's `config.json`.
-- **D7:** the default retry with 7 rounds, 2 seeds, to see whether more rounds keep paying off (every budget curve rises through round 5).
-- The legacy conditions (B1, L1, L2) are not run: lower priority than the symbolic results (`docs/ablation_not_run.png`).
-
-## Default run (qwen3:14b, grid_20_balanced, `configs/run/default.yaml`, no seed)
-- `out/results/symbolic_grid20_default`: the default config unchanged, as an end-to-end check of the pipeline. Report `out/results/comparison_grid20_default/report.md`; figures `viz/figures/grid20_default.png` and `viz/figures/budget_grid20_default.png` (with the R4 seeds, which have the same settings).
-- Requirements met 5.10 (worst case) vs 4.30 legacy; R4's seeds 4.95 (4.80 to 5.10). Per grid, +0.15 ± 0.88 against R4's seed mean, while R4's two seeds differ by ± 1.6: consistent with R4. Solved 0/20. Shortfall 1.86 vs 3.16. Output tokens 5.8k vs 12.2k. Wall time 186 s vs 415 s per grid.
-- Every kept policy covers every reachable situation (best = worst). No invalid answers, errors or solver fallbacks.
-- **Solver accuracy:** the final policies re-verified with interval iteration (epsilon 1e-9; Gauss-Seidel at 1e-12 for grid 19, where interval iteration does not converge in 1e8 iterations) change no met/not-met verdict. The largest difference is 0.017 (grid 4, `avoid_moving_seg1`: 0.723 stored, 0.706 exact, threshold 0.70).
-  - Gauss-Seidel stops when an iteration changes little, which is not an error bound. Value iteration approaches from below, so values PRISM computes directly (`goal*`, reachability) err low, the safe side for a worst case. Values it computes as 1 − another probability err high: the avoid requirements (`G`, both cases) and the worst case of the sequence requirements (LTL: 1 − Pmax of the negation).
-  - On chains that leak probability slowly, the error is large. In R4 seed 1, grid 18's kept policy (fully covering, so best = worst exactly) has `seq_2_before_3` stored as best 0.0044, worst 0.272; interval iteration gives 0.0061. Its `goal3` is stored as 0.587 and is 0.799 exactly. The verdicts are the same there (threshold 0.8), but only just for `goal3`.
-
-## Exact check of the final policy
-- **Runs report the final policy's values from interval iteration** (`prism.exact_check`, on by default; Asher), which converges to within `prism.exact_epsilon` (1e-9) of the true values, so success and every reported best and worst case can be trusted. Where interval iteration does not converge in `prism.exact_max_iters`, Gauss-Seidel at 1e-12 is used (tight, but not a bound); if that fails too, the loop's values are reported. Each result records the solver (`final_check`) and the loop's values (`loop_best`, `loop_worst`).
-- The loop keeps Gauss-Seidel: interval iteration on every round would cost minutes on slowly leaking chains (R4 seed 1's grid 18 policy takes 347 s), and the loop's decisions only need a ranking. Typical policies take seconds; the default run's 20 final policies took 7 minutes in all.
-- Budget curves replay the rounds, so they use the loop's values; their last point can differ slightly from a run's reported numbers.
-- Runs without `prism.exact_check` in their `config.json` report the loop's values.
-
-## LLM tasks, backends and schedulers
-- The symbolic planner never calls a model itself. It builds an **`LLMTask`** (model, messages, JSON schema, generation parameters with the call's seed already resolved, and bookkeeping: instance, round, mode, fixup) and receives an **`LLMResult`** (`src/core/tasks.py`). A **backend** (`src/core/backends/`, chosen by `llm.backend`) turns tasks into results through one method, `execute_batch(tasks) -> results` (same order; a failed task carries `error` instead of raising). `OllamaBackend` sends a batch as concurrent requests, which only run in parallel if the server's `OLLAMA_NUM_PARALLEL` allows it. Scripted backends for tests are in `tests/fakes.py`.
-- `planner.solve_steps(instance, logger)` is the refinement loop as a generator: it yields each LLM task and each PRISM process (`PrismCall`: command line and timeout) and is sent the result. `planner.solve()` drives it one item at a time with the planner's backend and `subprocess.run`, so the loop (prompts, PRISM checks, branches, retries) is the same whichever drives it. PRISM is yielded through `PrismRunner.run_steps`/`check_steps` and the verifier's `*_steps` methods; their blocking versions remain for ceilings, regression and the analyzer. A timeout is thrown into the generator as `subprocess.TimeoutExpired`.
-- **`run.scheduler`** picks how instances are interleaved (design and benefits: `docs/scheduler.md`). `threads` (legacy's default, and the only scheduler legacy has): `run.workers` threads, each solving one instance and calling the backend and PRISM itself. `lockstep` (`src/core/scheduler.py`): `run.workers` instances in flight; each step sends the pending task of every active instance as one batch, then runs the instances' PRISM calls as parallel processes until each reaches its next LLM task, and finished instances free their slot. `event` (symbolic's default; `run.scheduler: null` resolves per approach): each instance moves on as soon as its own LLM result (`LLMBackend.submit`) or PRISM process is done, without waiting for the others. Lockstep and event run all planner code from one thread, and log every task and result to `<run>/llm_tasks.jsonl`, with its batch number or its arrival order (`seq`). They drive the symbolic planner only; a legacy run with either is a config error.
-- The legacy planner calls the model through `core/llm.py`'s `LLMClient`, a blocking client on top of the same backends, so only the backend talks to the serving engine.
-- Seeds: `seed * 1_000_003 + n`, with n counting the instance's calls (re-asks included). A backend failure ends that instance with the backend's error text.
-- Per-round `llm_wall_time`: how long the round waited for its answers, including queueing and, in lockstep, waiting for the rest of the batch. `llm_time` is the tasks' own time in the backend. Lockstep wall-clock times are not comparable with threaded runs; tokens are.
-- Tests (`tests/test_scheduler.py`): replays of saved D7, B2, R1 and S1 runs (each from its condition file and seed, exact check off) reproduce every round exactly (prompts, rules, PRISM values, invalid answers), one task at a time and in lockstep; batch size, slot refill, `max_batch` splitting and failure isolation; seeds; and `run_symbolic.run` writing the same parquet under both schedulers. A deliberate change to the prompts or the loop fails the replays; then point them at runs made with the new code. U1 is not replayed: its prompts use an earlier UUV description.
-- Design choice: the planner is a **generator** (yield a task, receive a result), chosen over (B) a blocking client behind a barrier, (C) an explicit state machine and (D) asyncio. It keeps the loop readable top to bottom, makes each batch an explicit list, and cannot deadlock. If pausing and resuming *inside* an instance (crash recovery) becomes necessary, the generator's locals can move into a state object (option C) without changing schedulers or backends.
-- **[REVIEW]** Symbolic runs default to `event` (legacy: `threads`): per-round results match `threads` in the replays and the training-set test, and tokens are comparable; wall-clock times are not, so set `run.scheduler=threads` to compare timings with threaded runs. **Open:** a live-model smoke run with `event` (`docs/openrouter.md`, step 5).
-- Lockstep waits for every active instance before sending a batch, so fast instances idle while slow ones run PRISM. The `event` scheduler is the alternative when fixed batches do not matter (hosted APIs): on the saved runs' tokens, lockstep's critical path is 7% (B2, R1) to 44% (D7) longer.
-- Yielding PRISM and the single-threaded schedulers are checked by the replays (under every scheduler, `event` with answers in random order) and by `tests/test_prism_calls.py`: each instance runs exactly the PRISM commands recorded in `tests/data/prism_calls.json`, in order. The recording hashes model files with line endings normalized (Windows writes them with CRLF).
-- **Smoke runs** against the live server (2 grids, default config, `out/results/smoke/`, not committed): threads and lockstep both complete without errors or invalid answers, with tokens in line with the default run; lockstep sends 10 tasks in 5 batches of 2.
-  - Ollama here serves **one request at a time** (`OLLAMA_NUM_PARALLEL` unset): in every batch, one request generates at ~59 tokens/s and the other waits for it. So lockstep takes as long as threads (4:04 vs 4:08), and `run.workers: 2` overlaps one instance's PRISM work with the other's generation, not two generations. A request's `llm_time` includes its wait in Ollama's queue.
-  - Batching only pays with parallel slots (`OLLAMA_NUM_PARALLEL` ≥ `run.workers`; a second 16k context needs roughly 2.5 GB more VRAM, more than the 4080 has free next to qwen) or an engine that batches.
-- **Open:** which batched engine to target is undecided, so only the interface is general (`BackendInfo.max_batch`, `supports_schema`, `supports_seed`).
-- **OpenRouter backend** (`llm.backend: openrouter`, `src/core/backends/openrouter.py`), for running without a local GPU. It uses the `openai` client against OpenRouter's OpenAI-compatible API. A batch goes out as concurrent requests, and the backend is otherwise stateless, so it is safe under both schedulers.
-  - The key is read from the variable named by `llm.openrouter.api_key_env` and never enters a config. `llm.model` is an OpenRouter id (`qwen/qwen3-14b`). `num_ctx` is not sent, `num_predict` becomes `max_tokens`, the schema becomes a strict `json_schema` response format, and `llm.think` becomes `reasoning.enabled`.
-  - Every request sets `require_parameters`, so only providers honouring the schema and the seed serve it. `llm.openrouter.providers` pins providers, in order, with no fallback.
-  - Setup and the smoke test are in `docs/openrouter.md`. Offline tests use a stand-in client (`tests/test_openrouter.py`: request mapping, result order under random delays, per-task failures, concurrent calls).
-  - **Smoke test** (`qwen/qwen3-14b` on DeepInfra, fp8, pinned; seed 1; `out/results/smoke/openrouter_*`, not committed): the live request, 1 grid with threads and 2 grids with lockstep all complete with no errors or invalid answers.
-    - Thinking is off: 590–2,150 output tokens per call, as in the local runs, and the first round's prompt is 1,645 tokens (local: 1,649). DeepInfra accepts the strict schema.
-    - About 75 tokens/s per request (local Ollama: ~59). Lockstep's two requests per batch run in parallel, so 2 grids take 125 s (local lockstep: 4:04); one grid with threads takes 93 s.
-    - The three steps cost $0.003.
-  - OpenRouter runs are a condition of their own, not comparable with the local runs (Asher: fine): providers serve FP8/BF16 weights, not `q4_K_M`, and hosted seeds are not guaranteed to reproduce samples. Name the model, provider and quantization in their results.
-  - `providers: []` lets OpenRouter route each request to any provider, so experiments pin one. DeepInfra (fp8) passed the smoke test; NextBit (int4, closer to the local 4-bit weights) is the other provider of `qwen/qwen3-14b` that supports every parameter sent.
-
-## Sonnet vs qwen (grid_20_balanced, R4's settings)
-- **What varied:** only the model (Asher). `sonnet5`: Claude Sonnet 5, thinking off as for qwen. `sonnet5_5`: Claude Sonnet 5.5, thinking on (its endpoints refuse to turn it off) and a 16k output cap, since the cap covers thinking and answer. Both on OpenRouter with Anthropic's endpoint pinned, one unseeded run each (no Sonnet endpoint accepts a seed), against R4 and B2 (qwen3:14b, 2 seeds each). Page: `out/results/sonnet_vs_qwen/SUMMARY.md` (`configs/plot/sonnet_vs_qwen.yaml`; it also has Haiku 5.5, below).
-- **Results** (worst case; solved of the 19 solvable grids):
-
-  | | solved | req. met | Δ vs R4 [95% CI] | after 1 round |
-  |---|---|---|---|---|
-  | B2 (qwen) | 0/19 | 4.45 | | 2.98 |
-  | R4 (qwen) | 0/19 | 4.95 | | 3.00 |
-  | Sonnet 5 | 5/19 | 7.10 | +2.15 [+1.50, +2.77] | 6.10 |
-  | Sonnet 5.5 | 19/19 | 8.95 | +4.00 [+3.62, +4.38] | 8.55 |
-
-  - Sonnet 5.5 meets every requirement on every solvable grid, 15 of them in the first round. On grid 17 it meets 8 of 9, the most any controller can (its `complete_sequence` ceiling is 0.70 against 0.80).
-  - The sequence requirements separate the models. `complete_sequence` is met on 0% of grids by qwen, 30% by Sonnet 5 and 95% by Sonnet 5.5 (every grid but 17).
-  - **Rule count** of the final policy (median, interquartile range): B2 43 (28–60), R4 32.5 (23–56), Sonnet 5 25.5 (23–32), Sonnet 5.5 19.5 (18–27); Sonnet 5.5 solves its 19 grids with 11–35 rules. qwen fills the 64-rule cap in about a third of its answers (69 of 205 for B2, 51 of 207 for R4), Sonnet in none; extending a capped answer gives qwen policies of up to 112 rules. One B2 grid (seed 2, grid 15) keeps the empty rule set: its first answers were all invalid and no later round scored better.
-  - **Rules per decision situation** (the situations a per-state lookup table needs one entry for; in gridworld, every reachable state of the bare MDP): median 0.099 (B2), 0.112 (R4), 0.088 (Sonnet 5), 0.062 (Sonnet 5.5), i.e. one rule per 9–16 situations. Rule counts stay roughly flat while grids grow from about 100 to 1,400 situations, so the ratio falls with grid size (8x8: 0.033 for Sonnet 5.5, 0.05–0.06 for qwen).
-- **Checks:** each run's `config.json` matches its condition file; no errors or invalid answers; every final policy covers every reachable situation; the exact check (interval iteration) changes no verdict.
-- **Costs** (per grid): Sonnet 5 15.2k input / 3.8k output tokens, Sonnet 5.5 4.5k / 5.9k (mostly thinking; it stops early when solved), qwen 13–17k / 6–7k. Tokenizers differ. About $1.37 and $1.36 per 20-grid run (token counts at $2/M input and $10/M output; $2.73 for both on the key); 7 and 10 minutes, with concurrent hosted requests, so not comparable with local timings.
-- **Reading:** with a strong model the loop reaches the ceiling, so qwen's results are limited by the model, not by the loop or the verification. Sonnet 5 without thinking is already far ahead of qwen; thinking (with the newer version) closes the rest. Confounds: Sonnet 5.5 differs in both version and thinking, and each Sonnet condition is a single unseeded run.
-
-## Sonnet 5.5 on UUV (U1's settings)
-- `U1_sonnet5_5`: U1 with Sonnet 5.5's model settings, one unseeded run. Figures: `viz/figures/uuv_sonnet.png` (against qwen's U1 and the reference policies) and `viz/figures/uuv_summary_sonnet.png` (against the paper's controller).
-- **North Sea:** solved in round 3 with 3 rules (qwen's U1: round 1, 25 rules), using less energy (26.01 vs 26.18, budget 26.5).
-- **Caribbean:** not solved by either model; both meet only `no_thruster_failure`. qwen's policy reproduces `always_high` (done in time 0.860 vs 0.862 needed, energy 62.99 vs 62.5). Sonnet's is further off (0.824, energy 98.5), and its refine rounds made it worse (energy 170–224), so it kept round 1. The `stay` reference policy meets all three, so the scenario is solvable.
-- **Rules per decision situation:** UUV's rules see `s`, `alt` and `water_visib` only, so 162 and 295 situations stand for 5,580 and 29,244 states. Sonnet 5.5's 3 and 6 rules give 0.019 and 0.020; qwen's 25 give 0.15 and 0.085. The paper's controller has 1,620 and 8,850 strategy states.
-- 15.5k input / 7.5k output tokens per scenario; $0.21 for the run.
-- **Reading:** Sonnet 5.5's lead on gridworld does not carry over to the Caribbean, whose thresholds are calibrated so that only a scenario-aware policy like `stay` passes; the feedback did not lead it there. One run, so read with care.
-
-## Headroom for the rerun: Haiku 5.5 and 13x13 grids
-- **Haiku 5.5 on `grid_20_balanced`** (`haiku5_5`: Sonnet 5.5's settings, only the model differs; one unseeded run, `seed_none_1`). On the Claude vs qwen page (`out/results/sonnet_vs_qwen/SUMMARY.md`).
-  - Solved 16 of 19 solvable grids (Sonnet 5.5 19, Sonnet 5 5, qwen 0); requirements met 8.45 (Sonnet 5.5 8.95, Sonnet 5 7.10, R4 4.95). It misses grid 17 (unsolvable) and grids 10, 11 and 19.
-  - Only 7 grids are solved in round 1; after k rounds it meets 7.15, 7.85, 8.40, 8.45, 8.45. So the loop does work there, unlike with Sonnet 5.5 (8.55 after round 1).
-  - Final policies: 13–52 rules (median 21), every reachable situation covered. 4 invalid answers, all fixed by re-asks. The exact check changes no verdict.
-  - 10.5k input / 18.2k output tokens per grid (mostly thinking), about $0.20 for the run at $0.10/M input and $0.50/M output; 1.8 min per grid.
-- **Sonnet 5.5 smoke test on `grid_20_large`'s three 13x13 grids** (instances 16–18, those with the longest shortest paths: 30, 38 and 26 steps; `out/results/smoke/sonnet5_5_large13`, not committed): all three solved, in rounds 1, 2 and 2, with 24–35 rules over 374–1,734 situations. PRISM took 1–3 s per grid, so verification is cheap at this size. About $0.30.
-- **Ceilings of `grid_20_large`** (`out/results/ceilings/gridworld_grid_20_large.md`): all 20 grids are jointly solvable, and every requirement's optimum is 1.0. The joint queries (LP on the bare MDP) took 29 minutes for the 20 grids, mostly on the larger ones; the loop's per-round checks on the induced MDP stay at seconds.
-- **Reading:** sizes up to 13 leave Sonnet 5.5 no headroom. Headroom has to come from a weaker model (Haiku 5.5 has some on `grid_20_balanced`), much larger grids, or harder instances (more goals).
-
-## Haiku ablation on grid_20_large (planned before the runs)
-- **Conditions** (Asher): Claude Haiku 5.5 with `haiku5_5`'s settings on `grid_20_large`, two unseeded runs each (`run_ablation.py ... --unseeded 2`): restart after 2 stalls (`haiku_large_B2`, the ablations' reference), restart on slow progress (`haiku_large_R4`, the default retry) and pure resampling with **10 rounds** (`haiku_large_R5`), so that it can be compared both at equal iterations and at equal cost. Rules over absolute coordinates (the base vocabulary). Legacy is not part of it (it ran on qwen and `grid_20_balanced`: B1, above).
-- **Planned comparisons, fixed before the runs.** Metric: requirements met by the kept policy (worst case, the loop's values, replayed per round), per grid averaged over the two runs; paired sign-flip test over the 20 grids; **Holm correction over these four**:
-  1. restart after 2 stalls vs pure resampling at 5 rounds (equal iterations);
-  2. restart on slow progress vs pure resampling at 5 rounds;
-  3. restart after 2 stalls vs pure resampling at equal cost: on each grid, pure resampling gets the feedback condition's mean spend on that grid, cost at Haiku 5.5's prices ($0.10/M input, $0.50/M output tokens); every run keeps at least its first round, whose prompt is the same in every condition;
-  4. restart on slow progress vs pure resampling at equal cost.
-- Everything else (solved counts, rounds to solve, the two feedback conditions against each other) is exploratory.
-- **Results: feedback beats pure resampling, in all four planned comparisons** (requirements met per grid, Holm-corrected over the four):
-
-  | comparison | Δ met [95% CI] | p (Holm) |
-  |---|---|---|
-  | restart after 2 stalls vs pure resampling, 5 rounds | +1.68 [+1.00, +2.40] | < 0.001 |
-  | restart on slow progress vs pure resampling, 5 rounds | +1.43 [+0.80, +2.10] | 0.001 |
-  | restart after 2 stalls vs pure resampling, equal cost | +1.43 [+0.88, +2.00] | 0.001 |
-  | restart on slow progress vs pure resampling, equal cost | +1.27 [+0.62, +1.98] | 0.002 |
-
-  - Final (full budget): restart after 2 stalls 8.43 met, 14/20 solved; restart on slow progress 8.18, 12/20; pure resampling with 10 rounds 7.30, 5.5/20.
-  - Round 1 is the same prompt in every condition: 4.78–5.22, so about ±0.2 is noise. The feedback conditions jump in round 2 (7.10–7.30) while resampling reaches 5.97; resampling's 10th round (7.30) does not reach the feedback conditions' 2nd.
-  - Cost per grid: $0.015–0.016 (feedback), $0.021 (resampling, 10 rounds); about $1 for the six runs.
-  - **Reading:** with qwen on small grids, resampling was ahead; with a stronger model on harder grids, quantitative feedback helps clearly, at equal rounds and at equal cost. Exploratory: restart after 2 stalls vs restart on slow progress (8.43 vs 8.18) is not a planned comparison.
-- Page: `out/results/haiku_large/SUMMARY.md` (`configs/plot/haiku_large.yaml`). The four comparisons are the ones committed before the runs; only the conditions' names were corrected (restart after 2 stalls is the ablations' reference, restart on slow progress the default retry).
+## Open questions
+- **[REVIEW] `closer` in the configuration we claim.** It makes navigation easy. The core grid conditions show it, and RQ1 also compares without it (`grids_noclose`); `docs/positioning.md` (Check 1) argued against offering a shortest-path feature. Asher's call, as for any other feature added for the transfer search.
+- **[REVIEW] The solver choosing among versions of the LLM's output** (`rules.any_order`, polishing, counterexamples). Asher would prefer the solver only to give feedback, so that the framework carries over to other solvers; it may choose unless Marsha decides otherwise. Its contribution to a frozen list is one action order out of 24, chosen on the training members (`src/tie_analysis.py`; "ties open" in RQ1). RQ2 (`rq2_choices`) compares the feedback-only variants (`declared`, `report`); on the crossing family, the variants without the solver's choice of order certify about 0 of 20.
+- **[REVIEW] The "why LLMs" claim.** With `closer`, short generic lists exist: a 2-rule list found without an LLM certifies 7 of 8 validation grids. If the search matches the LLM on validation, the story changes.
+- **[REVIEW] Pac-Man thresholds beyond horizon 18.** At 0.56 nothing is certified beyond 18, ours or 1–2–3–Go!'s. A threshold per horizon (a slack over each optimum, or the UUV-style best reference policy plus slack) would turn our 0.749 against their 0.869 at horizon 25 into certified against not. Pac-Man also has no sealed targets: horizons 20 and 25 are RQ1 targets. Asher's call.
+- **[REVIEW] Reused runs may come from older code.** The run store assumes every behaviour change comes with a config key, which holds on this branch as far as I can tell. The worst-case cells reuse runs made before in-loop order resolution existed; with `any_order: none` that code path is the same.
+- **[REVIEW] UUV.**
+  - The failure-rate family is trivial (`stay` covers every member): drop it, or find a family where no simple policy passes (vary visibility ranges, deadlines, inspection lengths), checked with PRISM before any LLM run.
+  - Thresholds are tight by design: looser ones would let any sensible complete policy pass. The energy thresholds and the description of energy costs need a look. Neither qwen nor Sonnet 5.5 solved the Caribbean scenario, which `stay` passes.
+  - Two ideas from the archived `optimization` branch need a decision: listing every previous attempt's worst case in the feedback (no help on UUV, untested on gridworld), and hiding `water_visib` (qwen then writes hold-the-altitude rules, but the policy would no longer see what the paper's controller monitors).
+- **[REVIEW] Smaller items:** the joint branch applies to gridworld but not UUV; the S5 (regret) prompt wording; the wording of legacy's obstacle-phase note; legacy's solver fallbacks are untested on a real non-converging case; `event` is the default scheduler for symbolic runs (`run.scheduler=threads` to compare timings with threaded runs).
+- **Open:**
+  - QVBS families through the 1–2–3–Go! artifact (`third_party/README.md`; Docker or WSL): reproduce two of its published numbers, then pick one family it fails on (csma or Mars rovers) and one it does well on. Each becomes a domain with a test that reproduces a published value, a vocabulary and thresholds (**[REVIEW]** how to set them per instance).
+  - Families of MDPs (PAYNT): robust per-state policies on a same-size gridworld subfamily against our rules on held-out grids of that size. It does not apply across sizes, so it is a positioning experiment.
+  - A strategy synthesized on one instance and applied to the others (a baseline Marsha proposed) has no implementation.
+  - The grid baselines' trees and PPO are not PRISM-certified ("unchecked" in RQ1; `configs/plot/transfer_results.yaml` draws numpy-model values).
+  - Untried ideas: a closed patch language (variables compared with constants only), best-of-N first rounds, rotating the shown members each round, and starting the training-set loop from what a run's per-grid rule sets share.
+  - Readability (rules against tree nodes and network weights) has no metric.
+  - Prompt wart: gridworld's `description.md.j2` runs two bullets together ("it starts at 0.- The agent keeps moving"). Fixing it changes every gridworld prompt and the saved-run replays, so it waits for a deliberate prompt revision.
+  - Which batched serving engine to target; only the interface is general (`BackendInfo.max_batch`, `supports_schema`, `supports_seed`).

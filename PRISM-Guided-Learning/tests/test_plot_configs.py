@@ -19,7 +19,7 @@ PLOT_CONFIGS = sorted((CONFIG_DIR / "plot").glob("*.yaml"))
 def test_there_is_a_config_per_committed_figure():
     names = {p.stem for p in PLOT_CONFIGS}
     assert {"grid20", "catchall_ablation", "catchall_ablation_full", "budget_grid20", "uuv", "uuv_summary",
-            "ablation_summary", "ablation_grid", "compare_grid20"} <= names
+            "ablation_summary", "compare_grid20"} <= names
 
 
 @pytest.mark.parametrize("path", PLOT_CONFIGS, ids=lambda p: p.stem)

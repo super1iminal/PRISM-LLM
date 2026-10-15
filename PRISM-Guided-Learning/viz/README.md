@@ -20,7 +20,6 @@ Facts about a run (dataset, model, round budget) are read from its `config.json`
 | `plot_uuv_summary.py` | UUV: our policy vs the paper's controller (probabilities, policy size, the paper's Table 2 costs) | `uuv_summary.yaml`, `uuv_summary_sonnet.yaml` |
 | `ablation_summary.py` | a set of conditions under `out/results/ablations/` on one page (`SUMMARY.md` + figures, paired tests vs each reference, or `planned` comparisons with Holm correction; a spend row in the budget figure with `cost`): every ablation, the model comparison, or the Haiku ablation. Rerun after each run | `ablation_summary.yaml`, `sonnet_vs_qwen.yaml`, `haiku_large.yaml` |
 | `plot_transfer.py` | transfer heatmaps: each frozen rule set (row: an instance's, or a training set's) certified on every instance (column), from `src/transfer.py`'s CSVs; certified cells in blue, the instances a rule set was written for outlined | `transfer_grid.yaml`, `transfer_mi_grid.yaml` |
-| `plot_ablation_grid.py` | the ablation design grids in `docs/` (`ablation_run.png`, `ablation_not_run.png`). Edit its row tables when the plan changes | `ablation_grid.yaml` |
 | `../src/compare.py` | end-to-end legacy vs symbolic report (`report.md`, `per_sample.csv`) | `compare_grid20.yaml`, `compare_grid20_default.yaml` |
 
 - `loaders.py`: reads legacy and symbolic runs into one per-sample table (final probabilities, requirements met
