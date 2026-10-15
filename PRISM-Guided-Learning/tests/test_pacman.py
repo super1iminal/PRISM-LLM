@@ -83,3 +83,23 @@ def test_feature_space_feedback_names_no_position(domain):
     feedback = prompt[prompt.index("## Uncovered states where probability is lost"):prompt.index("## Task")]
     assert "## A likely way to fail `crash`" in feedback and "moves_left=8 | right: " in feedback
     assert not re.search(r"\b(xP|yP|dP|xG0|yG0|dG0|xG1|yG1|dG1|steps)=", feedback)
+
+
+def test_sealed_horizons_are_refused(domain, tmp_path):
+    """Horizons 50 and 100 (pacman_transfer.csv ids 10, 11) are Pac-Man's sealed test set."""
+    import yaml
+    import run_baseline
+    from transfer import guard_sealed
+    horizons = [i.data["max_steps"] for i in domain.load_instances("pacman_transfer.csv")]
+    assert horizons == [8, 10, 12, 14, 16, 18, 20, 25, 5, 30, 50, 100]
+    guard_sealed("pacman_transfer.csv", list(range(10)))
+    for ids in ([10], [11], [3, 11]):
+        with pytest.raises(SystemExit, match="sealed"):
+            guard_sealed("pacman_transfer.csv", ids)
+    config = tmp_path / "sealed.yaml"
+    config.write_text(yaml.safe_dump({
+        "method": "rule_lists", "condition": "haiku_mi_pacman_long", "dataset": "pacman_transfer.csv",
+        "target_dataset": None, "train": "", "targets": "9-10", "workers": 1, "exact_near": 0.0,
+        "params": {"lists": {"right": [["true", "right"]]}}}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="sealed"):
+        run_baseline.run(config, out_root=tmp_path)
