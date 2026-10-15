@@ -10,6 +10,9 @@ METHODS = {
     "feature_search": "baselines.feature_search:FeatureSearch",
     "decision_tree": "baselines.decision_tree:DecisionTree",
     "ppo": "baselines.ppo:PPO",
+    "uniform": "baselines.simple:Uniform",
+    "random_policies": "baselines.simple:RandomPolicies",
+    "one_instance": "baselines.simple:OneInstance",
 }
 
 

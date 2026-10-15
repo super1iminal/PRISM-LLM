@@ -115,6 +115,9 @@ class DecisionTree(Baseline):
         return {name: policy_rules(mdp, tree.predict(x)) for name, tree in self.trees.items()}
 
 
+MAX_LISTED = 1000       # fit.json lists a tree's rules (one per leaf) up to this many
+
+
 class Column(NamedTuple):
     """A tree input: a policy variable (`action` None) or a rule-language feature (for `action`, if an action
     feature), and whether it is boolean."""
@@ -137,7 +140,7 @@ class ExplicitDecisionTree(DecisionTree):
     action, computed by the core rule evaluator.
 
     The tree compiles exactly into rules: one per leaf, its path's bounds (`v <= t`, `v >= t + 1`, `f`, `!f`) and the
-    leaf's action (`summary` lists them). A feature of another action than the leaf's is written as the domain's
+    leaf's action (`summary` lists them, up to `MAX_LISTED`). A feature of another action than the leaf's is written as the domain's
     expression of it for that action, since in a rule an action feature names the rule's own action. PRISM gets the
     same policy as one rule per action, the tree as an if-then-else (`nested`): with thousands of leaves, a rule per
     leaf would not compile, since the rule compiler negates every earlier rule in a rule's guard when the variable
@@ -189,7 +192,7 @@ class ExplicitDecisionTree(DecisionTree):
             self.trees[source], self.lists[source] = tree, nested(tree, columns, list(spec.actions), spec)
             self.info[source] = {"training": ids, "states": states, "samples": int(sum(len(v) for v in y)),
                                  "nodes": int(tree.tree_.node_count), "depth": int(tree.get_depth()),
-                                 "leaves": len(leaves), "rules": leaves}
+                                 "leaves": len(leaves), "rules": leaves if len(leaves) <= MAX_LISTED else None}
             print(f"decision tree {source}: {len(leaves)} leaves, depth {tree.get_depth()}, {states} training states",
                   flush=True)
 

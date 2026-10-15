@@ -118,3 +118,78 @@ def test_an_explicit_tree_compiles_into_rules_that_pick_its_action(inputs):
     for s in np.flatnonzero(mdp.decision):
         valuation = mdp.valuation(mdp.obs[s])
         assert nested.allowed(valuation) == leaves.allowed(valuation) == [mdp.actions[acts[s]]]
+
+
+def _pacman():
+    domain = load_domain("pacman")
+    return load_config("pacman_baseline"), domain, {int(i.id): i for i in domain.load_instances("pacman_transfer.csv")}
+
+
+@needs_prism
+def test_the_ppo_sampler_follows_the_explicit_model():
+    """A fixed policy's simulated crash rate on Pac-Man horizon 10 is its exact value."""
+    from baselines.explicit_mdp import ExplicitMDP
+    from baselines.ppo import _Env
+    cfg, domain, inst = _pacman()
+    mdp = ExplicitMDP(domain, inst[1], cfg)
+    rng = np.random.default_rng(0)
+    policy = np.where(mdp.decision, rng.integers(0, 4, mdp.S), -1)
+    env = _Env([mdp], None, lambda m, s: m.obs[s].astype(np.float32))
+    n = 40000                                  # one episode each (stopping at a count of episodes would favour short ones)
+    state, t, which = (np.zeros(n, dtype=np.int64) for _ in range(3))
+    state[:], total, end = env.initial[0], np.zeros(n), np.zeros(n, dtype=bool)
+    env._advance(np.arange(n), state, t, which, total, end, rng)     # to the first crossing, or a crash before it
+    active = ~end
+    while active.any():
+        s, ts, w = state[active], t[active], which[active]
+        rew, end = env.step(s, ts, w, policy[s], rng)
+        state[active], t[active] = s, ts
+        total[active] += rew
+        active[np.flatnonzero(active)[end]] = False
+    crash = -total.mean()
+    assert crash == pytest.approx(mdp.evaluate(policy)["crash"], abs=4 * np.sqrt(crash * (1 - crash) / n))
+
+
+@needs_prism
+def test_explicit_ppo_freezes_a_policy_for_every_decision_state():
+    from baselines.explicit_mdp import ExplicitMDP
+    from baselines.ppo import PPO, ExplicitPPO
+    cfg, domain, inst = _pacman()
+    ppo = PPO(domain, {"model": "explicit", "observation": "features", "features": ["moves_left", "wall"],
+                       "steps": 8192, "envs": 16, "seeds": [0]})
+    assert isinstance(ppo, ExplicitPPO) and ppo.explicit
+    ppo.config = cfg
+    ppo.fit([inst[0]])
+    mdp = ExplicitMDP(domain, inst[1], cfg)
+    policy = ppo.policies(mdp)["ppo_features_seed0"]
+    assert ((policy >= 0) == mdp.decision).all() and policy.max() < 4
+    assert ppo.training("ppo_features_seed0") == [0]
+
+
+def test_hashed_policies_are_fixed_by_their_seed():
+    from baselines.simple import hashed_actions
+    obs = np.random.default_rng(0).integers(0, 12, (5000, 10))
+    a = hashed_actions(obs, 3, 4)
+    assert (a == hashed_actions(obs, 3, 4)).all() and set(a) == {0, 1, 2, 3}
+    assert (a != hashed_actions(obs, 4, 4)).mean() > 0.6
+    assert (hashed_actions(obs[:10], 3, 4) == a[:10]).all()
+
+
+@needs_prism
+def test_one_instance_keeps_its_optimum_and_leaves_unseen_states_open():
+    from baselines import load_method
+    from baselines.explicit_mdp import ExplicitMDP
+    cfg, domain, inst = _pacman()
+    seen = ["xP", "yP", "dP", "xG0", "yG0", "dG0", "xG1", "yG1", "dG1"]
+    one = load_method("one_instance")(domain, {"instance": 0, "keys": {"by_steps": seen + ["steps"],
+                                                                        "by_end": seen + ["moves_left"]}})
+    one.config = cfg
+    one.fit([inst[0]])
+    own = ExplicitMDP(domain, inst[0], cfg)
+    for policy in one.policies(own).values():
+        assert ((policy >= 0) == own.decision).all()
+        assert own.evaluate(policy)["crash"] == pytest.approx(0.5511, abs=1e-9)
+    longer = ExplicitMDP(domain, inst[1], cfg)
+    by_steps = one.policies(longer)["by_steps"]
+    steps = longer.obs[:, [v.name for v in longer.spec.variables].index("steps")]
+    assert (by_steps[longer.decision & (steps >= 8)] == -1).all()
