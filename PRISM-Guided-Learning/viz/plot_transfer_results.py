@@ -40,6 +40,7 @@ class PlotConfig:
     families: Dict[str, Any]
     pacman: Dict[str, Any]
     ablations: Dict[str, Any]
+    library: Dict[str, Any]
     out_dir: str
 
 
@@ -202,6 +203,56 @@ def ablation_figure(cfg: dict, out: Path):
     plt.close(fig)
 
 
+def library_values(m: dict, dataset: str, targets: List[int]):
+    """Per run (LLM condition) or for the baseline's listed sources: (targets certified per rule list, targets
+    certified by at least one of the lists), every target counting whatever group it is in."""
+    if "condition" in m:
+        nums = [transfer_numbers(csv_path(run, dataset), targets)
+                for run in run_dirs(existing_root(m["condition"]), m["condition"])]
+    else:
+        nums = [transfer_numbers(PROJECT / m["csv"], targets, sources=[str(s) for s in m["sources"]])]
+    nums = [n for n in nums if n.get("checked")]
+    return [n["certified"] for n in nums], [n["library"] for n in nums]
+
+
+def library_figure(cfg: dict, out: Path):
+    """Two bars per method: one rule list on every target, and a run's lists used as a library."""
+    targets = parse_ids(cfg["targets"])
+    methods = cfg["methods"]
+    fig, ax = plt.subplots(figsize=(8.4, 0.62 * len(methods) + 1.5), facecolor=SURFACE)
+    y = np.arange(len(methods))[::-1] * 1.0
+    for yi, m in zip(y, methods):
+        per_list, library = library_values(m, cfg["dataset"], targets)
+        for dy, v, light in ((0.17, per_list, True), (-0.17, library, False)):
+            if not v:
+                continue
+            mean = float(np.mean(v))
+            color = (OURS if light else OURS_STRONG) if m.get("ours") else (BASE_LIGHT if light else BASE)
+            ax.barh(yi + dy, mean, height=0.32, color=color, edgecolor=SURFACE, linewidth=0.8, zorder=2)
+            if len(v) > 1 and min(v) != max(v):
+                ax.plot([min(v), max(v)], [yi + dy] * 2, color=INK, linewidth=1.1, zorder=3)
+            ax.text(max(max(v), mean) + len(targets) * 0.015, yi + dy, f"{mean:.1f}" if mean % 1 else f"{mean:.0f}",
+                    va="center", fontsize=8, color=INK, fontweight="bold" if m.get("ours") else "normal")
+    ax.set_yticks(y)
+    ax.set_yticklabels([m["label"] for m in methods], fontsize=8.5, color=INK)
+    ax.set_xlim(0, len(targets) * 1.12)
+    ax.set_xlabel(f"held-out members certified (of {len(targets)}, all families)", fontsize=8.5, color=INK_2)
+    style(ax, "")
+    ax.grid(axis="y", visible=False)
+    ax.grid(axis="x", color=GRID, linewidth=0.8)
+    ax.spines["bottom"].set_visible(False)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(color=BASE_LIGHT, label="one rule list (mean over lists)"),
+                       Patch(color=BASE, label="a run's lists together (library)")],
+              loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, fontsize=8, frameon=False)
+    fig.suptitle(cfg["title"], x=0.01, y=0.99, ha="left", fontsize=12, fontweight="bold", color=INK)
+    import textwrap
+    fig.text(0.01, 0.01, textwrap.fill(cfg["note"], 150), fontsize=7.5, color=INK_2, ha="left")
+    fig.tight_layout(rect=(0, 0.05, 1, 0.95))
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+
+
 def main(argv=None):
     cfg = plot_config(PlotConfig, "plot_transfer_results", argv)
     out_dir = PROJECT / cfg.out_dir
@@ -209,7 +260,8 @@ def main(argv=None):
     for name, fn, section in [("transfer_grid_results.png", grid_figure, cfg.grid),
                               ("transfer_family_results.png", family_figure, cfg.families),
                               ("transfer_pacman_results.png", pacman_figure, cfg.pacman),
-                              ("transfer_ablations.png", ablation_figure, cfg.ablations)]:
+                              ("transfer_ablations.png", ablation_figure, cfg.ablations),
+                              ("transfer_library.png", library_figure, cfg.library)]:
         fn(section, out_dir / name)
         print(out_dir / name)
 
