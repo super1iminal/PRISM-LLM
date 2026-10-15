@@ -12,7 +12,9 @@ FAMILY_COLORS = {"Baselines": "#2a78d6", "Retry sweep": "#eb6834", "Feedback con
 OURS, BASELINE = "#2a78d6", "#9e9d98"
 METHOD_COLORS = {"Ours (Haiku 5.5)": "#2a78d6", "1-2-3-Go! (reimplemented)": "#eb6834", "PPO": "#1baf7a",
                  "Hand-written maze rules": "#eda100", "Rule-list search": "#e87ba4", "Ours (Sonnet 5.5)": "#008300",
-                 "Hand-written template": "#4a3aa7", "LLM-written program": "#e34948"}
+                 "Hand-written template": "#4a3aa7", "LLM-written program": "#e34948",
+                 "Strategy of one instance": "#8a5a2b", "Best of 1000 random policies": "#6b6a66",
+                 "Uniform random policy": "#b9b7b0"}
 
 
 def style(ax, title, ylabel=None, pad=10):
