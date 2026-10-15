@@ -30,7 +30,7 @@ def test_stats_format_and_report_missing_columns():
 
 
 def test_report_on_the_committed_gridworld_runs():
-    legacy, symbolic = ROOT / "out/results/legacy_grid20", ROOT / "out/results/symbolic_grid20_capped"
+    legacy, symbolic = ROOT / "out/results/archive/legacy_grid20", ROOT / "out/results/archive/symbolic_grid20_capped"
     ceilings = pd.read_csv(ROOT / "out/results/ceilings/gridworld_grid_20_balanced.csv", index_col="sample_id")
     table, requirements = per_sample_table(legacy, symbolic, ceilings)
     assert list(table.index) == list(range(20)) and len(requirements) == 9

@@ -29,6 +29,7 @@ Reports: `out/results/experiments/<experiment>/REPORT.md`, figures and `runs.csv
 - **Sealed test sets** (`sealed` in `configs/transfer/default.yaml`; `transfer.py` and `run_baseline.py` refuse their targets without `--unseal`):
   - `grid_test_large.csv`: the 30 grids of sizes 9-13 in `grid_100_balanced.csv` that are not in `grid_20_large.csv` (6 per size), plus 4 each of 15x15, 17x17 and 20x20 from `datagen.py` (seeds 515, 517, 520). No LLM run trains on them.
   - The 15x15-20x20 members of `families_v0.csv` (ids 36-59, 96-119, 156-179).
+  - Pac-Man horizons 50, 100 and 200 of `pacman_transfer.csv` (sealed in the commit that adds them; horizon 30 is a validation target). The RQ1 horizon figure stops at 30.
 
   They give only the final numbers: the core configuration (5 repeats) and every baseline, once the configuration is fixed.
 

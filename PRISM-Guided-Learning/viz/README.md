@@ -1,6 +1,11 @@
 # Data visualization
 
-Every figure (and the comparison report) is made from a config in `configs/plot/`, which names its
+The research-question figures (RQ1 per benchmark, best configuration of each method; Pac-Man's crash probability
+against the horizon; the RQ2 reports and overview) come from the experiment harness, not from here:
+`python src/run_experiment.py configs/experiments/<experiment>.yaml` and `--index` write them next to the reports in
+`out/results/experiments/` (`docs/experiments.md`), with the styling in `theme.py`.
+
+Every other figure (and the comparison report) is made from a config in `configs/plot/`, which names its
 script, the runs, labels, title and output. Run from `PRISM-Guided-Learning/`:
 
 ```bash
