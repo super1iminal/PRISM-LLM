@@ -71,20 +71,23 @@ class Comparison(Experiment):
         return {"sources": [str(s) for s in spec], "source_groups": {}}
 
     def extra_jobs(self) -> List[Callable[[int], str]]:
-        """Fit and certify each baseline whose CSV misses targets (as written, and with ties open where it has ties)."""
+        """Fit and certify each baseline whose CSV misses targets (as written, and with ties open where it has ties),
+        on the benchmark's targets only (a config may also list its training instances: run src/run_baseline.py
+        directly for those)."""
         jobs = []
         for base in self.baselines():
             for bench_name, config in base["config"].items():
-                targets = parse_ids(self.spec["benchmarks"][bench_name].targets)
+                spec = self.spec["benchmarks"][bench_name].targets
+                targets = parse_ids(spec)
                 for rules in (("final", "open") if base.get("ties", True) else ("final",)):
                     path = self._csv(config, rules)
                     if path.exists() and set(targets) <= set(pd.read_csv(path).target):
                         continue
                     log = path.parent / f"run_baseline{'_open' if rules == 'open' else ''}.log"
 
-                    def job(workers, config=config, rules=rules, log=log):
+                    def job(workers, config=config, rules=rules, log=log, spec=spec):
                         ok = self._call([sys.executable, "src/run_baseline.py", config, "--rules", rules,
-                                         "--set", f"workers={workers}"], log)
+                                         "--set", f"workers={workers}", "--set", f"targets={spec}"], log)
                         return f"[baseline {Path(config).stem} {rules}] {'done' if ok else f'failed (see {log})'}"
                     jobs.append(job)
         return jobs
@@ -217,7 +220,7 @@ class Comparison(Experiment):
         configs = {m: set(b[b.method == m].cell) for m, _ in entries}       # configurations of each method here
         size = max((len(parse_ids(t)) for t in bench.groups.values()), default=len(held_out(bench)))
         panels = [None] + groups
-        fig, axes = plt.subplots(1, len(panels), figsize=(4.6 + 3.3 * (len(panels) - 1), 0.62 * len(entries) + 1.9),
+        fig, axes = plt.subplots(1, len(panels), figsize=(max(8.0, 4.6 + 3.3 * (len(panels) - 1)), 0.62 * len(entries) + (1.9 if groups else 2.4)),
                                  sharey=True, squeeze=False, facecolor=SURFACE)
         for k, (ax, group) in enumerate(zip(axes[0], panels)):
             top = size if group is None else len(parse_ids(bench.groups[group]))
@@ -245,7 +248,7 @@ class Comparison(Experiment):
                 right = max(mean, max(values))           # the value next to its bar, past the diamond if they meet
                 if not np.isnan(library) and right - top * 0.04 <= library <= right + top * 0.16:
                     right = library + top * 0.02
-                ax.text(right + top * 0.03, yi, f"{mean:.1f}" if mean % 1 else f"{mean:.0f}", va="center",
+                ax.text(right + top * 0.03, yi, f"{mean:.2f}".rstrip("0").rstrip("."), va="center",
                         fontsize=8.5, color=INK, fontweight="bold" if ours else "normal")
                 if k == 0 and len(configs[method]) > 1:
                     ax.text(0, yi - 0.41, name, fontsize=6.5, color=INK_2, va="center")
@@ -254,21 +257,21 @@ class Comparison(Experiment):
             ax.grid(axis="x", color=GRID, linewidth=0.8)
             ax.spines["bottom"].set_visible(False)
             ax.set_xlim(0, top * 1.15)
-            ax.set_xticks(range(0, top + 1, 2 if top <= 10 else 5))
+            ax.set_xticks(range(0, top + 1, 1 if top <= 6 else 2 if top <= 10 else 5))
             ax.set_ylim(-0.75, len(entries) - 0.45)
             ax.set_xlabel(f"held-out targets certified (of {top}{' per family' if group is None and groups else ''})",
                           fontsize=8, color=INK_2)
         axes[0][0].set_yticks(np.arange(len(entries))[::-1])
         axes[0][0].set_yticklabels([m for m, _ in entries], fontsize=8.5, color=INK)
-        fig.suptitle(f"{short_label(bench)}: best configuration of each method (validation, PRISM-certified)",
+        fig.suptitle(f"{short_label(bench)}\nbest configuration of each method (validation, PRISM-certified)",
                      x=0.01, ha="left", fontsize=10.5, fontweight="bold", color=INK)
         handles = [Patch(color=OURS, label="ours: certified per rule list (mean over runs; whisker: range)"),
                    Patch(color=BASELINE, label="baselines: certified per rule list"),
                    Line2D([], [], marker="D", linestyle="none", markerfacecolor=SURFACE, markeredgecolor=INK,
                           label="library: certified by at least one of the lists"
                                 + (" (per family)" if groups else ""))]
-        fig.legend(handles=handles, loc="lower left", ncol=3, fontsize=7.5, frameon=False, labelcolor=INK_2)
-        fig.tight_layout(rect=(0, 0.06, 1, 0.97))
+        fig.legend(handles=handles, loc="lower left", ncol=3 if groups else 1, fontsize=7.5, frameon=False, labelcolor=INK_2)
+        fig.tight_layout(rect=(0, 0.06 if groups else 0.17, 1, 0.95))
         path = self.out / f"rq1_{bench.name}.png"
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         plt.close(fig)

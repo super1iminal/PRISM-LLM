@@ -85,7 +85,6 @@ A result appears here only where it drove a decision. The earlier log, with per-
   - QVBS families through the 1–2–3–Go! artifact (`third_party/README.md`; Docker or WSL): reproduce two of its published numbers, then pick one family it fails on (csma or Mars rovers) and one it does well on. Each becomes a domain with a test that reproduces a published value, a vocabulary and thresholds: the optimum plus 5% of it per instance, minus 5% when maximizing (Asher, Oct 15).
   - Families of MDPs (PAYNT): robust per-state policies on a same-size gridworld subfamily against our rules on held-out grids of that size. It does not apply across sizes, so it is a positioning experiment.
   - A strategy synthesized on one instance and applied to the others (a baseline Marsha proposed) has no implementation.
-  - The grid baselines' trees and PPO are not PRISM-certified ("unchecked" in RQ1; `configs/plot/transfer_results.yaml` draws numpy-model values).
   - Untried ideas: a closed patch language (variables compared with constants only), best-of-N first rounds, rotating the shown members each round, and starting the training-set loop from what a run's per-grid rule sets share.
   - Readability (rules against tree nodes and network weights) has no metric.
   - Prompt wart: gridworld's `description.md.j2` runs two bullets together ("it starts at 0.- The agent keeps moving"). Fixing it changes every gridworld prompt and the saved-run replays, so it waits for a deliberate prompt revision.
