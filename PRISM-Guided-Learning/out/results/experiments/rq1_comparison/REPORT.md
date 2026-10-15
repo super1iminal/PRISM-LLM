@@ -72,7 +72,7 @@ Targets 0-7: 5 held out (each list's own training instances are left out).
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 3 | 3.00 | 3.00 | 3 | 3.0 | – | 67% (0%–100%) | 0.005 (0.004–0.007) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 2.40 (1.00–3.00) | 2.40 (1.00–3.00) | 2 (1–3) | 2.4 (1.0–3.0) | 1.50 (1.00–2.00) | 40% (0%–100%) | 0.006 (0.004–0.008) |
 | Hand-written maze rules | Hand-written maze rules | ✓ | – | 1.00 | 1.00 | 1 | 1.0 | 1.00 | – | – |
 
 ![Pac-Man (trained on horizons 14, 16, 18; 5 held out: 8, 10, 12, 20, 25)](rq1_pacman.png)
