@@ -12,7 +12,7 @@ Targets 12-19: 8 held out (each list's own training instances are left out).
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 1 | 6.00 | 6.00 | 7 | 8.0 | 6.00 | 75% | 0.100 |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 3 | 6.75 (6.00–7.25) | 6.75 (6.00–7.25) | 8 (7–8) | 8.0 | 6.50 (6.00–6.75) | 75% | 0.102 (0.100–0.105) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 3.75 | 3.75 | 7 | 7.0 | 3.75 | – | – |
 | Rule-list search | Rule-list search | ✓ | – | 4.50 | 4.50 | 7 | 7.0 | 2.75 | – | – |

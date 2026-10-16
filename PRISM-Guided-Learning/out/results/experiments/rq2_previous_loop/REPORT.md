@@ -10,9 +10,9 @@ Targets 12-19 (each list's own training instances left out); certified of 8.
 
 | condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
 |---|---|---|---|---|---|---|---|---|---|
-| New loop (core) | New | 1 | 6.00 | reference | 6.00 | 8.0 | 75% | 55.5 | 117,726 |
-| Previous loop, Haiku 5.5 | Prev | 5 | 6.25 (5.50–7.00) | +0.25 [-0.10, +0.60] | 5.20 (4.00–6.25) | 8.0 | 10% (0%–25%) | 4.9 (4.5–5.0) | 11,315 (8,570–15,009) |
-| Previous loop, Sonnet 5.5 | Prev Sonnet | 3 | 6.67 (5.75–7.25) | +0.67 [+0.17, +1.17] | 6.42 (5.50–7.00) | 8.0 | 75% | 2.8 (2.8–3.0) | 27,330 (22,730–35,251) |
+| New loop (core) | New | 3 | 6.75 (6.00–7.25) | reference | 6.50 (6.00–6.75) | 8.0 | 75% | 55.8 (55.5–56.0) | 120,256 (117,726–124,276) |
+| Previous loop, Haiku 5.5 | Prev | 5 | 6.25 (5.50–7.00) | -0.50 [-1.12, +0.13] | 5.20 (4.00–6.25) | 8.0 | 10% (0%–25%) | 4.9 (4.5–5.0) | 11,315 (8,570–15,009) |
+| Previous loop, Sonnet 5.5 | Prev Sonnet | 3 | 6.67 (5.75–7.25) | -0.08 [-0.92, +0.75] | 6.42 (5.50–7.00) | 8.0 | 75% | 2.8 (2.8–3.0) | 27,330 (22,730–35,251) |
 
 ## Random grids without `closer`
 

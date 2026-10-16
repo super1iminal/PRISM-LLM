@@ -12,7 +12,7 @@ RQ2 at a glance: [rq2_overview.png](rq2_overview.png) (every ablation cell again
 
 | cell | grids | grids_noclose | families | pacman | mer | mer_n | mer_one | mer_n_one |
 |---|---|---|---|---|---|---|---|---|
-| Ours, Haiku 5.5 | 1/3 (launch: false) | 1/3 (launch: false) | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
+| Ours, Haiku 5.5 | 3/3 ✓ | 1/3 (launch: false) | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
 | 1-2-3-Go! (reimplemented: trees over raw variables) (baseline) | certified ✓ |  | certified ✓ | certified ✓ | certified ✓ | certified ✓ | certified ✓ | certified ✓ |
 | 1-2-3-Go! trained on horizon 5 (as the paper) (baseline) |  |  |  | certified ✓ |  |  |  |  |
 | 1-2-3-Go! trained on n = 1 (as the paper) (baseline) |  |  |  |  | certified ✓ | certified ✓ |  |  |
@@ -83,7 +83,7 @@ RQ2 at a glance: [rq2_overview.png](rq2_overview.png) (every ablation cell again
 
 | cell | grids | grids_noclose | families | pacman | mer | mer_n |
 |---|---|---|---|---|---|---|
-| New loop (core) | 1/3 (launch: false) | 1/3 (launch: false) | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
+| New loop (core) | 3/3 ✓ | 1/3 (launch: false) | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
 | Previous loop, Haiku 5.5 | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ |
 | Previous loop, Sonnet 5.5 | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
 
