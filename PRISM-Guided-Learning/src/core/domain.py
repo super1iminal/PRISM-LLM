@@ -145,6 +145,12 @@ class Domain:
         """Optional occupancy horizon for the mass analysis (used when the config asks the domain)."""
         return None
 
+    def rule_scorer(self, instance: Instance) -> Optional[Any]:
+        """Optional fast model of `instance` that scores rule lists without PRISM (`rules.any_scorer: domain`): its
+        `order_values(policy, orders)` gives, for each action order, the (best, worst) values of `policy` with its
+        `any` rules resolved in that order. None if the domain has none."""
+        return None
+
     # ---------------------------------------------------------------- the domain's data files
 
     def read_dataset(self, dataset: str) -> pd.DataFrame:

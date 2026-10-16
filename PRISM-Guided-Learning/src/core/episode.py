@@ -37,6 +37,7 @@ class Member:
     vocabulary: Vocabulary            # what rule conditions may name besides the policy variables
     context: Dict[str, Any]           # prompt context of this instance
     hidden: bool = False              # checked and scored, but never shown to the LLM (`run.hidden_sets`)
+    scorer: Optional[Any] = None      # the domain's fast model, scoring `any` orders (`rules.any_scorer`, `any_prune`)
 
     @property
     def requirements(self) -> List[Requirement]:

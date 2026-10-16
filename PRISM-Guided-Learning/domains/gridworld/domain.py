@@ -90,6 +90,11 @@ class GridWorld(Domain):
             **rule_vocabulary(n, goals, d["static"], cycle, phase_visible="obs_idx" in self.visible_extra),
         }
 
+    def rule_scorer(self, instance: Instance):
+        """The numpy gridworld (src/baselines/gridworld_mdp.py, checked against PRISM in tests/test_gridworld_mdp.py)."""
+        from baselines.gridworld_mdp import RuleScorer
+        return RuleScorer(instance.data, self.spec(instance).variables)
+
     @staticmethod
     def _sequence_formula(before: List[int], exclude: int) -> str:
         """Goals `before` reached in order, and `exclude` not reached until they all are."""

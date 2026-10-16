@@ -122,6 +122,10 @@ class RulesConfig:
     any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
                                     # on the members each round; declared: always the declared action order;
                                     # report: keep `any`, tell the LLM the best order (none: worst case over them)
+    any_scorer: str                 # prism | domain: what scores the orders (domain: the domain's fast model; PRISM
+                                    # then verifies only the chosen order, which can choose another order on ties)
+    any_prune: bool                 # the domain's fast model rules out orders that cannot score best, PRISM verifies
+                                    # the rest: the same choice (run store ignores it)
 
 
 @dataclass
@@ -274,6 +278,7 @@ def validate(cfg: Config) -> None:
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),
+        "rules.any_scorer": (cfg.rules.any_scorer, {"prism", "domain"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
         "run.scheduler": (cfg.run.scheduler, {"threads", *SCHEDULERS}),
     }

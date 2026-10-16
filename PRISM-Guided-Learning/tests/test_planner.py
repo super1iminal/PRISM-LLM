@@ -7,8 +7,10 @@ import pytest
 
 from config import load_config
 from core.domain import load_domain
+from core.episode import Check
 from core.planner import SymbolicPlanner
-from core.prism import PrismError
+from core.prism import PrismError, run_now
+from core.rules import action_orders, fixed_order
 from core.verifier import PolicyVerifier
 from fakes import ScriptedBackend, answer
 
@@ -164,6 +166,65 @@ def test_any_rules_are_resolved_into_the_best_order_on_the_members(tiny_grid):
     assert result["success"] and record["any_order"][0] == "right"             # `true -> right` passes (fakes.py)
     assert [r["action"] for r in result["final_rules"]] == record["any_order"]
     assert "resolved into one fixed order of the actions" in llm.prompts[0]
+
+
+def _orders_scored(tiny_grid, rules, *overrides):
+    """(planner, episode, policies, raw rules, every order) for one candidate on the tiny grid."""
+    domain = load_domain("gridworld", ["obs_idx"])
+    cfg = load_config(overrides=["rules.extended=true", "rules.general=true", "rules.any_order=all", *overrides])
+    planner = SymbolicPlanner(domain, None, cfg)
+    ep = planner._episode(domain.load_instances(str(tiny_grid))[0], logging.getLogger("test_planner").info)
+    raw = list(rules)
+    return planner, ep, planner._parse(ep, raw), raw, action_orders(list(ep.primary.verifier.spec.actions), "all")
+
+
+def _counting(monkeypatch):
+    calls = []
+    original = PolicyVerifier.verify_steps
+
+    def verify_steps(self, policy, analysis=True, runner=None):
+        calls.append(analysis)
+        return (yield from original(self, policy, analysis, runner))
+    monkeypatch.setattr(PolicyVerifier, "verify_steps", verify_steps)
+    return calls
+
+
+ANY_RULES = [("x = 0 & !wall", "any"), ("!g1 & toward", "any"), ("true", "down")]
+
+
+def test_orders_that_resolve_into_the_same_model_are_verified_once(tiny_grid, monkeypatch):
+    """Every order scores as if verified on its own; orders that choose alike wherever an already verified order
+    reaches take its values, without another PRISM check."""
+    planner, ep, policies, raw, orders = _orders_scored(tiny_grid, ANY_RULES)
+    calls = _counting(monkeypatch)
+    scored = run_now(planner._score_orders(ep, policies, raw, orders))
+    checks = len(calls)
+    assert sorted(scored) == list(range(24)) and 1 < checks < 24
+    for k, order in enumerate(orders):
+        alone = [run_now(m.verifier.verify_steps(p, analysis=False))
+                 for m, p in zip(ep.members, planner._parse(ep, fixed_order(raw, order)))]
+        assert scored[k][0] == Check(scored[k][1], alone).score(ep.members), order
+        assert [p.to_dicts() for p in scored[k][1]] == [p.to_dicts() for p in planner._parse(ep, fixed_order(raw, order))]
+
+
+def test_the_fast_model_prunes_orders_or_scores_them(tiny_grid, monkeypatch):
+    """`rules.any_prune`: the same choice with fewer PRISM checks; `rules.any_scorer: domain`: no PRISM check, and
+    the values PRISM finds."""
+    planner, ep, policies, raw, orders = _orders_scored(tiny_grid, ANY_RULES)
+    full = run_now(planner._score_orders(ep, policies, raw, orders))
+    pick = min(full, key=lambda k: (full[k][0], k))
+    pruner, ep, policies, raw, orders = _orders_scored(tiny_grid, ANY_RULES, "rules.any_prune=true")
+    calls = _counting(monkeypatch)
+    pruned = run_now(pruner._score_orders(ep, policies, raw, orders))
+    assert min(pruned, key=lambda k: (pruned[k][0], k)) == pick and set(pruned) < set(full)
+    assert all(pruned[k][0] == full[k][0] for k in pruned) and len(calls) < 24
+    scorer, ep, policies, raw, orders = _orders_scored(tiny_grid, ANY_RULES, "rules.any_scorer=domain")
+    calls.clear()
+    fast = run_now(scorer._score_orders(ep, policies, raw, orders))
+    assert not calls and sorted(fast) == list(range(24))
+    for k in fast:   # PRISM's loop solver stops early: its values are within about 1e-5 of the exact ones
+        for a, b in zip(fast[k][2].vs, full[k][2].vs):
+            assert a.worst == pytest.approx(b.worst, abs=1e-4) and a.best == pytest.approx(b.best, abs=1e-4)
 
 
 def test_any_rules_in_the_declared_order_or_with_the_best_order_reported(tiny_grid):

@@ -34,6 +34,9 @@ def test_identity_ignores_names_parallelism_and_seed():
     assert fingerprint(cfg) == fingerprint(other)
     assert "condition" not in identity(cfg)
     assert fingerprint(cfg) != fingerprint(load_config("haiku_ts_order", ["rules.any_order=none"]))
+    # pruning the orders for `any` changes no choice; scoring them on the domain's fast model can
+    assert fingerprint(cfg) == fingerprint(load_config("haiku_ts_order", ["rules.any_prune=true"]))
+    assert fingerprint(cfg) != fingerprint(load_config("haiku_ts_order", ["rules.any_scorer=domain"]))
     # a condition that differs from the core only in these settings is the same configuration
     assert fingerprint(load_config("haiku_ts_norestart")) == fingerprint(
         load_config("haiku_ts_order", ["rules.any_order=none"]))
