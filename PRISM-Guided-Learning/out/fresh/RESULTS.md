@@ -56,3 +56,25 @@ After a list reaches the training optimum, the loop keeps revising it with the s
 where it crashes most often compared with the best controller; finals selected by lowest mean regret.
 Certified of 6 validation horizons: 3, 3, 3 (mean 3.00; horizons 8, 10, 12; 20 fails at 0.5768 each time);
 v1 (`pm/`) 3, 4, 3 (3.33); to beat: 4. Cost per repeat $0.22-0.25.
+
+## Random grids without `closer` (`grids_noclose/`, hidden: hazard, closer)
+| repeat | set 0 | set 1 | set 2 | set 3 | mean | cost |
+|---|---|---|---|---|---|---|
+| 1 | 2 | 4 | 5 | 3 | 3.50 | $0.98 |
+| 2 | 4 | 4 | 4 | 4 | 4.00 | $1.13 |
+| 3 | 3 | 4 | 4 | 2 | 3.25 | $1.08 |
+| mean | | | | | **3.58** (3.25-4.00) | |
+
+To beat: 6.00 (template), 5.50 (PPO with `closer`). Not beaten. Without `closer` the only progress sensor is
+`toward`, which stalls behind obstacles: many LLM lists pass no training grid, set 0's kept list passes 1 of 3 in
+every repeat, and even lists that pass all three training grids (sets 1 and 2) certify only 4-5 of 8. The certification
+was also slow (PRISM's Gauss-Seidel fallback on looping policies: up to 33 min per repeat).
+
+## Attribution (families, one repeat each unless noted; certified per list of 20)
+| variant | rooms | crossing | adjacent | mean | LLM cost (3 families) |
+|---|---|---|---|---|---|
+| frozen method (3 repeats) | 19.00 | 20.00 | 19.33 | 19.44 | $1.03-1.25 |
+| no repair (3 repeats, same answers) | 15.67 | 16.33 | 19.33 | 17.11 | (same) |
+| verifier picks the action order each round | 9 | 20 | 19 | 16.00 | $0.82 |
+| feedback without the per-action sensor and risk lines | 19 | 9 | 19 | 15.67 | $1.16 |
+| one chain instead of 8 (same stop rule: ended after 16, 6, 2 answers, not 56) | 19 | 18 | 18 | 18.33 | $0.21 |
