@@ -75,7 +75,8 @@ Targets 0-7,9: 6 held out (each list's own training instances are left out).
 |---|---|---|---|---|---|---|---|---|---|---|
 | Ours (Haiku 5.5) | **Ours, Haiku 5.5** |  | 5 | 2.40 (1.00–3.00) | 2.40 (1.00–3.00) | 2 (1–3) | 2.4 (1.0–3.0) | 2.40 (1.00–3.00) | 40% (0%–100%) | 0.006 (0.004–0.008) |
 | Ours (Haiku 5.5) | **Ours, Haiku 5.5, family prompt, failure feedback and pick** |  | 3 | 3.00 | 3.00 | 3 | 3.0 | 3.00 | 100% | 0.104 (0.090–0.116) |
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5, verifier narrowing** | ✓ | 5 | 3.60 (2.00–4.00) | 3.60 (2.00–4.00) | 4 (2–4) | 3.6 (2.0–4.0) | – | 80% (0%–100%) | 0.009 (0.001–0.014) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5, verifier narrowing** |  | 5 | 3.60 (2.00–4.00) | 3.60 (2.00–4.00) | 4 (2–4) | 3.6 (2.0–4.0) | – | 80% (0%–100%) | 0.009 (0.001–0.014) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5, pick and verifier narrowing** | ✓ | 3 | 4.00 | 4.00 | 4 | 4.0 | – | 100% | 0.098 (0.093–0.103) |
 | Ours (Sonnet 5.5) | **Ours, Sonnet 5.5** | ✓ | 3 | 2.33 (1.00–3.00) | 2.33 (1.00–3.00) | 2 (1–3) | 2.3 (1.0–3.0) | 2.33 (1.00–3.00) | 67% (0%–100%) | 0.146 (0.072–0.241) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) | ✓ | – | 4.00 | 4.00 | 4 | 4.0 | 4.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! trained on horizon 5 (as the paper) |  | – | 2.00 | 2.00 | 2 | 2.0 | 2.00 | – | – |
@@ -137,3 +138,39 @@ Targets 0-8: 6 held out (each list's own training instances are left out).
 | Strategy of one instance | Strategy of n = 3, by requests left |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 
 ![Mars Exploration Rovers across n (x = 0.89; trained on n = 1, 2, 3; 6 held out: n = 4, 5, 6, 8, 10, 15)](rq1_mer_n.png)
+
+## Mars Exploration Rovers, trained on n = 1, x = 0.01 only, as in 1-2-3-Go!'s paper (8 held out: x = 0.01, 0.03, 0.05, 0.08, 0.13, 0.21, 0.34 at n = 10; n = 20)
+
+Targets 0-8: 8 held out (each list's own training instances are left out).
+
+| method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5, family prompt, failure feedback and pick** | ✓ | 3 | 4.00 | 4.00 | 4 | 4.0 | 4.00 | 100% | 0.161 (0.113–0.237) |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) | ✓ | – | 4.00 | 4.00 | 4 | 4.0 | 4.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features |  | – | 4.00 | 4.00 | 4 | 4.0 | 4.00 | – | – |
+| PPO | PPO with our features | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| PPO | PPO over raw variables |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Uniform random policy | Uniform random policy | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Best of 1000 random policies | Best of 1000 random policies | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Strategy of one instance | Strategy of the training instance (n = 1), by requests made (k) | ✓ | – | 4.00 | 4.00 | 4 | 4.0 | 4.00 | – | – |
+| Strategy of one instance | Strategy of the training instance (n = 1), by requests left |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+
+![Mars Exploration Rovers, trained on n = 1, x = 0.01 only, as in 1-2-3-Go!'s paper (8 held out: x = 0.01, 0.03, 0.05, 0.08, 0.13, 0.21, 0.34 at n = 10; n = 20)](rq1_mer_one.png)
+
+## Mars Exploration Rovers across n (x = 0.89), trained on n = 1 only, as in 1-2-3-Go!'s paper (8 held out: n = 2, 3, 4, 5, 6, 8, 10, 15)
+
+Targets 0-8: 8 held out (each list's own training instances are left out).
+
+| method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5, family prompt, failure feedback and pick** | ✓ | 3 | 0.00 | 0.00 | 0 | 0.0 | 0.00 | 100% | 0.130 (0.094–0.177) |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| PPO | PPO with our features | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| PPO | PPO over raw variables |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Uniform random policy | Uniform random policy | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Best of 1000 random policies | Best of 1000 random policies | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Strategy of one instance | Strategy of the training instance (n = 1), by requests made (k) | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Strategy of one instance | Strategy of the training instance (n = 1), by requests left |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+
+![Mars Exploration Rovers across n (x = 0.89), trained on n = 1 only, as in 1-2-3-Go!'s paper (8 held out: n = 2, 3, 4, 5, 6, 8, 10, 15)](rq1_mer_n_one.png)
