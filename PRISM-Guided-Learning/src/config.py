@@ -81,6 +81,7 @@ class FeedbackConfig:
     early_tolerance: float                    # with `early`: refine passing rules while their mean loss exceeds this
     early_refine: bool                        # with `early`: show the early check in REFINE/EXTEND prompts too
     early_group: List[str]                    # with `early`: group the losses by these variables' values (a place)
+    early_rank: bool                          # with `early`: the early loss ranks lists (keep-best, `any` order)
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own

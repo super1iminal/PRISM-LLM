@@ -499,6 +499,7 @@ class SymbolicPlanner:
         pairs = [(m.early, p) for m, p in zip(ep.members, check.policies) if m.early is not None]
         if pairs:
             check.early = early.check(pairs, self.config.feedback.states_per_rule, self.config.feedback.early_group)
+            check.early_ranked = self.config.feedback.early_rank
         return check
 
     def _narrow(self, ep: Episode, check: Check, answer: Answer) -> Steps[Check]:

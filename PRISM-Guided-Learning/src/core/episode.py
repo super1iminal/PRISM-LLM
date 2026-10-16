@@ -84,6 +84,7 @@ class Check:
     vs: List[Verification]
     any_report: Optional[Dict[str, Any]] = None   # `rules.any_order: report`: the best order, reported as feedback
     early: Optional[Any] = None       # `feedback.early`: the rules' loss early in the games (core/early.py)
+    early_ranked: bool = True         # `feedback.early_rank`: the early loss counts in the score
 
     @property
     def policy(self) -> SymbolicPolicy:
@@ -93,7 +94,7 @@ class Check:
     def score(self, members: List[Member]) -> Tuple:
         """The members' scores, summed; with `feedback.early`, the mean early loss comes after the worst shortfall."""
         total = tuple(map(sum, zip(*(score(v, m.requirements) for m, v in zip(members, self.vs)))))
-        return total if self.early is None else total[:3] + (self.early.mean,) + total[3:]
+        return total if self.early is None or not self.early_ranked else total[:3] + (self.early.mean,) + total[3:]
 
     def passes(self, members: List[Member], case: str = "worst") -> bool:
         return all(not failing(m.requirements, getattr(v, case)) for m, v in zip(members, self.vs))
