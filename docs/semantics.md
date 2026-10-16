@@ -15,7 +15,7 @@ A rule set is an ordered list `R = ⟨(c_1, a_1), …, (c_n, a_n)⟩`, where eac
 3. **Induced MDP** `M_R`: same states and transitions as `M`, but at each `s` only the choices whose label is in `Allow(s)` or not in `A`.
 4. **Decision states:** `s` is a decision state if its choices in `M` that carry a policy action differ (forced states are excluded: those where these choices all have the same successor distribution, including states with at most one of them; other choices, such as forced moves under non-policy labels or unlabelled environment nondeterminism, are not the policy's to make and stay unrestricted). It is **uncovered** if it is a decision state and `first(obs(s)) = ⊥`. Coverage counts distinct `obs` values over the reachable decision states of `M_R`.
 
-Domains must keep every policy action enabled in every decision state (gridworld, UUV and Pac-Man do), so restricting `Allow(s)` never deadlocks.
+Domains must keep every policy action enabled in every decision state (gridworld, UUV, Pac-Man and MER do), so restricting `Allow(s)` never deadlocks.
 
 ### Extended vocabulary (`rules.extended`)
 The domain may declare, per instance, **constants** `K` (named integers, e.g. a goal's row) and **features** in `spec.yaml.j2`. A *state feature* `f` is an expression `e_f` over `X ∪ K`; an *action feature* `g` has one expression `e_g^a` per `a ∈ A`. With `rules.extended`:

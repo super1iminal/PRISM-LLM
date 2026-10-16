@@ -20,7 +20,7 @@ Pick a mix: some where 1-2-3-Go! fails (where we must win) and one where it does
 | csma (N=2), `some_before` | K | near-optimal | generated (`gen_csma`) |
 | firewire_dl, `deadline` | deadline or delay | near-optimal | QVBS |
 | zeroconf_dl, `deadline_max` / `deadline_min` | deadline, K | max near-optimal, min fails when N scales | QVBS |
-| mer, `p1` | x (a probability) | fails for x ≥ 0.08 (0.19999 against 0.214–0.671) | Feng et al. PRISM case study, as in the artifact |
+| mer, `p1` | x (a probability) | fails for x ≥ 0.08 (0.19999 against 0.214–0.671) | Feng et al. PRISM case study, as in the artifact. **Done:** `domains/mer/` (steps 2 and 4–7), translated from the artifact's `test-data/models/mer.jani`, so nothing was downloaded; baselines, Haiku runs and RQ1 entry still to do |
 
 **Rule for now:** the instances of one family must share the policy-visible variables (`docs/semantics.md`, "Training sets"). Parameters that add modules (N) are out until the rule language handles indexed variables; note that as an ICAPS question, not a task. That keeps consensus and csma at N=2 (K varies), firewire, zeroconf (deadline, K) and mer (x).
 

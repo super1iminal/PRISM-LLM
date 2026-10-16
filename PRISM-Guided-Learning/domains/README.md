@@ -82,3 +82,20 @@ the worst controller reaches 0.88 (8 moves) and 1.0 (12+). Every simple referenc
 (`src/calibrate.py --domain pacman --data pacman.csv`). The bare MDP reproduces the benchmark's published
 value and state count for `MAXSTEPS = 5` (`tests/test_pacman.py`). States: 6.9k (10 moves), 97k (15),
 883k (20), 3.7M (25).
+
+## mer
+
+Mars Exploration Rovers, the resource arbiter of Feng, Kwiatkowska and Parker (FASE 2011) as used by 1-2-3-Go!
+(Azeem et al., VMCAI 2025, arXiv:2410.18293). `model.prism.j2` is translated from the 1-2-3-Go! artifact's
+`test-data/models/mer.jani`, with every command labelled so that the policy schedules every step (as the artifact's
+action-named models do) and a disabled label leaving the state unchanged. That keeps all 27 actions enabled
+everywhere, and it replaces the model's self-loops. The policy is a scheduler, as in 1-2-3-Go!, and the requirement
+is its property `p1`: a high probability that both resources are granted at once (`F "err"`, `>=`). Instances vary
+`x`, the probability that a user keeps a resource after using it, at `n = 10`, the parameter 1-2-3-Go! fails on
+(0.19999 everywhere, against 0.2016 at x = 0.01 up to 0.6712 at 0.89), and also `n`, how many of user 1's comm
+requests while drive is held may take the arbiter's faulty shortcut. The threshold is the optimum minus 5% of it, so the published 0.19999 passes for x ≤ 0.05 and fails from
+x = 0.08. `data/mer.csv` holds the training instances (x = 0.01, 0.05, 0.13). `data/mer_transfer.csv` adds the
+validation instances (ids 3–8) and the sealed test instances (ids 9–11: x = 0.55, 0.89 and n = 100). The bare MDP
+reproduces four published optima (`tests/test_mer.py`). The extended vocabulary has the constants `N` and `X_PCT`
+(x in percent), the feature `shortcuts_left` and the action feature `enabled`, read from the model's `en_<action>`
+formulas. States: 7.5k (n = 1), 61k (n = 10), 592k (n = 100). PRISM runs out of its 4 GB heap at n = 1000.

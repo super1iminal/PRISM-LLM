@@ -1,0 +1,62 @@
+{% set U = {1: "user 1", 2: "user 2"} %}
+# Every step of the system is an action: the policy schedules the arbiter and both users. An action that is not
+# possible in a state leaves the state unchanged.
+actions:
+  arb_reclaim: "the arbiter takes back the pending rescind (r > 0) once driving is free: r := 0 and a comm grant becomes pending (gc)"
+{% for i in [1, 2] %}
+  u{{ i }}_want_comm: "{{ U[i] }}, idle and wanting nothing (s{{ i }} = 0, r{{ i }} = 0), decides to want comm (r{{ i }} := 1)"
+  u{{ i }}_want_drive: "{{ U[i] }}, idle and wanting nothing, decides to want drive (r{{ i }} := 2)"
+  u{{ i }}_ready: "{{ U[i] }}, idle and wanting a resource, gets ready to ask for it (s{{ i }} := 1)"
+  u{{ i }}_request_comm: "{{ U[i] }} asks the idle arbiter (s = 0) for comm: if comm is held, a denial becomes pending; if both resources are free, a grant; if a user holds drive, the arbiter asks that user to give it up (r := driveUser){% if i == 1 %}, except that while k < N it does so only with probability 0.8 and with probability 0.2 grants comm at once (s := -1), counting each such request (k := k + 1){% endif %}"
+  u{{ i }}_request_drive: "{{ U[i] }} asks the idle arbiter for drive; the arbiter grants it if both resources are free, otherwise denies it"
+  u{{ i }}_grant_comm: "the arbiter grants comm to {{ U[i] }} (commUser := {{ i }})"
+  u{{ i }}_grant_drive: "the arbiter grants drive to {{ U[i] }} (driveUser := {{ i }})"
+  u{{ i }}_deny_comm: "the arbiter denies {{ U[i] }}'s comm request; {{ U[i] }} goes back to ready"
+  u{{ i }}_deny_drive: "the arbiter denies {{ U[i] }}'s drive request; {{ U[i] }} goes back to ready"
+  u{{ i }}_use: "{{ U[i] }} uses its resource: with probability x it keeps it (s{{ i }} := 4, it must cancel later), otherwise it finishes and goes idle"
+  u{{ i }}_cancel_comm: "{{ U[i] }} gives comm back (or withdraws its comm request)"
+  u{{ i }}_cancel_drive: "{{ U[i] }} gives drive back (or withdraws its drive request, or answers a rescind)"
+  u{{ i }}_rescind_drive: "the arbiter asks {{ U[i] }}, who holds drive, to give it up (rescind{{ i }} := true)"
+{% endfor %}
+
+# Policy-visible variables: every state variable, as 1-2-3-Go! uses.
+variables:
+  - name: s
+    description: "arbiter: 0 idle, 1 or 2 serving that user's request, -1 about to grant comm to user 1 at once"
+  - name: r
+    description: "arbiter: the user asked to give up drive (0 = nobody)"
+  - name: k
+    description: "arbiter: user 1's comm requests made while drive was held (at most N = {{ n }}; each may take the shortcut)"
+  - name: commUser
+    description: "the user holding comm (0 = free)"
+  - name: driveUser
+    description: "the user holding drive (0 = free)"
+  - name: gc
+    description: "arbiter: a comm grant is pending"
+  - name: gd
+    description: "arbiter: a drive grant is pending"
+  - name: dc
+    description: "arbiter: a comm denial is pending"
+  - name: dd
+    description: "arbiter: a drive denial is pending"
+{% for i in [1, 2] %}
+  - name: s{{ i }}
+    description: "{{ U[i] }}: 0 idle, 1 ready to ask, 2 waiting for the answer, 3 holding the resource, 4 holding it and must cancel"
+  - name: r{{ i }}
+    description: "{{ U[i] }}: the resource it wants or holds (0 none, 1 comm, 2 drive)"
+  - name: rescind{{ i }}
+    description: "{{ U[i] }} has been asked to give up drive"
+{% endfor %}
+  - name: e
+    description: "monitor: 0 nothing granted, 1 comm granted, 2 drive granted, 3 both granted at once (the error)"
+  - name: u
+    description: "monitor: the user holding the resource it watches (0 = none)"
+
+{% include "_vocabulary.yaml.j2" %}
+
+requirements:
+  - name: err
+    formula: 'F "err"'
+    bound: ">="
+    threshold: {{ err_threshold }}
+    description: "Both resources are granted at the same time at some point (the monitor reaches e = 3)."
