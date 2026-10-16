@@ -33,6 +33,11 @@ class Mer(Domain):
         d.update({"resources": RESOURCES, **rule_vocabulary(d["n"], d["x"], self.root)})
         return d
 
+    def optimal_strategy(self, instance: Instance, config):
+        """The err requirement's optimal actions on the explicit model, what 1-2-3-Go!'s trees learn from."""
+        from baselines.explicit_mdp import optimal_strategy
+        return optimal_strategy(self, instance, config)
+
 
 # ---------------------------------------------------------------- extended rule vocabulary
 

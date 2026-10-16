@@ -151,6 +151,12 @@ class Domain:
         `any` rules resolved in that order. None if the domain has none."""
         return None
 
+    def optimal_strategy(self, instance: Instance, config) -> Optional[Any]:
+        """Optional optimal strategy of `instance` (`feedback.optimal`, `prompt.demonstration`; core/optimal.py): a
+        function from a state (every model variable) to its optimal actions and chance of success. None if the
+        domain has none."""
+        return None
+
     # ---------------------------------------------------------------- the domain's data files
 
     def read_dataset(self, dataset: str) -> pd.DataFrame:

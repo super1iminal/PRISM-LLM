@@ -35,6 +35,11 @@ class PacMan(Domain):
         """Mass-analysis horizon: three transitions (Pac-Man, ghost 0, ghost 1) per Pac-Man move."""
         return 3 * instance.data["max_steps"] + 3
 
+    def optimal_strategy(self, instance: Instance, config):
+        """The crash requirement's optimal actions on the explicit model, what 1-2-3-Go!'s trees learn from."""
+        from baselines.explicit_mdp import optimal_strategy
+        return optimal_strategy(self, instance, config)
+
     def context(self, instance: Instance) -> Dict[str, Any]:
         d = dict(instance.data)
         d.update({

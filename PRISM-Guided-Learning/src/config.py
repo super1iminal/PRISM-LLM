@@ -76,6 +76,7 @@ class FeedbackConfig:
     states_per_rule: int
     space: str                                # states (valuations) | features (feature values per action)
     trajectory: bool                          # show a likely way to fail the worst-failing requirement
+    optimal: bool                             # name the optimal strategy's actions at the states the feedback names
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
@@ -96,6 +97,7 @@ class PromptConfig:
     strategy_first: bool            # the answer starts with the strategy in words (`strategy`), then the rules
     tie_break: bool                 # explain that `any` is resolved against the policy, and how to fix an order
     hint: str                       # extra advice for the policy section ("" = none), set by a condition
+    demonstration: bool             # the initial prompt shows one optimal run on the first training member
 
 
 @dataclass

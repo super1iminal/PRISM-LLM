@@ -102,6 +102,18 @@ def test_baseline_optimal_actions_make_progress(domain, instances):
     assert mdp.evaluate(policy)["err"] == pytest.approx(0.2, abs=1e-9)
 
 
+def test_a_demonstration_takes_the_shortcut(domain, instances):
+    """`prompt.demonstration` on n = 1: the optimal strategy's run, along the outcomes most likely to succeed, asks for
+    comm while user 2 holds drive and takes the arbiter's shortcut (k becomes 1), which ends in the error."""
+    from baselines.explicit_mdp import optimal_strategy
+    from core.optimal import demonstration
+    config = load_config("mer_baseline")
+    steps = demonstration(PolicyVerifier(domain, instances["n1_x0.01"], config),
+                          optimal_strategy(domain, instances["n1_x0.01"], config))
+    assert [s.actions for s in steps[-2:]] == [("u1_request_comm",), ("u1_grant_comm",)]
+    assert steps[-2].valuation["driveUser"] == 2 and steps[-1].valuation["k"] == 1
+
+
 def test_n_family(domain):
     """Across n at x = 0.89 the optimum grows with the shortcut attempts: 0.2 at n = 1, 0.4438 at 3, 0.6944 at 100."""
     rows = {i.data["name"]: i.data for i in domain.load_instances("mer_n_transfer.csv")}

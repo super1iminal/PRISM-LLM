@@ -95,6 +95,13 @@ class GridWorld(Domain):
         from baselines.gridworld_mdp import RuleScorer
         return RuleScorer(instance.data, self.spec(instance).variables)
 
+    def optimal_strategy(self, instance: Instance, config):
+        """The optimal strategy the trees learn from (gridworld_mdp.optimal_actions): every goal in order, none
+        entered early, no collision, as one objective (each requirement's own optimum would mislead: avoiding the
+        obstacle alone is best done by never moving)."""
+        from baselines.gridworld_mdp import optimal_strategy
+        return optimal_strategy(instance.data)
+
     @staticmethod
     def _sequence_formula(before: List[int], exclude: int) -> str:
         """Goals `before` reached in order, and `exclude` not reached until they all are."""

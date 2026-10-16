@@ -39,6 +39,14 @@ class Hotspot:
     valuation: Dict                 # policy-variable valuation
     mass: float                     # share of the total mass (0..1)
     requirements: Dict[str, float] = field(default_factory=dict)
+    state: Optional[int] = None     # the reachable state with this valuation carrying the most mass
+    top: float = field(default=0.0, repr=False)   # that state's mass
+
+    def add(self, s: int, mass: float) -> None:
+        """Count state `s`'s mass."""
+        self.mass += mass
+        if self.state is None or mass > self.top:
+            self.state, self.top = int(s), float(mass)
 
 
 @dataclass
@@ -190,7 +198,7 @@ class MassAnalyzer:
                 valuation = self.verifier.policy_valuation(v.result, s)
                 key = tuple(valuation.values())
                 spot = by_valuation.setdefault(key, Hotspot(valuation, 0.0))
-                spot.mass += masses[s]
+                spot.add(s, masses[s])
                 spot.requirements[req.name] = spot.requirements.get(req.name, 0.0) + masses[s]
         total = sum(h.mass for h in by_valuation.values())
         if total > 0:
@@ -224,7 +232,7 @@ class MassAnalyzer:
                 blame.requirements[req.name] = blame.requirements.get(req.name, 0.0) + masses[s]
                 valuation = self.verifier.policy_valuation(v.result, s)
                 spot = spots[rule].setdefault(tuple(valuation.values()), Hotspot(valuation, 0.0))
-                spot.mass += masses[s]
+                spot.add(s, masses[s])
         total = sum(b.mass for b in blames.values())
         for rule, blame in blames.items():
             if total > 0:
@@ -243,6 +251,7 @@ class TraceStep:
     probability: float              # probability of the outcome followed
     failing: float                  # chance of failing the requirement from the state reached
     reached: Dict                   # policy-visible variables of the state reached
+    state: int = -1                 # index of the state the step starts in
 
 
 def failing_trace(verifier: PolicyVerifier, v: Verification, req: Requirement, adversarial: bool,
@@ -265,7 +274,7 @@ def failing_trace(verifier: PolicyVerifier, v: Verification, req: Requirement, a
         t, p = max(choice.successors, key=lambda tp: tp[1] * fail[tp[0]])
         rule = v.state_rules[s] if v.state_rules and v.decisions and v.decisions[s] else None
         steps.append(TraceStep(verifier.policy_valuation(v.result, s), choice.action, rule, float(p), float(fail[t]),
-                               verifier.policy_valuation(v.result, t)))
+                               verifier.policy_valuation(v.result, t), int(s)))
         if fail[t] >= 1.0 - 1e-9:
             break
         s = t

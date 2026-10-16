@@ -2,14 +2,20 @@
 domain's own) with an episode's context (core/episode.py). The planner decides which prompt comes next;
 this module only builds them.
 """
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from config import Config
 from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
 from core.episode import Episode, Kept, Member
+from core.optimal import Strategy, at, demonstration
 from core.rules import SymbolicPolicy, Vocabulary, feature_values
 from core.verifier import Verification
+
+OPTIMAL_LEGEND = ("`optimal` names what the best strategy for this instance (computed by the model checker) does in "
+                  "that state, and `not` the action your rules take there instead{features}. Use it to see what tells "
+                  "a good action from a bad one, and write general rules from that, not rules for single states.")
+OPTIMAL_FEATURES = "; brackets list the features that hold for each of these actions"
 
 
 class Prompts:
@@ -17,6 +23,8 @@ class Prompts:
         self.domain = domain
         self.config = config
         self._feature_values: Dict[int, Callable] = {}   # id(member) -> its `feature_values` function
+        self._strategies: Dict[int, Strategy] = {}       # id(member) -> its optimal strategy (core/optimal.py)
+        self._demos: Dict[int, Dict[str, Any]] = {}      # id(member) -> the demonstration on it
 
     # ---------------------------------------------------------------- context
 
@@ -101,8 +109,10 @@ class Prompts:
         return self.domain.render(template, member.instance, **member.context, training=ep.training, **extra)
 
     def initial(self, ep: Episode) -> str:
-        """The first round's prompt, also sent when the loop restarts."""
-        return self.render(ep, "initial.md.j2")
+        """The first round's prompt, also sent when the loop restarts; with `prompt.demonstration`, it shows one
+        optimal run on the first member."""
+        demo = self.demonstration(ep) if self.config.prompt.demonstration else None
+        return self.render(ep, "initial.md.j2", **({"demonstration": demo} if demo and demo["steps"] else {}))
 
     def invalid(self, prompt: str, errors: str) -> str:
         """`prompt` again, with why the previous answer could not be parsed."""
@@ -115,9 +125,7 @@ class Prompts:
         if self.config.feedback.space != "features":
             return self.domain.format_state(valuation)
         spec, vocab = member.verifier.spec, member.vocabulary
-        if id(member) not in self._feature_values:
-            self._feature_values[id(member)] = feature_values(spec.variables, list(spec.actions), vocab)
-        values = self._feature_values[id(member)](valuation)
+        values = self._values(member)(valuation)
 
         flags = [f"{k}={str(v).lower()}" for k, v in valuation.items() if isinstance(v, bool)]
         for f in vocab.features:
@@ -130,13 +138,95 @@ class Prompts:
                  for a in spec.actions]
         return " & ".join(flags) + (" | " if flags else "") + "; ".join(moves)
 
-    def _merged(self, member: Member, hotspots) -> List[Dict[str, Any]]:
-        """Extend hotspots named by `_state`; states that read the same are merged, their masses summed."""
-        merged: Dict[str, float] = {}
+    def _values(self, member: Member) -> Callable:
+        """The member's `feature_values` function, built once."""
+        if id(member) not in self._feature_values:
+            spec = member.verifier.spec
+            self._feature_values[id(member)] = feature_values(spec.variables, list(spec.actions), member.vocabulary)
+        return self._feature_values[id(member)]
+
+    def _merged(self, member: Member, hotspots, v: Optional[Verification] = None) -> List[Dict[str, Any]]:
+        """Extend hotspots named by `_state`; states that read the same are merged, their masses summed. With
+        `feedback.optimal` (and `v`), each also says what the optimal strategy does there (in its heaviest state)."""
+        merged: Dict[str, List] = {}
         for h in hotspots:
             text = self._state(member, h.valuation)
-            merged[text] = merged.get(text, 0.0) + h.mass
-        return [{"mass": m, "state": t} for t, m in merged.items()]
+            merged.setdefault(text, [0.0, h])[0] += h.mass
+        out = [{"mass": m, "state": t} for t, (m, _) in merged.items()]
+        if v is not None and self.config.feedback.optimal:
+            for row, (_, h) in zip(out, merged.values()):
+                row["note"] = self._optimal_note(member, v, h.state, [])
+        return out
+
+    # ---------------------------------------------------------------- the optimal strategy (core/optimal.py)
+
+    def _strategy(self, member: Member) -> Strategy:
+        """The member's optimal strategy (`Domain.optimal_strategy`), computed once."""
+        if id(member) not in self._strategies:
+            strategy = self.domain.optimal_strategy(member.instance, self.config)
+            if strategy is None:
+                raise ValueError(f"feedback.optimal and prompt.demonstration: the {self.domain.name} domain has no "
+                                 "optimal strategy")
+            self._strategies[id(member)] = strategy
+        return self._strategies[id(member)]
+
+    def _action_features(self, member: Member, valuation: Dict[str, Any], actions: Sequence[str]) -> str:
+        """Per action, the action features that hold for it (`right: closer, toward; down: none`); '' without any."""
+        names = [f.name for f in member.vocabulary.features if f.is_action_feature]
+        if not names:
+            return ""
+        values = self._values(member)(valuation)
+
+        def holding(a: str) -> str:
+            return ", ".join(n if values[(n, a)] is True else f"{n}={values[(n, a)]}" for n in names
+                             if values[(n, a)] is not False) or "none"
+        return "; ".join(f"{a}: {holding(a)}" for a in actions)
+
+    def _optimal_note(self, member: Member, v: Verification, s: Optional[int], chosen: Sequence[str]) -> str:
+        """What the optimal strategy does in state `s` of `v`, against the actions the rules take there (`chosen`;
+        none where no rule decides): `optimal: down, not right [right: closer; down: toward]`. '' where the strategy
+        does not know the state or finds every action optimal."""
+        if s is None:
+            return ""
+        info = at(self._strategy(member), v.result, s)
+        actions = list(member.verifier.spec.actions)
+        if info is None or not info.actions or len(info.actions) == len(actions):
+            return ""
+        best = " or ".join(info.actions)
+        wrong = [a for a in chosen if a not in info.actions]
+        if chosen and not wrong:
+            return f"optimal: {best}, as the rules"
+        named = list(info.actions) + wrong
+        features = self._action_features(member, member.verifier.policy_valuation(v.result, s), named)
+        return (f"optimal: {best}" + (f", not {' or '.join(wrong)}" if wrong else "")
+                + (f" [{features}]" if features else ""))
+
+    def _situation(self, member: Member, valuation: Dict[str, Any]) -> str:
+        """The features that hold in a state: each state feature (by name if boolean and true, `name=value` if
+        integer), and per action feature the actions it holds for (`wall: up, left; closer: right`)."""
+        values = self._values(member)(valuation)
+        actions = list(member.verifier.spec.actions)
+        parts = []
+        for f in member.vocabulary.features:
+            if f.is_action_feature:
+                held = [a for a in actions if values[(f.name, a)] is not False]
+                parts += [f"{f.name}: {', '.join(held)}"] if held else []
+            elif values[(f.name, None)] is not False:
+                parts.append(f.name if values[(f.name, None)] is True else f"{f.name}={values[(f.name, None)]}")
+        return "; ".join(parts)
+
+    def demonstration(self, ep: Episode) -> Dict[str, Any]:
+        """One optimal run on the first member (`core.optimal.demonstration`): per decision, the state, the features
+        that hold there (unless feedback names states by their features already) and the optimal action(s)."""
+        member = ep.primary
+        if id(member) not in self._demos:
+            steps = demonstration(member.verifier, self._strategy(member))
+            plain, every = self.config.feedback.space != "features", len(member.verifier.spec.actions)
+            self._demos[id(member)] = {"member": member.label if ep.training else "this instance", "steps": [{
+                "state": self._state(member, st.valuation),
+                "features": self._situation(member, st.valuation) if plain else "",
+                "actions": "any action" if len(st.actions) == every else " or ".join(st.actions)} for st in steps]}
+        return self._demos[id(member)]
 
     def table(self, ep: Episode, member: Member, results: Dict[str, Any]) -> str:
         """Results table and previous rules only, asking for a complete new list (`planner.feedback: table`)."""
@@ -151,10 +241,14 @@ class Prompts:
             "rule": b.rule, "mass": b.mass,
             "text": f"{rules[b.rule].condition} (action {rules[b.rule].action})" if b.rule is not None else "",
             "states": list(dict.fromkeys(self._state(member, h.valuation) for h in b.hotspots)),
+            **({"notes": list(dict.fromkeys(self._noted(member, v, h.valuation, h.state,
+                                                        policy.allowed(h.valuation) or [] if b.rule is not None else [])
+                                            for h in b.hotspots))} if self.config.feedback.optimal else {}),
         } for b in (member.analyzer.rule_blame(v, blamed) if kind != "none" else [])]
         return self.render(ep, "refine.md.j2", member, **results, failing=[r.name for r in blamed], blame=blame,
                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
-                           show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, blamed, policy))
+                           show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, blamed, policy),
+                           **self._legend(member))
 
     def extend(self, ep: Episode, member: Member, v: Verification, failing_worst: List[Requirement],
                results: Dict[str, Any]) -> str:
@@ -162,9 +256,23 @@ class Prompts:
         kind = self.config.feedback.blame
         hotspots = member.analyzer.uncovered_hotspots(v, failing_worst) if kind != "none" else []
         return self.render(ep, "extend.md.j2", member, **results, failing=[r.name for r in failing_worst],
-                           hotspots=self._merged(member, hotspots),
+                           hotspots=self._merged(member, hotspots, v),
                            with_cost=any(r.reward is not None for r in failing_worst),
-                           show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, failing_worst))
+                           show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, failing_worst),
+                           **self._legend(member))
+
+    def _noted(self, member: Member, v: Verification, valuation: Dict[str, Any], s: Optional[int],
+               chosen: Sequence[str]) -> str:
+        """A state as feedback names it, followed by what the optimal strategy does there (`feedback.optimal`)."""
+        note = self._optimal_note(member, v, s, chosen)
+        return self._state(member, valuation) + (f": {note}" if note else "")
+
+    def _legend(self, member: Member) -> Dict[str, str]:
+        """How to read the notes of `feedback.optimal`."""
+        if not self.config.feedback.optimal:
+            return {}
+        features = any(f.is_action_feature for f in member.vocabulary.features)
+        return {"optimal_legend": OPTIMAL_LEGEND.format(features=OPTIMAL_FEATURES if features else "")}
 
     def _trace(self, member: Member, v: Verification, failing_reqs: List[Requirement],
                policy: Optional[SymbolicPolicy] = None) -> Dict[str, Any]:
@@ -178,9 +286,15 @@ class Prompts:
         if not steps:
             return {}
         rules = (policy or member.verifier.empty_policy()).rules
+
+        def move(s) -> str:
+            text = (f"rule {s.rule + 1} chose {s.action}" if s.rule is not None and s.rule < len(rules)
+                    else f"{s.action} (no rule decides here)" if s.action else "a move the policy does not choose")
+            if not self.config.feedback.optimal or s.action not in member.verifier.spec.actions or not v.decisions[s.state]:
+                return text
+            note = self._optimal_note(member, v, s.state, [s.action])
+            return text + (f"; {note}" if note else "")
         return {"trace": {"requirement": req.name, "adversarial": adversarial, "steps": [{
-            "state": self._state(member, s.valuation),
-            "move": (f"rule {s.rule + 1} chose {s.action}" if s.rule is not None and s.rule < len(rules)
-                     else f"{s.action} (no rule decides here)" if s.action else "a move the policy does not choose"),
+            "state": self._state(member, s.valuation), "move": move(s),
             "p": s.probability, "failing": s.failing} for s in steps],
             "end": self._state(member, steps[-1].reached), "certain": steps[-1].failing >= 1.0 - 1e-9}}

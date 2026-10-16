@@ -53,12 +53,14 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |
 | `feedback.trajectory` | `false` | also show one likely way the rules fail (a trace from the start) in REFINE/EXTEND prompts | `rq2_verifier_output` |
 | `feedback.space` | `states` | how feedback (blame, uncovered hotspots, the failing trace) names states: `states` (their valuations) or `features` (boolean variables, state features (`name=value` if integer, e.g. Pac-Man's `moves_left`) and, per action, the action features that hold; integer variables such as positions and headings are left out). Integer state features came with plan 04; before that Pac-Man could not run `features`, and gridworld's prompts are unchanged | `haiku_ts_features`, `rq2_verifier_output` |
+| `feedback.optimal` | `false` | at the states the feedback names (blame, uncovered hotspots, the failing trace), say what the optimal strategy of that training member does there (`optimal: down, not right`), with the action features that hold for those actions. The strategy is the domain's (`Domain.optimal_strategy`, `core/optimal.py`): the information 1-2-3-Go! learns from (gridworld: its combined objective, `gridworld_mdp.optimal_actions`; Pac-Man, MER: the requirement's `ExplicitMDP.optimal_actions`) | `haiku_*_optfb*` |
 | `prompt.catch_all_instruction` | `true` | "cover every state, e.g. end with `true -> …`" | catch-all ablation (single-seed runs) |
 | `prompt.examples` | `true` | include the domain's `examples.md.j2` | S4 |
 | `prompt.generality` | `false` | say that the rules will be certified unchanged on unseen, larger instances and must not single one out | `haiku_ts_generality` (transfer search) |
 | `prompt.strategy_first` | `false` | the answer starts with the strategy in words (`strategy`, added to the answer schema), then the rules | `haiku_ts_strategy` |
 | `prompt.tie_break` | `false` | explain that an `any` rule's choices are resolved against the policy, and how to fix an order with one rule per action | `haiku_ts_tiebreak` |
 | `prompt.hint` | `""` | extra advice in the policy section, set by a condition (deliberate hard-coding while searching for what works) | `haiku_ts_hint_wait` |
+| `prompt.demonstration` | `false` | the initial prompt shows one run of that optimal strategy on the first training member, along the outcomes most likely to succeed (up to 30 decisions: the state, the features that hold, the optimal action), to infer a general strategy from | `haiku_*_demo*` |
 | `prism.method` | `gaussseidel` | PRISM solver; plain value iteration fails on periodic chains (rules that read `obs_idx`) | — |
 | `prism.fallback_methods` | `[modpoliter]` | tried in order when `method` does not converge (seen on a real qwen rule set) | — |
 | `prism.multi_engine` / `multi_method` | `sparse` / `lp` | joint queries (the explicit engine can't do them; LP is exact) | — |

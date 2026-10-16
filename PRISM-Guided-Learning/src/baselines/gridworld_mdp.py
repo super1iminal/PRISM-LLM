@@ -305,3 +305,20 @@ def optimal_actions(mdp: GridMDP, tol: float = 1e-9, max_iters: int = 100000, di
         D = new
     Qd = np.where(optimal, (mdp.prob[None, :, :] * D[mdp.succ]).sum(axis=2), -1.0)
     return V, Qd >= Qd.max(axis=1, keepdims=True) - 1e-12
+
+
+def optimal_strategy(data: dict):
+    """`optimal_actions` as a core.optimal strategy: a state (x, y, the goal flags, obs_idx) -> its value and optimal
+    actions; settled once every goal is reached or the objective is lost."""
+    from core.optimal import Optimal
+    mdp = GridMDP(data)
+    value, optimal = optimal_actions(mdp)
+
+    def strategy(state: dict):
+        stage = sum(bool(state.get(f"g{k + 1}")) for k in range(mdp.K))
+        i = mdp.index.get((state["x"], state["y"], stage, state.get("obs_idx", 0)))
+        if i is None:
+            return None
+        return Optimal(float(value[i]), tuple(a for a, ok in zip(ACTIONS, optimal[i]) if ok),
+                       settled=stage == mdp.K or value[i] <= 0.0)
+    return strategy

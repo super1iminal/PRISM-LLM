@@ -400,6 +400,32 @@ class ExplicitMDP(Model):
         raise PrismError("\n".join(l for l in out.splitlines() if "rror" in l or "converge" in l) or out[-2000:])
 
 
+def optimal_strategy(domain: Domain, instance: Instance, config: Config, requirement: Optional[str] = None):
+    """`ExplicitMDP.optimal_actions` of one requirement (default: the spec's only one) as a core.optimal strategy: a
+    state (every model variable) -> its chance of meeting the requirement's optimum direction (the probability when
+    maximizing, one minus it when minimizing) and optimal actions; settled where every scheduler gets the same."""
+    from core.optimal import Optimal
+    mdp = ExplicitMDP(domain, instance, config)
+    reqs = [r for r in mdp.spec.requirements if requirement in (None, r.name)]
+    if len(reqs) != 1:
+        raise ValueError(f"name one of the requirements {[r.name for r in mdp.spec.requirements]} for its optimum")
+    req = reqs[0]
+    maximize = req.best_op() == "Pmax"
+    best, optimal = mdp.optimal_actions(req)
+    worst = mdp.reach(req.formula, maximize=not maximize)
+    success = best if maximize else 1.0 - best
+    index = {row.tobytes(): i for i, row in enumerate(mdp.values)}
+    dtype = mdp.values.dtype
+
+    def strategy(state: dict):
+        i = index.get(np.array([int(state[v]) for v in mdp.variables], dtype=dtype).tobytes())
+        if i is None:
+            return None
+        return Optimal(float(success[i]), tuple(a for a, ok in zip(mdp.actions, optimal[i]) if ok),
+                       settled=abs(best[i] - worst[i]) <= 1e-9)
+    return strategy
+
+
 def _decides(policy: np.ndarray) -> np.ndarray:
     return policy >= 0 if policy.ndim == 1 else policy.sum(axis=1) > 0
 
