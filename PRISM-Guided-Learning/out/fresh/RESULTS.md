@@ -110,3 +110,16 @@ Feedback (training-only) shows, on the states the best scheduler or the rules' w
 the rules take loses against the optimal one (with optimal continuation) and the optimal actions. Certified of 6:
 3, 3, 3 (mean 3.00, ids 3, 7, 8 as before); cost per repeat $0.35-0.38. Training is unchanged: over 316 answers of
 both MER-x variants the best value at x = 0.13 is 0.2027 (needs 0.212, optimum 0.2232). Not tried on MER across n.
+
+## Random grids without `closer`, coordinates plus a one-sentence hint (`grids_noclose_hint/`)
+The vocabulary text adds: "With these you can compare where the agent is with where the next goal is, e.g. `x < G1R`,
+`G1R - x > G1C - y`; the flags tell which goal is next." Certified of 8: 4, 4, 3, 4 / 1, 5, 5, 2 / 4, 4, 4, 4
+(means 3.75, 3.25, 4.00; overall **3.67**), costs $0.94 / $0.94 / $0.96. Haiku still rarely used coordinates
+(22 of 632 answers; 3 of 12 kept lists).
+
+| grids without `closer` | mean of 8 |
+|---|---|
+| sensors only (strict) | 3.58 |
+| + coordinates and goal constants | 3.50 |
+| + coordinates and the hint | 3.67 |
+| template / PPO | 6.00 / 5.50 |
