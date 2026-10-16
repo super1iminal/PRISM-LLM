@@ -7,6 +7,7 @@ import pytest
 from config import load_config
 from core.domain import load_domain
 from core.prism import PrismRunner
+from core.rules import RuleError
 from core.verifier import PolicyVerifier
 
 CFG = load_config()
@@ -59,9 +60,26 @@ def test_extended_vocabulary(domain, instances):
     cfg = load_config(None, ["rules.extended=true"])
     verifier = PolicyVerifier(domain, instances["n10_x0.01"], cfg)
     spec = verifier.spec
-    assert [c.name for c in spec.constants] == ["N", "X_PCT"] and [c.value for c in spec.constants] == [10, 1]
+    constants = {c.name: c.value for c in spec.constants}
+    assert (constants["N"], constants["X_PCT"], constants["HOLDING"], constants["BOTH"]) == (10, 1, 3, 3)
     rules = [(f"({c}) & enabled", a) for c, a in domain.reference_policies()["one_shot"]]
     v = verifier.verify(spec.policy(rules, spec.vocabulary(cfg.rules)), analysis=False)
+    assert v.worst["err"] == pytest.approx(0.2, abs=1e-9)
+
+
+def test_general_rules_name_the_codes(domain, instances):
+    """In the general language (no number above 1) the one-shot schedule is written with the named codes."""
+    cfg = load_config("haiku_mi_mer")
+    verifier = PolicyVerifier(domain, instances["n10_x0.01"], cfg)
+    spec = verifier.spec
+    vocabulary = spec.vocabulary(cfg.rules)
+    with pytest.raises(RuleError):
+        spec.policy([("s = 2 & gd", "u2_grant_drive")], vocabulary)
+    rules = [("s = -1", "u1_grant_comm"), ("s = USER2 & gd", "u2_grant_drive"),
+             ("s2 = IDLE & r2 = 0", "u2_want_drive"), ("s2 = IDLE & r2 = DRIVE", "u2_ready"),
+             ("s2 = READY & s = 0", "u2_request_drive"), ("s1 = IDLE & r1 = 0", "u1_want_comm"),
+             ("s1 = IDLE & r1 = COMM", "u1_ready"), ("s1 = READY & s = 0 & driveUser = USER2", "u1_request_comm")]
+    v = verifier.verify(spec.policy(rules, vocabulary), analysis=False)
     assert v.worst["err"] == pytest.approx(0.2, abs=1e-9)
 
 
@@ -71,3 +89,14 @@ def test_sealed_instances_are_refused():
     for ids in ([9], [10], [11], [0, 11]):
         with pytest.raises(SystemExit, match="sealed"):
             guard_sealed("mer_transfer.csv", ids)
+
+
+def test_baseline_optimal_actions_make_progress(domain, instances):
+    """A disabled action is a self-loop, so its value equals the state's; the baselines' optimal actions (maximizing)
+    must still lead to the error, so the strategy of first optimal actions reaches the optimum."""
+    import numpy as np
+    from baselines.explicit_mdp import ExplicitMDP
+    mdp = ExplicitMDP(domain, instances["n1_x0.01"], load_config("mer_baseline"))
+    _, optimal = mdp.optimal_actions(mdp.spec.requirements[0])
+    policy = np.where(optimal.any(axis=1), optimal.argmax(axis=1), -1)
+    assert mdp.evaluate(policy)["err"] == pytest.approx(0.2, abs=1e-9)

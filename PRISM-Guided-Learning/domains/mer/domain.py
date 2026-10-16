@@ -46,8 +46,23 @@ def enabled_conditions(root: Path) -> Dict[str, str]:
     return {a: re.sub(r"\bn\b", "N", expr) for a, expr in _ENABLED_RE.findall(text)}
 
 
+# The model's codes, the same in every instance, named so that rules in the general language (`rules.general`: no
+# number above 1) can use them
+CODES = [
+    ("IDLE", 0, "a user's status s1/s2: idle"), ("READY", 1, "a user's status: ready to ask"),
+    ("WAITING", 2, "a user's status: waiting for the arbiter's answer"),
+    ("HOLDING", 3, "a user's status: holding its resource"),
+    ("MUST_CANCEL", 4, "a user's status: kept its resource and must give it back"),
+    ("USER1", 1, "user 1 (values of s, r, commUser, driveUser, u)"), ("USER2", 2, "user 2"),
+    ("COMM", 1, "the comm resource (values of r1/r2), and the monitor's e when only comm is granted"),
+    ("DRIVE", 2, "the drive resource (values of r1/r2), and the monitor's e when only drive is granted"),
+    ("BOTH", 3, "the monitor's e when both resources are granted (the error)"),
+]
+
+
 def rule_vocabulary(n: int, x: float, root: Path) -> Dict[str, Any]:
-    """Constants N and X_PCT, the state feature shortcuts_left and the per-action feature enabled."""
+    """Constants N and X_PCT and the model's named codes (CODES), the state feature shortcuts_left and the per-action
+    feature enabled."""
     features = [
         {"name": "shortcuts_left", "description": "comm requests of user 1 while drive is held that can still take "
                                                   "the arbiter's shortcut (N - k)",
@@ -60,5 +75,6 @@ def rule_vocabulary(n: int, x: float, root: Path) -> Dict[str, Any]:
                 {"name": "N", "value": n, "description": "how many of user 1's comm requests while drive is held "
                                                          "may take the arbiter's shortcut"},
                 {"name": "X_PCT", "value": round(100 * x),
-                 "description": "the probability x that a user keeps a resource after using it, in percent"}],
+                 "description": "the probability x that a user keeps a resource after using it, in percent"}]
+            + [{"name": name, "value": value, "description": text} for name, value, text in CODES],
             "rule_features": features}

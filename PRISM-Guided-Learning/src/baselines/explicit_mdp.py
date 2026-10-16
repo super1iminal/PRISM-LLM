@@ -272,7 +272,10 @@ class ExplicitMDP(Model):
 
     def optimal_actions(self, requirement: Requirement, tol: float = 1e-9) -> Tuple[np.ndarray, np.ndarray]:
         """(per state: the optimum over all schedulers, per state and action: is the action optimal?). An action is
-        optimal where its best choice is within `tol` of the best choice under a policy action."""
+        optimal where its best choice is within `tol` of the best choice under a policy action. When maximizing, it
+        must also make progress where the optimum is positive: some optimal choice of it reaches a state closer to ψ
+        in the attractor of the optimal choices (as Storm's schedulers do). Otherwise a self-loop, such as an action
+        that leaves the state unchanged, would count as optimal, since its value equals the state's."""
         maximize = requirement.best_op() == "Pmax"
         V = self.reach(requirement.formula, maximize)
         Q = self.matrix @ V
@@ -282,7 +285,34 @@ class ExplicitMDP(Model):
         (np.maximum if maximize else np.minimum).at(QA, (self.choice_state[mine], self.choice_action[mine]), Q[mine])
         best = QA.max(axis=1) if maximize else QA.min(axis=1)
         with np.errstate(invalid="ignore"):            # states without policy actions: inf - inf
-            return V, np.isfinite(QA) & (np.abs(QA - best[:, None]) <= tol)
+            optimal = np.isfinite(QA) & (np.abs(QA - best[:, None]) <= tol)
+        if maximize:
+            optimal &= self._progress(requirement, V, Q, tol)
+        return V, optimal
+
+    def _progress(self, requirement: Requirement, V: np.ndarray, Q: np.ndarray, tol: float) -> np.ndarray:
+        """Per state and action: True unless the state's optimum is positive and none of the action's optimal choices
+        has a successor closer to ψ (fewer optimal choices away) than the state."""
+        _, goal = self.path_sets(requirement.formula)
+        state = self.choice_state
+        optimal = (Q >= V[state] - tol) & (V[state] > tol)
+        rank = np.where(goal, 0, -1)
+        moves = self.matrix[optimal]
+        for r in range(self.S):
+            hits = (moves @ (rank >= 0).astype(float)) > 0
+            new = np.zeros(self.S, dtype=bool)
+            new[state[optimal][hits]] = True
+            new &= rank < 0
+            if not new.any():
+                break
+            rank[new] = r + 1
+        succ_rank = np.where(rank[self.target] >= 0, rank[self.target], self.S + 1)
+        closest = np.minimum.reduceat(succ_rank, self.trans_start[:-1])
+        progress = optimal & (closest < rank[state])
+        keep = np.zeros((self.S, len(self.actions)), dtype=bool)
+        mine = progress & (self.choice_action >= 0)
+        keep[state[mine], self.choice_action[mine]] = True
+        return keep | ~(rank > 0)[:, None]
 
     # ------------------------------------------------------------ policies
 
@@ -331,8 +361,8 @@ class ExplicitMDP(Model):
             undecided = keep & self.decision & ~_decides(policy)
             uncovered = len(np.unique(self.obs[undecided], axis=0)) if undecided.any() else 0
             row = {"source": source, "target": int(self.instance.id), "parsed": True}
-            try:
-                worst = self._prism_worst(model)
+            try:                # PRISM cannot import a one-state model (its variable's range would be [0..0])
+                worst = {r.name: model.value(r, worst=True) for r in reqs} if model.S == 1 else self._prism_worst(model)
             except (PrismError, subprocess.TimeoutExpired) as e:    # undecided: counts as not certified
                 rows.append({**row, "certified": False, "requirements": len(reqs),
                              "error": f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"})

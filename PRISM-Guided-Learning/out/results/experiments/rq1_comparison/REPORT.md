@@ -12,7 +12,7 @@ Targets 12-19: 8 held out (each list's own training instances are left out).
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 6.25 (5.50–7.00) | 6.25 (5.50–7.00) | 7 (6–8) | 8.0 | 5.50 (5.00–6.25) | 10% (0%–25%) | 0.010 (0.008–0.012) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 6.25 (5.50–7.00) | 6.25 (5.50–7.00) | 7 (6–8) | 8.0 | 5.20 (4.00–6.25) | 10% (0%–25%) | 0.010 (0.008–0.012) |
 | Ours (Sonnet 5.5) | **Ours, Sonnet 5.5** | ✓ | 3 | 6.67 (5.75–7.25) | 6.67 (5.75–7.25) | 8 (7–8) | 8.0 | – | 75% | 0.493 (0.420–0.621) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 3.75 | 3.75 | 7 | 7.0 | 3.75 | – | – |
@@ -42,7 +42,7 @@ Targets 16-35,76-95,136-155: 60 held out (each list's own training instances are
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 9.67 (5.67–15.00) | 19.20 (9.33–30.67) | 17 (12–19) | 33.8 (24.0–56.0) | – | 40% (33%–67%) | 0.008 (0.007–0.011) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 9.67 (5.67–15.00) | 19.20 (9.33–30.67) | 17 (12–19) | 33.8 (24.0–56.0) | 3.07 (0.33–5.67) | 40% (33%–67%) | 0.008 (0.007–0.011) |
 | Ours (Sonnet 5.5) | **Ours, Sonnet 5.5** | ✓ | 3 | 14.00 (12.67–15.00) | 32.33 (29.00–36.67) | 19 | 54.3 (45.0–59.0) | – | 67% | 0.787 (0.663–0.932) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 12.33 | 20.33 | 19 | 43.0 | 12.33 | – | – |
@@ -90,3 +90,21 @@ Targets 0-7,9: 6 held out (each list's own training instances are left out).
 Worst-case crash of each method's frozen lists (best configuration) per horizon, up to 30: horizons 50 and 100 are Pac-Man's sealed test set and stay out until the test pass (200: PRISM cannot build it). Line: mean over the lists, band: their range; hollow markers: a list's own training horizons. 1-2-3-Go! (published, different setup): 0.5511 at 5, 0.869 at 25, 0.99998 at 200 (200 beyond the axis). The figure shows Ours (Haiku 5.5), 1-2-3-Go! (reimplemented), PPO; the other methods are in the table above.
 
 ![Worst-case crash probability per horizon](rq1_pacman_horizon.png)
+
+## Mars Exploration Rovers (trained on x = 0.01, 0.05, 0.13 at n = 10; 6 held out: x = 0.03, 0.08, 0.21, 0.34; n = 1, 20)
+
+Targets 0-8: 6 held out (each list's own training instances are left out).
+
+| method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 5 | 2.40 (0.00–3.00) | 2.40 (0.00–3.00) | 2 (0–3) | 2.4 (0.0–3.0) | – | 0% | 0.028 (0.019–0.045) |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) | ✓ | – | 6.00 | 6.00 | 6 | 6.0 | 6.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! trained on n = 1, x = 0.01 (as the paper) |  | – | 2.00 | 2.00 | 2 | 2.0 | 2.00 | – | – |
+| 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features |  | – | 3.00 | 3.00 | 3 | 3.0 | 3.00 | – | – |
+| PPO | PPO with our features | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| PPO | PPO over raw variables |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Uniform random policy | Uniform random policy | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Best of 1000 random policies | Best of 1000 random policies | ✓ | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
+| Strategy of one instance | Strategy of x = 0.13 | ✓ | – | 6.00 | 6.00 | 6 | 6.0 | 6.00 | – | – |
+
+![Mars Exploration Rovers (trained on x = 0.01, 0.05, 0.13 at n = 10; 6 held out: x = 0.03, 0.08, 0.21, 0.34; n = 1, 20)](rq1_mer.png)
