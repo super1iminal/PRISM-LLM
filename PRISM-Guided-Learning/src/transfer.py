@@ -79,8 +79,17 @@ def polished_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
     return {int(sid): [tuple(r) for r in entry["rules"]] for sid, entry in data.items()}
 
 
+def norepair_rules(run_dir: Path, key: str = "rules") -> Dict[int, List[Tuple[str, str]]]:
+    """Source sample id -> the pick's list without repair (`planner.pick: candidates` with `planner.repair`;
+    <run dir>/norepair.json), as chosen or (key "determinized") with `any` resolved by its order."""
+    data = json.loads((run_dir / "norepair.json").read_text(encoding="utf-8"))
+    return {int(sid): [tuple(r) for r in entry[key]] for sid, entry in data.items()}
+
+
 RULES = {"final": (final_rules, ""), "determinized": (determinized_rules, "_determinized"),
-         "polished": (polished_rules, "_polished"), "open": (final_rules, "_open")}
+         "polished": (polished_rules, "_polished"), "open": (final_rules, "_open"),
+         "norepair": (norepair_rules, "_norepair"),
+         "norepair_determinized": (lambda run_dir: norepair_rules(run_dir, "determinized"), "_norepair_determinized")}
 
 
 def csv_path(run_dir: Path, dataset: str, rules: str = "final") -> Path:
@@ -149,7 +158,8 @@ def main(argv=None):
     parser.add_argument("--rules", choices=list(RULES), default="final",
                         help="The run's final rules; those of src/determinize.py or src/polish.py (written to "
                              "*_determinized.csv, *_polished.csv); or the final rules with their action orders left "
-                             "open (core.rules.open_ties, *_open.csv: certified however ties are broken)")
+                             "open (core.rules.open_ties, *_open.csv: certified however ties are broken); or the pick "
+                             "without repair, as chosen or resolved (norepair.json, *_norepair*.csv)")
     parser.add_argument("--targets", default=None,
                         help='Only these target ids, e.g. "12-19" (rows for other targets in an existing CSV are kept)')
     parser.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")

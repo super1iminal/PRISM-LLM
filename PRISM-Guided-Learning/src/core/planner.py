@@ -380,51 +380,77 @@ class SymbolicPlanner:
             return not (names & strict["hide"]) and (strict["literal_sums"] or
                                                      not any(LITERAL_SUM.search(c) for c, _ in rules))
         literals = self.domain.repair_literals(members[0], vocabs[0])
-        finals = []
-        for k, cand in enumerate(found):
-            rules = cand["rules"]
-            if cfg.planner.repair and fast:
-                rules = repair(rules, evaluate, req_lists, literals, actions, cfg.planner.repair,
-                               cfg.planner.repair_tries, seed=k, valid=valid)
+        repairing = bool(cfg.planner.repair and fast)
+
+        def final(cand: Dict[str, Any], rules) -> Optional[Dict[str, Any]]:
             values = evaluate(rules)
             if values is None:
-                continue
+                return None
             res_score, order = resolved(rules, evaluate, req_lists, actions) if fast else (None, None)
-            finals.append({"rules": [list(r) for r in rules], "from": [cand["chain"], cand["iteration"]],
-                           "loop_score": list(cand["score"]), "final_score": score(values, req_lists),
-                           "resolved_score": res_score, "resolved_order": list(order) if order else None,
-                           "repaired": [tuple(r) for r in rules] != [tuple(r) for r in cand["rules"]]})
+            return {"rules": [list(r) for r in rules], "from": [cand["chain"], cand["iteration"]],
+                    "loop_score": list(cand["score"]), "final_score": score(values, req_lists),
+                    "resolved_score": res_score, "resolved_order": list(order) if order else None,
+                    "repaired": [tuple(r) for r in rules] != [tuple(r) for r in cand["rules"]]}
+
+        finals, plain = [], []        # plain: with repair, the same candidates as the loops wrote them
+        for k, cand in enumerate(found):
+            rules = cand["rules"]
+            if repairing:
+                rules = repair(rules, evaluate, req_lists, literals, actions, cfg.planner.repair,
+                               cfg.planner.repair_tries, seed=k, valid=valid)
+            f = final(cand, rules)
+            if f is None:
+                continue
+            finals.append(f)
+            p = (final(cand, cand["rules"]) if f["repaired"] else f) if repairing else None
+            if p is not None:
+                plain.append(p)
             log(f"{target.id}: candidate {k + 1} from chain {cand['chain']} round {cand['iteration']}: loop "
-                f"{cand['score']}, {'repaired ' if finals[-1]['repaired'] else ''}{finals[-1]['final_score']}, "
-                f"resolved {res_score} {order or ''}")
+                f"{cand['score']}, {'repaired ' if f['repaired'] else ''}{f['final_score']}, "
+                f"resolved {f['resolved_score']} {f['resolved_order'] or ''}")
         if not finals:
             return base
+
+        def verified(rules) -> Dict[str, Any]:
+            """The exact values of `rules` on every member."""
+            exact, checks = [], []
+            for vf, s, v in zip(verifiers, specs, vocabs):
+                policy = s.policy(rules, v)
+                ex, solver = vf.verify_exact(policy) if cfg.prism.exact_check else (None, None)
+                if ex is None:
+                    ex, solver = vf.verify(policy, analysis=False), ("off" if not cfg.prism.exact_check else "failed")
+                exact.append(ex)
+                checks.append(solver)
+            reqs0 = specs[0].requirements
+            return {"success": all(not failing(s.requirements, e.worst) for s, e in zip(specs, exact)),
+                    "best_case_success": all(not failing(s.requirements, e.best) for s, e in zip(specs, exact)),
+                    "final_best": pessimistic([e.best for e in exact], reqs0),
+                    "final_worst": pessimistic([e.worst for e in exact], reqs0),
+                    "final_check": ", ".join(dict.fromkeys(checks)),
+                    "members": [{"instance": i.id, "success": not failing(s.requirements, e.worst),
+                                 "final_best": dict(e.best), "final_worst": dict(e.worst)}
+                                for i, s, e in zip(members, specs, exact)]}
+
         chosen = choose(finals)
         rules = [tuple(r) for r in chosen["rules"]]
-        exact, checks = [], []
-        for vf, s, v in zip(verifiers, specs, vocabs):
-            policy = s.policy(rules, v)
-            ex, solver = vf.verify_exact(policy) if cfg.prism.exact_check else (None, None)
-            if ex is None:
-                ex, solver = vf.verify(policy, analysis=False), ("off" if not cfg.prism.exact_check else "failed")
-            exact.append(ex)
-            checks.append(solver)
-        reqs0 = specs[0].requirements
+        values = verified(rules)
         result = dict(base)
+        result.update({k: v for k, v in values.items() if k != "members"})
         result.update({
-            "success": all(not failing(s.requirements, e.worst) for s, e in zip(specs, exact)),
-            "best_case_success": all(not failing(s.requirements, e.best) for s, e in zip(specs, exact)),
-            "final_best": pessimistic([e.best for e in exact], reqs0),
-            "final_worst": pessimistic([e.worst for e in exact], reqs0),
-            "final_check": ", ".join(dict.fromkeys(checks)),
             "final_rules": [{"condition": c, "action": a} for c, a in rules],
-            "members": [{**(next((m for m in base.get("members", []) if m["instance"] == i.id), {"instance": i.id})),
-                         "success": not failing(s.requirements, e.worst), "final_best": dict(e.best),
-                         "final_worst": dict(e.worst)} for i, s, e in zip(members, specs, exact)],
+            "members": [{**next((m for m in base.get("members", []) if m["instance"] == row["instance"]), {}), **row}
+                        for row in values["members"]],
             "pick": {"chosen": finals.index(chosen), "candidates": finals},
         })
         log(f"{target.id}: picked candidate {finals.index(chosen) + 1} (from chain {chosen['from'][0]} round "
             f"{chosen['from'][1]}), exact worst {result['final_worst']}")
+        if plain:
+            # repair's control from the same chains: the pick among the candidates without repair
+            alt = choose(plain)
+            result["pick"]["norepair"] = {"chosen": plain.index(alt), "candidates": plain,
+                                          **verified([tuple(r) for r in alt["rules"]])}
+            log(f"{target.id}: without repair, candidate {plain.index(alt) + 1} (from chain {alt['from'][0]} round "
+                f"{alt['from'][1]}), exact worst {result['pick']['norepair']['final_worst']}")
         return result
 
     def _episode(self, target: Union[Instance, TrainingSet], log: Callable[[str], None]) -> Episode:

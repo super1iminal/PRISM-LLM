@@ -7,6 +7,7 @@ import shutil
 import pytest
 
 import run_symbolic
+import transfer
 from config import load_config
 from core.domain import Requirement, load_domain
 from core.pick import choose, repair
@@ -92,6 +93,29 @@ def test_pick_candidates_keeps_the_list_certified_on_most_members(tmp_path, grid
     resolved = json.loads((run_dir / "determinized.json").read_text(encoding="utf-8"))["0"]
     order = pick["candidates"][pick["chosen"]]["resolved_order"]
     assert resolved["order"] == order and [r[1] for r in resolved["rules"][:4]] == order
+    assert "norepair" not in pick and not (run_dir / "norepair.json").exists()
+    shutil.rmtree(run_dir)
+
+
+@needs_prism
+def test_pick_with_repair_also_records_the_pick_without_repair(tmp_path, grids, monkeypatch):
+    """With repair the result also keeps the pick among the same candidates as the loops wrote them, with its exact
+    values on the members, and norepair.json gives transfer.py that list as chosen and resolved."""
+    backend = FakeBackend(lambda task: CLOSER if task.meta["instance"].endswith("chain1") else RIGHT)
+    monkeypatch.setattr(run_symbolic, "make_backend", lambda config: backend)
+    cfg = load_config(overrides=[*PORT, f"domain.dataset={grids.as_posix()}", "run.workers=2", "planner.max_rounds=1",
+                                 "run.train_sets=[[0, 1]]", "planner.chains=2", "planner.pick=candidates",
+                                 "planner.repair=3", "planner.repair_tries=10"])
+    run_dir = tmp_path / "run"
+    run_symbolic.run(cfg, str(run_dir))
+    plain = json.loads((run_dir / "outputs" / "sample_000.json").read_text(encoding="utf-8"))["pick"]["norepair"]
+    alt = plain["candidates"][plain["chosen"]]
+    assert not any(c["repaired"] for c in plain["candidates"]) and len(plain["candidates"]) == 2
+    assert alt["from"] == [1, 1] and plain["success"] and all(m["success"] for m in plain["members"])
+    rules = [("closer & !early & !obstacle", "any"), ("true", "right")]
+    assert transfer.norepair_rules(run_dir) == {0: rules}
+    resolved = transfer.norepair_rules(run_dir, "determinized")[0]
+    assert [a for _, a in resolved[:4]] == alt["resolved_order"] and resolved[-1] == rules[-1]
     shutil.rmtree(run_dir)
 
 
