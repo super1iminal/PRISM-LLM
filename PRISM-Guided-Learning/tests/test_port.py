@@ -6,6 +6,7 @@ import shutil
 
 import pytest
 
+import core.prompts
 import run_symbolic
 import transfer
 from config import load_config
@@ -70,6 +71,21 @@ def test_failures_feedback_reports_every_member_with_locations_and_history(grids
     assert "* the same state as above: x=2 & y=3" in second and "## Your attempts so far" not in second
     assert ("## Your attempts so far\n\n- attempt 1: every requirement holds on 1 of 2 instances, total shortfall "
             "0.483\n- attempt 2: every requirement holds on 1 of 2 instances, total shortfall 0.483") in third
+
+
+@needs_prism
+def test_prompt_caches_go_by_instance_not_by_object_id(tmp_path, monkeypatch):
+    """A later chain's member can get the id() of a finished chain's freed member, so the prompts' per-member caches
+    (feature values, lost sets, strategies, demonstrations) go by instance: with every object's id() the same, the
+    revise prompt that reports both failing grids (4x4 and 5x5; keyed by id() it raised IndexError) is unchanged."""
+    grids = tmp_path / "sizes.csv"
+    grids.write_text(TINY_GRID + '5,"{1: (0, 4), 2: (4, 4)}","[(1, 1)]","[(2, 2), (2, 3)]",10\n', encoding="utf-8")
+    down = answer(("true", "down"))                        # fails both
+    _, llm = solve(grids, [down, down], 2)
+    monkeypatch.setattr(core.prompts, "id", lambda obj: 0, raising=False)
+    _, same = solve(grids, [down, down], 2)
+    assert "### Instance 1: FAILS" in llm.prompts[1] and "### Instance 2: FAILS" in llm.prompts[1]
+    assert same.prompts[1] == llm.prompts[1]
 
 
 @needs_prism

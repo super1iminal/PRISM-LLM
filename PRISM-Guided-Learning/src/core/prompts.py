@@ -2,7 +2,7 @@
 domain's own) with an episode's context (core/episode.py). The planner decides which prompt comes next;
 this module only builds them.
 """
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -25,10 +25,11 @@ class Prompts:
     def __init__(self, domain: Domain, config: Config):
         self.domain = domain
         self.config = config
-        self._feature_values: Dict[int, Callable] = {}   # id(member) -> its `feature_values` function
-        self._strategies: Dict[int, Strategy] = {}       # id(member) -> its optimal strategy (core/optimal.py)
-        self._demos: Dict[int, Dict[str, Any]] = {}      # id(member) -> the demonstration on it
-        self._lost: Dict[int, Any] = {}                   # id(member) -> its lost sets (core/failures.py)
+        # per instance id, not id(member): a later chain's member can get the id of a finished chain's freed one
+        self._feature_values: Dict[str, Callable] = {}   # instance id -> its `feature_values` function
+        self._strategies: Dict[str, Strategy] = {}       # instance id -> its optimal strategy (core/optimal.py)
+        self._demos: Dict[Tuple[str, str], Dict[str, Any]] = {}   # (instance id, label) -> the demonstration on it
+        self._lost: Dict[str, Any] = {}                   # instance id -> its lost sets (core/failures.py)
 
     # ---------------------------------------------------------------- context
 
@@ -161,10 +162,11 @@ class Prompts:
 
     def _values(self, member: Member) -> Callable:
         """The member's `feature_values` function, built once."""
-        if id(member) not in self._feature_values:
+        key = member.instance.id
+        if key not in self._feature_values:
             spec = member.verifier.spec
-            self._feature_values[id(member)] = feature_values(spec.variables, list(spec.actions), member.vocabulary)
-        return self._feature_values[id(member)]
+            self._feature_values[key] = feature_values(spec.variables, list(spec.actions), member.vocabulary)
+        return self._feature_values[key]
 
     def _merged(self, member: Member, hotspots, v: Optional[Verification] = None) -> List[Dict[str, Any]]:
         """Extend hotspots named by `_state`; states that read the same are merged, their masses summed. With
@@ -183,13 +185,14 @@ class Prompts:
 
     def _strategy(self, member: Member) -> Strategy:
         """The member's optimal strategy (`Domain.optimal_strategy`), computed once."""
-        if id(member) not in self._strategies:
+        key = member.instance.id
+        if key not in self._strategies:
             strategy = self.domain.optimal_strategy(member.instance, self.config)
             if strategy is None:
                 raise ValueError(f"feedback.optimal and prompt.demonstration: the {self.domain.name} domain has no "
                                  "optimal strategy")
-            self._strategies[id(member)] = strategy
-        return self._strategies[id(member)]
+            self._strategies[key] = strategy
+        return self._strategies[key]
 
     def _action_features(self, member: Member, valuation: Dict[str, Any], actions: Sequence[str]) -> str:
         """Per action, the action features that hold for it (`right: closer, toward; down: none`); '' without any."""
@@ -260,14 +263,15 @@ class Prompts:
         """One optimal run on the first member (`core.optimal.demonstration`): per decision, the state, the features
         that hold there (unless feedback names states by their features already) and the optimal action(s)."""
         member = ep.primary
-        if id(member) not in self._demos:
+        key = (member.instance.id, member.label if ep.training else "this instance")
+        if key not in self._demos:
             steps = demonstration(member.verifier, self._strategy(member))
             plain, every = self.config.feedback.space != "features", len(member.verifier.spec.actions)
-            self._demos[id(member)] = {"member": member.label if ep.training else "this instance", "steps": [{
+            self._demos[key] = {"member": key[1], "steps": [{
                 "state": self._state(member, st.valuation),
                 "features": self._situation(member, st.valuation) if plain else "",
                 "actions": "any action" if len(st.actions) == every else " or ".join(st.actions)} for st in steps]}
-        return self._demos[id(member)]
+        return self._demos[key]
 
     # ---------------------------------------------------------------- planner.feedback: failures
 
@@ -282,9 +286,9 @@ class Prompts:
                            done_margin=self.config.planner.done_margin)
 
     def _lost_sets(self, member: Member):
-        if id(member) not in self._lost:
-            self._lost[id(member)] = lost_sets(member.verifier)
-        return self._lost[id(member)]
+        if member.instance.id not in self._lost:
+            self._lost[member.instance.id] = lost_sets(member.verifier)
+        return self._lost[member.instance.id]
 
     def _member_report(self, m: Member, policy: SymbolicPolicy, v: Verification, several: bool, top_reqs: int = 3,
                        per_req: int = 2) -> str:
