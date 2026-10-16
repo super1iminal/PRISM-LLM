@@ -89,6 +89,9 @@ def test_pick_candidates_keeps_the_list_certified_on_most_members(tmp_path, grid
     assert record["final_rules"] == [{"condition": "closer & !early & !obstacle", "action": "any"},
                                      {"condition": "true", "action": "right"}]
     assert all(m["success"] for m in record["members"])
+    resolved = json.loads((run_dir / "determinized.json").read_text(encoding="utf-8"))["0"]
+    order = pick["candidates"][pick["chosen"]]["resolved_order"]
+    assert resolved["order"] == order and [r[1] for r in resolved["rules"][:4]] == order
     shutil.rmtree(run_dir)
 
 

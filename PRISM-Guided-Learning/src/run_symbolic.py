@@ -25,6 +25,7 @@ from core.backends import make_backend
 from core.domain import Instance, load_domain
 from core.planner import SymbolicPlanner
 from core.scheduler import SCHEDULERS, failed_result
+from core.rules import fixed_order
 from core.training import chains, training_sets
 from logging_utils import close_logger, setup_logger
 from results_io import SYMBOLIC_RESULTS
@@ -112,9 +113,28 @@ def run(cfg: Config, run_dir: str) -> str:
                              f"{[c['margin'] for c in results[inst.id]['chains']]}")
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
+    if cfg.planner.pick == "candidates":
+        write_determinized(ordered, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")
     close_logger(main_logger)
     return run_dir
+
+
+def write_determinized(results: List[Dict[str, Any]], run_dir: str) -> None:
+    """`planner.pick: candidates`: <run>/determinized.json (src/determinize.py's format) with each chosen list's `any`
+    rules resolved by the order the pick found best on the training members, so that `transfer.py --rules
+    determinized` certifies that variant without determinize.py's PRISM search."""
+    out = {}
+    for sid, result in enumerate(results):
+        pick = result.get("pick")
+        if not pick:
+            continue
+        chosen = pick["candidates"][pick["chosen"]]
+        rules, order = [tuple(r) for r in chosen["rules"]], chosen["resolved_order"]
+        out[str(sid)] = {"order": order, "rules": [list(r) for r in (fixed_order(rules, order) if order else rules)],
+                         "source": "planner.pick"}
+    with open(os.path.join(run_dir, "determinized.json"), "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=1)
 
 
 def solve_threaded(planner: SymbolicPlanner, instances: List[Instance], workers: int,
