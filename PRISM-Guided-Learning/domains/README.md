@@ -95,7 +95,10 @@ is its property `p1`: a high probability that both resources are granted at once
 (0.19999 everywhere, against 0.2016 at x = 0.01 up to 0.6712 at 0.89), and also `n`, how many of user 1's comm
 requests while drive is held may take the arbiter's faulty shortcut. The threshold is the optimum minus 5% of it, so the published 0.19999 passes for x ≤ 0.05 and fails from
 x = 0.08. `data/mer.csv` holds the training instances (x = 0.01, 0.05, 0.13). `data/mer_transfer.csv` adds the
-validation instances (ids 3–8) and the sealed test instances (ids 9–11: x = 0.55, 0.89 and n = 100). The bare MDP
+validation instances (ids 3–8) and the sealed test instances (ids 9–11: x = 0.55, 0.89 and n = 100). At n = 10 one strategy is optimal for every x, so trees trained on `mer.csv` transfer perfectly; the family where
+1-2-3-Go! must generalize is across n: `data/mer_n.csv` (n = 1, 2, 3 at x = 0.89) and `data/mer_n_transfer.csv`
+(validation n = 4–15, ids 3–8; sealed n = 20, 50, 100, ids 9–11), where the optimum grows from 0.2 to 0.69 because the
+scheduler must retry the shortcut while k < N. The bare MDP
 reproduces four published optima (`tests/test_mer.py`). The extended vocabulary has the constants `N` and `X_PCT`
 (x in percent), the feature `shortcuts_left` and the action feature `enabled`, read from the model's `en_<action>`
 formulas. States: 7.5k (n = 1), 61k (n = 10), 592k (n = 100). PRISM runs out of its 4 GB heap at n = 1000.

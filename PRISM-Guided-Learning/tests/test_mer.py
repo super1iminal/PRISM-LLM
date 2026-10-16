@@ -100,3 +100,17 @@ def test_baseline_optimal_actions_make_progress(domain, instances):
     _, optimal = mdp.optimal_actions(mdp.spec.requirements[0])
     policy = np.where(optimal.any(axis=1), optimal.argmax(axis=1), -1)
     assert mdp.evaluate(policy)["err"] == pytest.approx(0.2, abs=1e-9)
+
+
+def test_n_family(domain):
+    """Across n at x = 0.89 the optimum grows with the shortcut attempts: 0.2 at n = 1, 0.4438 at 3, 0.6944 at 100."""
+    rows = {i.data["name"]: i.data for i in domain.load_instances("mer_n_transfer.csv")}
+    assert [r["n"] for r in rows.values()] == [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 50, 100]
+    assert rows["n1_x0.89"]["optimum"] == 0.2 and rows["n3_x0.89"]["optimum"] == pytest.approx(0.4437888)
+    assert rows["n10_x0.89"]["optimum"] == pytest.approx(0.6711936689)        # 1-2-3-Go!'s published x = 0.89 point
+    for r in rows.values():
+        assert r["err_threshold"] == math.floor(0.95 * r["optimum"] * 1e4) / 1e4
+    from transfer import guard_sealed
+    guard_sealed("mer_n_transfer.csv", list(range(9)))
+    with pytest.raises(SystemExit, match="sealed"):
+        guard_sealed("mer_n_transfer.csv", [9])
