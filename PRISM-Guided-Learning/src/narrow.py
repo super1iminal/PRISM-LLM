@@ -5,7 +5,8 @@ rule choosing the move), each only if every member still passes and the early lo
 the training instances are used, never the targets.
 
 Usage (from PRISM-Guided-Learning/):
-    python src/narrow.py <run dir> [--k 3] [--clock steps] [--group xP,yP]
+    python src/narrow.py <run dir> [--k 3] [--clock steps] [--group xP,yP] [--rules determinized]
+(`--rules determinized`: the lists with `any` resolved, as transfer.py's; `any` rules choose no single move to narrow.)
 Writes <run dir>/narrowed.json (per sample id: the rules, the narrowings and the early loss before and after); then
 `python src/transfer.py <run dir> --rules narrowed` certifies them on targets (numbers allowed in comparisons with
 the policy variables, as `rules.shared_literals`).
@@ -24,7 +25,7 @@ from core.planner import NARROW_SHARE
 from core.prism import PrismError, PrismRunner
 from core.rules import RuleError
 from core.verifier import PolicyVerifier
-from transfer import final_rules, training_instances
+from transfer import RULES, training_instances
 
 OUT = "narrowed.json"
 Rules = List[Tuple[str, str]]
@@ -81,6 +82,7 @@ def main(argv=None):
     parser.add_argument("--k", type=int, default=3, help="Narrowings at most")
     parser.add_argument("--clock", default="steps", help="The step counter (feedback.early)")
     parser.add_argument("--group", default="xP,yP", help="The variables naming a place (feedback.early_group)")
+    parser.add_argument("--rules", default="final", choices=["final", "determinized"], help="The lists to narrow")
     args = parser.parse_args(argv)
     cfg = load_run_config(args.run_dir)
     rules_cfg = replace(cfg.rules, shared_literals=True)
@@ -89,12 +91,12 @@ def main(argv=None):
     runner = PrismRunner(cfg.prism)
     trained = training_instances(args.run_dir)
     out = {}
-    for sid, rules in final_rules(args.run_dir).items():
+    for sid, rules in RULES[args.rules][0](args.run_dir).items():
         verifiers = [PolicyVerifier(domain, instances[i], cfg, runner) for i in trained[sid]]
         print(f"sample {sid}: {len(rules)} rules", flush=True)
         narrowed, info = narrow(verifiers, rules_cfg, list(rules), args.k, args.clock, args.group.split(","),
                                 log=lambda s: print(s, flush=True))
-        out[str(sid)] = {"rules": [list(r) for r in narrowed], **info}
+        out[str(sid)] = {"rules": [list(r) for r in narrowed], "from": args.rules, **info}
     (args.run_dir / OUT).write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(args.run_dir / OUT)
 
