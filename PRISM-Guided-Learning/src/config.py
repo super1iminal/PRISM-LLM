@@ -66,6 +66,8 @@ class PlannerConfig:
     feedback: str                             # blame (REFINE/EXTEND with blame) | table (S1: results table only)
     max_rules: int
     max_condition_chars: int
+    chains: int                               # independent loops per training set; the final list is the chain's
+                                              # with the largest worst-case margin on the members (1: one loop)
 
 
 @dataclass
@@ -298,5 +300,10 @@ def validate(cfg: Config) -> None:
         raise ValueError(f"prism.max_concurrent={limit!r} must be a number of processes (>= 1) or null")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
+    chains = cfg.planner.chains
+    if not (isinstance(chains, int) and not isinstance(chains, bool) and chains >= 1):
+        raise ValueError(f"planner.chains={chains!r} must be a number of chains (>= 1)")
+    if chains > 1 and (cfg.approach != "symbolic" or not cfg.run.train_sets or cfg.run.pool_sets):
+        raise ValueError("planner.chains > 1 needs symbolic training sets (run.train_sets) without run.pool_sets")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
         raise ValueError(f"run.scheduler={cfg.run.scheduler} drives the symbolic planner only; legacy runs use threads")

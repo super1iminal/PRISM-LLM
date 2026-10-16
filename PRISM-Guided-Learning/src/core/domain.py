@@ -62,6 +62,12 @@ class Requirement:
             gap /= abs(self.threshold) or 1.0
         return max(0.0, gap)
 
+    def margin(self, value: float) -> float:
+        """How far `value` is on the passing side of the threshold (negative: the shortfall), on the scale of
+        `shortfall`."""
+        gap = value - self.threshold if self.maximize else self.threshold - value
+        return gap / (abs(self.threshold) or 1.0) if self.reward is not None else gap
+
     def _op(self, best: bool) -> str:
         high = self.maximize == best
         if self.reward is not None:

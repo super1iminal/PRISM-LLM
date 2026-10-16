@@ -35,7 +35,7 @@ from config import Config
 from core.analysis import MassAnalyzer
 from core.backends import LLMBackend
 from core.domain import Domain, Instance, Requirement, failing
-from core.episode import Answer, Check, Episode, Kept, Member, pessimistic
+from core.episode import Answer, Check, Episode, Kept, Member, margin, pessimistic
 from core.prism import PrismCall, PrismError, PrismRunner
 from core.prompts import Prompts
 from core.retry import RetryPolicy
@@ -111,6 +111,9 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
                              for m, v in zip(members, check.vs)]
     return record
 
+
+# `planner.chains`: call numbers reserved per chain, so that seeded chains on one training set get distinct seeds.
+CHAIN_CALLS = 100_000
 
 # `rules.any_prune`: how far PRISM's values may be from the domain's fast model before an order is ruled out wrongly.
 # The loop's solver stops early, mostly by less than 1e-4; where a verified order is off by more than this (138 of 2,113
@@ -293,6 +296,31 @@ class SymbolicPlanner:
                                  for m, v, optimum in zip(members, finals, optima)]
         return result
 
+    def select_chain(self, target: TrainingSet, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """One result for the `planner.chains` independent loops on `target` (core.training.chains), in chain order:
+        the chain whose final rules have the largest worst-case margin on the members (the smallest margin over
+        members and requirements, on the reported values; the first chain on ties), with every chain's rounds,
+        numbered on (`chain`, `chain_iteration`), and a summary per chain (`chains`)."""
+        by_id = {inst.id: inst for inst in target.members + target.hidden}
+
+        def chain_margin(result: Dict[str, Any]) -> Optional[float]:
+            if "final_rules" not in result:
+                return None
+            members = result.get("members") or [{"instance": target.members[0].id, "final_worst": result["final_worst"]}]
+            return min(margin(m["final_worst"], self.domain.spec(by_id[m["instance"]]).requirements) for m in members)
+
+        margins = [chain_margin(r) for r in results]
+        finished = [k for k, m in enumerate(margins) if m is not None]
+        best = max(finished, key=lambda k: (margins[k], -k)) if finished else 0
+        rounds = [dict(it, chain=k, chain_iteration=it["iteration"])
+                  for k, r in enumerate(results) for it in r.get("iterations", [])]
+        for n, it in enumerate(rounds, start=1):
+            it["iteration"] = n
+        summary = [{"chain": k, "success": r.get("success", False), "margin": m, "rounds": len(r.get("iterations", [])),
+                    **({"error": r["error"]} if r.get("error") else {})} for k, (r, m) in enumerate(zip(results, margins))]
+        return {**results[best], "iterations": rounds, "chain": best, "chains": summary, "instance": target.id,
+                "total_time": sum(r.get("total_time", 0.0) for r in results)}
+
     def _episode(self, target: Union[Instance, TrainingSet], log: Callable[[str], None]) -> Episode:
         cfg = self.config
         instances = target.members if isinstance(target, TrainingSet) else (target,)
@@ -304,7 +332,8 @@ class SymbolicPlanner:
         shown = [m for m in members if not m.hidden]
         answers = list(primary.verifier.spec.actions) + ([ANY] if primary.vocabulary.allow_any else [])
         schema = rule_schema(answers, cfg.planner.max_rules, cfg.planner.max_condition_chars, cfg.prompt.strategy_first)
-        return Episode(members, schema, log, TaskFactory(cfg.llm, target.id),
+        chain = target.chain if isinstance(target, TrainingSet) else 0
+        return Episode(members, schema, log, TaskFactory(cfg.llm, target.id, chain * CHAIN_CALLS),
                        self.prompts.training_context(shown) if len(shown) > 1 else {},
                        pool=list(target.pool) if isinstance(target, TrainingSet) else [])
 
