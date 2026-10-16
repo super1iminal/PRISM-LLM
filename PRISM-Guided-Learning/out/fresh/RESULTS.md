@@ -84,3 +84,17 @@ Certified with `rules.general = false` (numbers allowed by the parser); my valid
 comparison that involves anything but xP, yP, dP, xG0, yG0, dG0, xG1, yG1, dG1. Certified of 6 validation horizons:
 4, 3, 4 (mean 3.67; horizons 8, 10, 12 always, 20 in repeats 1 and 3 (0.5585, 0.5511); 25 and 30 never).
 To beat: 4. Cost per repeat $0.21-0.27.
+
+## Pac-Man v4 (`pm_v4/`): v3 plus early-game regret
+After a list reaches the training optimum, the loop keeps revising it with the situations of the first 7 moves of
+the 18-move training game (12+ moves left, no ghost removed: the regime of most of a long game) where it crashes most
+often compared with the best controller; finals and action orders selected by the lowest such regret.
+Certified of 6 validation horizons: 4, 4, 4 (mean 4.00; horizons 8, 10, 12, 20 every time; 25 at 0.64 / 0.70 / 0.77
+and 30 at 0.68 / 0.79 / 0.82 fail). To beat: 4 (tied in every repeat, not beaten). Cost per repeat $0.23-0.25.
+
+| Pac-Man variant | repeats | mean |
+|---|---|---|
+| v1: 0/1 literals only | 3, 4, 3 | 3.33 |
+| v2: v1 + uniform regret over all states | 3, 3, 3 | 3.00 |
+| v3: numbers on positions and headings | 4, 3, 4 | 3.67 |
+| v4: v3 + early-game regret | 4, 4, 4 | 4.00 |
