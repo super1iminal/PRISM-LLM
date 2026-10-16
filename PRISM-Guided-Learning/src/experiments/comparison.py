@@ -282,7 +282,7 @@ class Comparison(Experiment):
         baseline's sources."""
         for u in self.units:
             if u.cell.name == name and u.bench.name == bench.name:
-                rules = cell_rules(u.cell)[0]
+                rules = cell_rules(u.cell, bench.name)[0]
                 frames = [pd.read_csv(p) for p in (csv_path(r, u.dataset(), rules) for r in u.runs) if p.exists()]
                 return [df[df.source == s] for df in frames for s in df.source.unique()]
         for base in self.baselines():
