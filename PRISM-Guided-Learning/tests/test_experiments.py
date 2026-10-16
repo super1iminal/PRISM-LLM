@@ -30,7 +30,8 @@ def test_open_ties_keeps_partial_and_separate_runs():
 
 def test_identity_ignores_names_parallelism_and_seed():
     cfg = load_config("haiku_ts_order")
-    other = load_config("haiku_ts_order", ["run.workers=1", "llm.seed=7", "run.scheduler=threads"])
+    other = load_config("haiku_ts_order", ["run.workers=1", "llm.seed=7", "run.scheduler=threads",
+                                           "prism.max_concurrent=2"])
     assert fingerprint(cfg) == fingerprint(other)
     assert "condition" not in identity(cfg)
     assert fingerprint(cfg) != fingerprint(load_config("haiku_ts_order", ["rules.any_order=none"]))

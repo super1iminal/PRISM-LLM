@@ -113,7 +113,8 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
 
 
 # `rules.any_prune`: how far PRISM's values may be from the domain's fast model before an order is ruled out wrongly.
-# The loop's solver differs from the exact numpy gridworld by at most 1.7e-5 over the recorded rounds (DECISIONS.md).
+# The loop's solver stops early, mostly by less than 1e-4; where a verified order is off by more than this (138 of 2,113
+# recorded gridworld rounds), every order is verified (DECISIONS.md).
 PRUNE_SLACK = 1e-3
 
 
