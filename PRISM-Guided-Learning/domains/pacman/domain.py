@@ -9,10 +9,8 @@ probabilities at crossings that depend on their heading and on where Pac-Man is.
 
 Dataset rows (CSV): name, max_steps, crash_threshold.
 """
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import pandas as pd
+from collections import deque
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.domain import Domain, Instance
 
@@ -28,8 +26,7 @@ HEADINGS = ("dP", "dG0", "dG1")
 class PacMan(Domain):
 
     def load_instances(self, dataset: str) -> List[Instance]:
-        path = Path(dataset) if Path(dataset).is_absolute() else self.root / "data" / dataset
-        df = pd.read_csv(path, index_col=False)
+        df = self.read_dataset(dataset)
         return [Instance(id=str(idx), data={"name": str(row["name"]), "max_steps": int(row["max_steps"]),
                                             "crash_threshold": float(row["crash_threshold"])})
                 for idx, row in df.iterrows()]
@@ -46,6 +43,7 @@ class PacMan(Domain):
             "ghost_start": GHOST_START,
             "directions": DIRECTIONS,
             "map_rows": [(y, "".join(self._symbol(x + 1, y, c) for x, c in enumerate(row))) for y, row in ROWS.items()],
+            **rule_vocabulary(d["max_steps"]),
         })
         return d
 
@@ -72,3 +70,67 @@ class PacMan(Domain):
     def format_state(self, valuation: Dict[str, Any]) -> str:
         """Rule syntax, with heading names added."""
         return " & ".join(f"{k}={v}" + (f" ({DIRECTIONS[v]})" if k in HEADINGS else "") for k, v in valuation.items())
+
+
+# ---------------------------------------------------------------- extended rule vocabulary
+
+# At these crossings a direction is a wall: choosing it keeps Pac-Man in place (from the model's crossing commands)
+WALLS = {"right": [(10, 4)], "up": [(6, 4), (8, 4)], "left": [], "down": [(3, 1), (6, 1), (8, 1), (5, 4)]}
+TOWARDS = {"right": "xG{g} > xP", "left": "xG{g} < xP", "up": "yG{g} > yP", "down": "yG{g} < yP"}
+STEP = {"right": (1, 0), "up": (0, 1), "left": (-1, 0), "down": (0, -1)}
+
+
+def maze_distances() -> Dict[Tuple[int, int], Dict[Tuple[int, int], int]]:
+    """Shortest number of moves between walkable cells, through the maze (BFS from each cell)."""
+    cells = set(PacMan.walkable())
+    dist = {}
+    for start in cells:
+        d, queue = {start: 0}, deque([start])
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy in STEP.values():
+                nxt = (x + dx, y + dy)
+                if nxt in cells and nxt not in d:
+                    d[nxt] = d[(x, y)] + 1
+                    queue.append(nxt)
+        dist[start] = d
+    return dist
+
+
+def _closer(g: int, a: str, dist) -> str:
+    """Condition: at a crossing, the first step in direction `a` shortens the maze distance to ghost g."""
+    terms = []
+    for x, y in CROSSINGS:
+        step = (x + STEP[a][0], y + STEP[a][1])
+        if step not in dist:
+            continue
+        cells = [q for q in dist[(x, y)] if dist[step][q] < dist[(x, y)][q]]
+        if cells:
+            terms.append(f"(xP = {x} & yP = {y} & (" + " | ".join(f"(xG{g} = {qx} & yG{g} = {qy})" for qx, qy in sorted(cells)) + "))")
+    return " | ".join(terms) or "false"
+
+
+def rule_vocabulary(max_steps: int) -> Dict[str, Any]:
+    """Constant MAXSTEPS, the state feature moves_left and per-action features wall, nearer_g0, nearer_g1 (by rows
+    and columns) and closer_g0, closer_g1 (along the maze)."""
+    def wall(a):
+        return " | ".join(f"(xP = {x} & yP = {y})" for x, y in WALLS[a]) or "false"
+
+    features = [
+        {"name": "moves_left", "description": "moves Pac-Man has left (MAXSTEPS - steps)", "expr": "MAXSTEPS - steps"},
+        {"name": "wall", "description": "true if this direction is a wall at Pac-Man's crossing (he would stay put)",
+         "per_action": {a: wall(a) for a in DIRECTIONS.values()}},
+    ]
+    for g in (0, 1):
+        features.append({"name": f"nearer_g{g}",
+                         "description": f"true if this direction goes towards ghost {g} (by its row or column), "
+                                        f"while the ghost is in the game",
+                         "per_action": {a: f"xG{g} > 0 & " + TOWARDS[a].format(g=g) for a in DIRECTIONS.values()}})
+    dist = maze_distances()
+    for g in (0, 1):
+        features.append({"name": f"closer_g{g}",
+                         "description": f"true if this direction's first step shortens Pac-Man's distance to ghost "
+                                        f"{g} along the maze (the shortest path through the corridors)",
+                         "per_action": {a: _closer(g, a, dist) for a in DIRECTIONS.values()}})
+    return {"rule_constants": [{"name": "MAXSTEPS", "value": max_steps, "description": "the game's length in moves"}],
+            "rule_features": features}
