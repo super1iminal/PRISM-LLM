@@ -25,6 +25,7 @@ params:
   horizon: 200                      episode length cap
   seed: 0
   sets: null                        training sets as lists of ids, one policy each; null: one from all training ids
+  features: null                    with observation: features, the features (null: gridworld_mdp.FEATURES)
 """
 from typing import Dict, List, Optional, Sequence
 
@@ -38,12 +39,12 @@ from baselines.gridworld_mdp import FEATURES, GridMDP
 from core.domain import Instance
 
 
-def observations(mdp: GridMDP, kind: str, radius: int = 2) -> np.ndarray:
+def observations(mdp: GridMDP, kind: str, radius: int = 2, features: Sequence[str] = FEATURES) -> np.ndarray:
     """One row per state of `mdp`: the policy's input."""
     stage = np.array([s for (_, _, s, _) in mdp.states])
     flags = np.stack([stage > k for k in range(mdp.K)], axis=1).astype(np.float32)
     if kind == "features":
-        return np.hstack([mdp.features[f].astype(np.float32) for f in FEATURES] + [flags])
+        return np.hstack([mdp.features[f].astype(np.float32) for f in features] + [flags])
     if kind != "view":
         raise ValueError(f"unknown observation {kind!r} (features | view)")
     patrol = set(mdp.cycle)
@@ -66,9 +67,9 @@ def observations(mdp: GridMDP, kind: str, radius: int = 2) -> np.ndarray:
 class _Grid:
     """A training instance as arrays: observations, successors and the reward and end of each transition."""
 
-    def __init__(self, data: dict, kind: str, radius: int):
+    def __init__(self, data: dict, kind: str, radius: int, features: Sequence[str] = FEATURES):
         self.mdp = mdp = GridMDP(data)
-        self.obs = torch.tensor(observations(mdp, kind, radius))
+        self.obs = torch.tensor(observations(mdp, kind, radius, features))
         stage = np.array([s for (_, _, s, _) in mdp.states])
         cell_goal = {g: k for k, g in enumerate(mdp.goals)}
         self.bad = np.array([cell_goal.get((r, c), -1) > s or (bool(mdp.cycle) and s < mdp.K and (r, c) == mdp.cycle[o])
@@ -167,13 +168,14 @@ class PPO(Baseline):
         self.steps, self.envs = params.get("steps", 300000), params.get("envs", 32)
         self.horizon, self.seed = params.get("horizon", 200), params.get("seed", 0)
         self.sets = params.get("sets")
+        self.features = params.get("features") or list(FEATURES)
         self.nets: Dict[str, _Net] = {}
 
     def fit(self, train_instances: Sequence[Instance]) -> None:
         by_id = {int(i.id): i for i in train_instances}
         for k, ids in enumerate(self.sets or [sorted(by_id)]):
             print(f"PPO ({self.kind}), training set {ids}:", flush=True)
-            grids = [_Grid(by_id[i].data, self.kind, self.radius) for i in ids]
+            grids = [_Grid(by_id[i].data, self.kind, self.radius, self.features) for i in ids]
             self.nets[f"ppo_{self.kind}" + (f"_set{k}" if self.sets else "")] = train(
                 grids, self.steps, self.envs, self.horizon, self.seed + k, log=lambda s: print(s, flush=True))
 
@@ -182,7 +184,7 @@ class PPO(Baseline):
         net = self.nets[name] if name else next(iter(self.nets.values()))
         mdp = GridMDP(target.data)
         with torch.no_grad():
-            logits, _ = net(torch.tensor(observations(mdp, self.kind, self.radius)))
+            logits, _ = net(torch.tensor(observations(mdp, self.kind, self.radius, self.features)))
         return logits.argmax(dim=1).numpy()
 
     def rules(self, target: Instance) -> Dict[str, Rules]:

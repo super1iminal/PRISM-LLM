@@ -66,6 +66,14 @@ class PlannerConfig:
     feedback: str                             # blame (REFINE/EXTEND with blame) | table (S1: results table only)
     max_rules: int
     max_condition_chars: int
+    chains: int                               # independent loops per training set; the final list is the chain's
+                                              # with the largest worst-case margin on the members (1: one loop)
+    keep_ties: str                            # keep-best on equal scores: older (the kept list stays) | newer
+    done_margin: float                        # solved only when every member passes by more than this
+    pick: str                                 # final list with chains: chain (largest margin) | candidates
+    pick_top: int                             # pick: candidates: distinct lists repaired and compared
+    repair: int                               # pick: candidates: hill-climbing steps (0: none)
+    repair_tries: int                         # neighbours tried per repair step
 
 
 @dataclass
@@ -76,6 +84,9 @@ class FeedbackConfig:
     states_per_rule: int
     space: str                                # states (valuations) | features (feature values per action)
     trajectory: bool                          # show a likely way to fail the worst-failing requirement
+    optimal: bool                             # name the optimal strategy's actions at the states the feedback names
+    stuck: bool                               # say where the rules' action there changes nothing (a self-loop)
+    deviations: bool                          # list the states the rules reach where they lose most against the optimum
     early: Optional[str]                      # step counter: also score the rules' moves in the first half of the
                                               # training games against the best moves (core/early.py); null: off
     early_tolerance: float                    # with `early`: refine passing rules while their mean loss exceeds this
@@ -102,6 +113,8 @@ class PromptConfig:
     strategy_first: bool            # the answer starts with the strategy in words (`strategy`), then the rules
     tie_break: bool                 # explain that `any` is resolved against the policy, and how to fix an order
     hint: str                       # extra advice for the policy section ("" = none), set by a condition
+    worst_case: bool                # spell out the worst case (the adversary, stalling, a catch-all)
+    demonstration: bool             # the initial prompt shows one optimal run on the first training member
 
 
 @dataclass
@@ -128,6 +141,8 @@ class RulesConfig:
     shared_literals: bool           # general mode: other numbers too, compared with variables whose range is the
                                     # same on every training member (Pac-Man: positions and headings, not steps)
     hidden_features: List[str]      # domain features left out of the vocabulary
+    extra_features: List[str]       # optional domain features to include (left out otherwise)
+    strict: bool                    # conditions may not name what the domain withholds (Domain.strict)
     any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
                                     # on the members each round; declared: always the declared action order;
                                     # report: keep `any`, tell the LLM the best order (none: worst case over them)
@@ -284,7 +299,9 @@ def validate(cfg: Config) -> None:
     checks = {
         "approach": (cfg.approach, {"symbolic", "legacy"}),
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
-        "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
+        "planner.feedback": (cfg.planner.feedback, {"blame", "table", "failures"}),
+        "planner.pick": (cfg.planner.pick, {"chain", "candidates"}),
+        "planner.keep_ties": (cfg.planner.keep_ties, {"older", "newer"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),
@@ -307,5 +324,14 @@ def validate(cfg: Config) -> None:
         raise ValueError(f"prism.max_concurrent={limit!r} must be a number of processes (>= 1) or null")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
+    chains = cfg.planner.chains
+    if not (isinstance(chains, int) and not isinstance(chains, bool) and chains >= 1):
+        raise ValueError(f"planner.chains={chains!r} must be a number of chains (>= 1)")
+    if cfg.planner.done_margin > 0 and cfg.planner.feedback != "failures":
+        raise ValueError("planner.done_margin > 0 needs planner.feedback: failures (the others assume a failing member)")
+    if cfg.planner.pick == "candidates" and (cfg.approach != "symbolic" or not cfg.run.train_sets or cfg.run.pool_sets):
+        raise ValueError("planner.pick: candidates needs symbolic training sets (run.train_sets) without run.pool_sets")
+    if chains > 1 and (cfg.approach != "symbolic" or not cfg.run.train_sets or cfg.run.pool_sets):
+        raise ValueError("planner.chains > 1 needs symbolic training sets (run.train_sets) without run.pool_sets")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
         raise ValueError(f"run.scheduler={cfg.run.scheduler} drives the symbolic planner only; legacy runs use threads")

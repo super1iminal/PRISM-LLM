@@ -85,6 +85,21 @@ def test_a_randomized_policy_is_the_mixture_of_its_actions(pac8):
     assert 0.5511 < row["worst_crash"] < bare
 
 
+def test_optimal_strategy_is_the_trees_optimal_actions(pac8):
+    """explicit_mdp.optimal_strategy (`feedback.optimal`, `prompt.demonstration` on Pac-Man and MER): per state the
+    trees' optimal actions and the chance of not crashing."""
+    from baselines.explicit_mdp import optimal_strategy
+    strategy = optimal_strategy(pac8.domain, pac8.instance, CFG)
+    crash, actions = pac8.spec.requirements[0], pac8.actions
+    value, optimal = pac8.optimal_actions(crash)
+    for s in np.flatnonzero(pac8.decision)[::50]:
+        info = strategy(dict(zip(pac8.variables, pac8.values[s].tolist())))
+        assert info.value == pytest.approx(1 - value[s])
+        assert info.actions == tuple(a for a, ok in zip(actions, optimal[s]) if ok)
+    assert strategy(dict(zip(pac8.variables, pac8.values[pac8.initial].tolist()))).value == pytest.approx(1 - 0.5511,
+                                                                                                          abs=1e-9)
+
+
 def test_only_reachability_and_until_over_labels():
     from baselines.explicit_mdp import _path_sets
     labels = {"a": np.array([True, False, False]), "b": np.array([False, True, False])}

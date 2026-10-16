@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from config import load_config, load_file
-from experiments.base import Benchmark, Experiment, held_out, span
+from experiments.base import Benchmark, Experiment, cell_rules, held_out, span
 from experiments.metrics import transfer_numbers
 from experiments.store import CORE_PATH
 from run_baseline import BASELINES_PATH, BaselineConfig
@@ -282,7 +282,8 @@ class Comparison(Experiment):
         baseline's sources."""
         for u in self.units:
             if u.cell.name == name and u.bench.name == bench.name:
-                frames = [pd.read_csv(p) for p in (csv_path(r, u.dataset(), "final") for r in u.runs) if p.exists()]
+                rules = cell_rules(u.cell)[0]
+                frames = [pd.read_csv(p) for p in (csv_path(r, u.dataset(), rules) for r in u.runs) if p.exists()]
                 return [df[df.source == s] for df in frames for s in df.source.unique()]
         for base in self.baselines():
             if base["name"] == name and bench.name in base["config"]:

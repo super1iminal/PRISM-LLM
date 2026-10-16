@@ -102,3 +102,24 @@ scheduler must retry the shortcut while k < N. The bare MDP
 reproduces four published optima (`tests/test_mer.py`). The extended vocabulary has the constants `N` and `X_PCT`
 (x in percent), the feature `shortcuts_left` and the action feature `enabled`, read from the model's `en_<action>`
 formulas. States: 7.5k (n = 1), 61k (n = 10), 592k (n = 100). PRISM runs out of its 4 GB heap at n = 1000.
+
+## consensus
+
+Randomised consensus, the QVBS benchmark `consensus` (Aspnes and Herlihy's shared-coin protocol; PRISM case study of
+Kwiatkowska, Norman and Segala), screened as a harder RQ1 benchmark and not adopted (`DECISIONS.md`, Case studies).
+`model.prism.j2` is `consensus.N.prism` with every step of process i labelled `p{i}`, so the policy is the scheduler (as
+1-2-3-Go!'s action-labelled models), all variables in one module, and a label whose process has finished moving the
+next unfinished one, so every state keeps exactly the original choices and the bare MDP reproduces the published values
+(`tests/test_consensus.py`: N = 2 and 4). The requirement is the benchmark's `disagree` (Pmax): the processes finish
+without agreeing. Its minimum is 0, so the schedule decides everything. Instances vary the random walk bound K at
+N = 3: the counter's range and the decision barriers (LEFT = N, RIGHT = 2(K+1)N - N) move with K, the variables and
+actions do not. The optimum falls from 0.229 (K = 2) to exactly 1/(2K) from K = 8 on; thresholds are the optimum minus
+5% of it. `data/consensus_transfer.csv`: training K = 2, 3, 4 (ids 0-2), validation K = 5, 6, 8, 10, 12, 16 (ids 3-8),
+sealed test K = 24, 32, 48 (ids 9-11). The extended vocabulary: the model's constants (N, K, LEFT, RIGHT, START = the
+counter's initial value) and codes (FLIP, WRITE, CHECK, DONE; TAILS, HEADS), the features `to_heads`, `to_tails`,
+`heads_decided`, `tails_decided`, and per action `finished`, `stage` and `coin` of the process it names. Baselines
+(`configs/baselines/consensus_*.yaml`, validation ids 3-8): trees over the raw variables, the uniform policy and the
+strategy of K = 4 certify none (63-80%, 13% and 50% of the optimum), but trees over the features trained on K = 2-4
+certify all six (99.9%): measured from the barriers, the optimal schedule is the same at every K. One 13-rule list
+over the vocabulary certifies every instance checked (the test). States: 2.7k (K = 2), 20k (K = 16), 60k (K = 48). The
+benchmark's `c2` (Pmin) is not used: as K grows every scheduler gets close to 1/2 (0.484 to 0.508 at N = 2, K = 16).

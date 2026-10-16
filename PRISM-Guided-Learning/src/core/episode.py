@@ -22,6 +22,11 @@ def score(v: Verification, reqs: List[Requirement]) -> Tuple:
             sum(r.shortfall(v.best[r.name]) for r in reqs))
 
 
+def margin(values: Dict[str, float], reqs: List[Requirement]) -> float:
+    """The smallest margin over the requirements (`Requirement.margin`): at least 0 exactly when every one holds."""
+    return min(r.margin(values[r.name]) for r in reqs)
+
+
 def pessimistic(values: List[Dict[str, float]], reqs: List[Requirement]) -> Dict[str, float]:
     """Per requirement, the least favourable of several members' values."""
     return {r.name: (min if r.maximize else max)(d[r.name] for d in values) for r in reqs}

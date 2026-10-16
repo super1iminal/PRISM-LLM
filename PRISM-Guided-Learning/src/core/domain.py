@@ -62,6 +62,12 @@ class Requirement:
             gap /= abs(self.threshold) or 1.0
         return max(0.0, gap)
 
+    def margin(self, value: float) -> float:
+        """How far `value` is on the passing side of the threshold (negative: the shortfall), on the scale of
+        `shortfall`."""
+        gap = value - self.threshold if self.maximize else self.threshold - value
+        return gap / (abs(self.threshold) or 1.0) if self.reward is not None else gap
+
     def _op(self, best: bool) -> str:
         high = self.maximize == best
         if self.reward is not None:
@@ -100,12 +106,14 @@ class Spec:
 
     def vocabulary(self, rules, literal_vars: Optional[Sequence[str]] = None) -> Vocabulary:
         """The vocabulary a run's `rules` config allows: with `rules.extended`, this instance's constants and
-        features (minus `rules.hidden_features`) and `any` rules; otherwise the base language. With
-        `rules.shared_literals`, numbers may also be compared with `literal_vars` (the planner passes the variables
-        whose range is the same on every training member; by default every variable, for checking frozen rules)."""
+        features (minus `rules.hidden_features`; optional ones only if named in `rules.extra_features`) and `any`
+        rules; otherwise the base language. With `rules.shared_literals`, numbers may also be compared with
+        `literal_vars` (the planner passes the variables whose range is the same on every training member; by
+        default every variable, for checking frozen rules)."""
         if not rules.extended:
             return Vocabulary()
-        features = [f for f in self.features if f.name not in rules.hidden_features]
+        features = [f for f in self.features if f.name not in rules.hidden_features
+                    and (not f.optional or f.name in rules.extra_features)]
         shared = (tuple(literal_vars if literal_vars is not None else [v.name for v in self.variables])
                   if rules.general and getattr(rules, "shared_literals", False) else ())
         return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general, literal_vars=shared)
@@ -153,6 +161,37 @@ class Domain:
         """Optional fast model of `instance` that scores rule lists without PRISM (`rules.any_scorer: domain`): its
         `order_values(policy, orders)` gives, for each action order, the (best, worst) values of `policy` with its
         `any` rules resolved in that order. None if the domain has none."""
+        return None
+
+    def strict(self, instance: Instance) -> Dict[str, Any]:
+        """What `rules.strict` withholds from conditions: `hide`, names of policy variables and constants that
+        conditions may not use (and the prompt leaves out); `literal_sums`, whether number literals may be added or
+        subtracted (`1 + 1`); `note`, a sentence for the prompt saying what is withheld and why. By default nothing."""
+        return {"hide": [], "literal_sums": True, "note": ""}
+
+    def fast_checker(self, instance: Instance, config, vocabulary) -> Optional[Any]:
+        """Optional fast exact checker of `instance` for rule lists parsed with `vocabulary` (`planner.repair`,
+        `planner.pick: candidates`): its `worst(rules, order=None)` gives each requirement's worst-case value of the
+        `(condition, action)` pairs (with `any` taking the first allowed action of `order` if given), and raises
+        `core.rules.RuleError` if they do not parse. None if the domain has none."""
+        return None
+
+    def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
+        """Conjuncts `planner.repair` may add to conditions: by default each boolean policy variable and each feature
+        of `vocabulary` that is boolean, and their negations (domains add comparisons of their own)."""
+        spec = self.spec(instance)
+        names = [v.name for v in spec.variables if v.type == "bool"] + [f.name for f in vocabulary.features
+                                                                         if f.is_action_feature]
+        return [lit for n in names for lit in (n, f"!{n}")]
+
+    def worst_case_notes(self, instance: Instance) -> str:
+        """The domain's own notes on the worst case for `prompt.worst_case` (worst_case.md.j2), or ''."""
+        return self.render("worst_case.md.j2", instance).strip() if self.has_template("worst_case.md.j2") else ""
+
+    def optimal_strategy(self, instance: Instance, config) -> Optional[Any]:
+        """Optional optimal strategy of `instance` (`feedback.optimal`, `prompt.demonstration`; core/optimal.py): a
+        function from a state (every model variable) to its optimal actions and chance of success. None if the
+        domain has none."""
         return None
 
     # ---------------------------------------------------------------- the domain's data files
@@ -217,8 +256,8 @@ class Domain:
         requirements = [Requirement(r["name"], r["formula"], float(r["threshold"]), r.get("bound", ">="),
                                     r.get("description", ""), r.get("reward")) for r in raw["requirements"]]
         constants = [Constant(c["name"], int(c["value"]), c.get("description", "")) for c in raw.get("constants") or []]
-        features = [Feature(f["name"], f.get("description", ""), f.get("expr"), f.get("per_action"))
-                    for f in raw.get("features") or []]
+        features = [Feature(f["name"], f.get("description", ""), f.get("expr"), f.get("per_action"),
+                            bool(f.get("optional", False))) for f in raw.get("features") or []]
         return Spec(variables, dict(raw["actions"]), requirements, constants, features)
 
     def format_state(self, valuation: Dict[str, Value]) -> str:

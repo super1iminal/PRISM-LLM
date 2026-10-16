@@ -95,14 +95,21 @@ class Model:
         """(φ, ψ) of a path formula `F ψ` or `φ U ψ` over labels, as bool arrays over the states."""
         return _path_sets(formula, self.labels, self.S)
 
-    def reach(self, formula: str, maximize: bool) -> np.ndarray:
-        """Per state: the maximum (or minimum) over schedulers of the probability of `formula`."""
+    def reach(self, formula: str, maximize: bool, mask: Optional[np.ndarray] = None) -> np.ndarray:
+        """Per state: the maximum (or minimum) over schedulers of the probability of `formula`; with `mask` (per
+        choice), over the schedulers that only take the choices it keeps (a state left without one keeps its value,
+        as a self-loop would)."""
         stay, goal = self.path_sets(formula)
         solve = stay & ~goal
         V = goal.astype(float)
         reduce = np.maximum.reduceat if maximize else np.minimum.reduceat
+        blocked = -np.inf if maximize else np.inf
         for _ in range(MAX_ITERS):
-            new = np.where(solve, reduce(self.matrix @ V, self.choice_start[:-1]), V)
+            q = self.matrix @ V
+            if mask is not None:
+                q = np.where(mask, q, blocked)
+            best = reduce(q, self.choice_start[:-1])
+            new = np.where(solve & np.isfinite(best), best, V)
             if np.abs(new - V).max(initial=0.0) <= TOL:
                 return new
             V = new
@@ -400,6 +407,86 @@ class ExplicitMDP(Model):
                 if "Error" not in out and "did not converge" not in out and len(results) == len(reqs):
                     return {r.name: float(v) for r, v in zip(reqs, results)}
         raise PrismError("\n".join(l for l in out.splitlines() if "rror" in l or "converge" in l) or out[-2000:])
+
+
+class RuleChecker:
+    """Worst-case values of rule lists on one instance's explicit model, in numpy: the fast checker the loop uses where
+    it scores many candidate lists without PRISM (`planner.repair`, `planner.pick: candidates`), for domains whose
+    requirements are `F` / `U` over labels (Pac-Man, MER). The rules' allowed actions per state come from
+    core.vector (the PRISM encoding's semantics); the policy's choices they exclude are masked, and each requirement's
+    worst case is the opposite optimum over the rest (`Model.reach`)."""
+
+    def __init__(self, domain: Domain, instance: Instance, config: Config, vocabulary):
+        from core.vector import allowed_actions
+        self._allowed_actions = allowed_actions
+        self.mdp = ExplicitMDP(domain, instance, config)
+        self.spec, self.vocabulary = self.mdp.spec, vocabulary
+        self.values = {v.name: (self.mdp.obs[:, i] != 0) if v.type == "bool" else self.mdp.obs[:, i]
+                       for i, v in enumerate(self.spec.variables)}
+        self.cache: Dict = {}
+        self.mine = self.mdp.choice_action >= 0
+
+    def allowed(self, rules, order: Optional[Sequence[str]] = None):
+        policy = self.spec.policy(rules, self.vocabulary)
+        return self._allowed_actions(policy, self.values, self.mdp.S, self.cache, order)
+
+    def worst(self, rules, order: Optional[Sequence[str]] = None) -> Dict[str, float]:
+        """Each requirement's worst-case value from the initial state (`core.rules.RuleError` if the rules do not
+        parse), on the part of the model the rules' choices reach."""
+        allowed, _ = self.allowed(rules, order)
+        m = self.mdp
+        mask = np.ones(m.C, dtype=bool)
+        mask[self.mine] = allowed[m.choice_state[self.mine], m.choice_action[self.mine]]
+        sub = masked_part(m, mask)
+        return {r.name: float(sub.reach(r.formula, maximize=r.worst_op() == "Pmax")[sub.initial])
+                for r in self.spec.requirements}
+
+
+def masked_part(model: Model, mask: np.ndarray) -> Model:
+    """The part of `model` its initial state reaches through the choices `mask` keeps, with only those choices (a state
+    left without one gets a self-loop, as PRISM resolves deadlocks), renumbered in state order."""
+    lengths = np.diff(model.trans_start)
+    kept = np.repeat(mask, lengths)
+    graph = sp.csr_matrix((np.ones(int(kept.sum())), (np.repeat(model.choice_state, lengths)[kept], model.target[kept])),
+                          shape=(model.S, model.S))
+    keep = np.zeros(model.S, dtype=bool)
+    keep[breadth_first_order(graph, model.initial, directed=True, return_predecessors=False)] = True
+    new = np.cumsum(keep) - 1
+    choices = np.flatnonzero(keep[model.choice_state] & mask)
+    tr = _ranges(model.trans_start[:-1][choices], model.trans_start[1:][choices])
+    states = new[model.choice_state[choices]]
+    S = int(keep.sum())
+    empty = np.setdiff1d(np.arange(S), states)
+    return _build(S, np.r_[states, empty], np.r_[model.choice_action[choices], np.full(empty.size, -1)],
+                  np.r_[np.repeat(np.arange(choices.size), lengths[choices]), choices.size + np.arange(empty.size)],
+                  np.r_[new[model.target[tr]], empty], np.r_[model.prob[tr], np.ones(empty.size)],
+                  {k: v[keep] for k, v in model.labels.items()}, new[model.initial])
+
+
+def optimal_strategy(domain: Domain, instance: Instance, config: Config, requirement: Optional[str] = None):
+    """`ExplicitMDP.optimal_actions` of one requirement (default: the spec's only one) as a core.optimal strategy: a
+    state (every model variable) -> its chance of meeting the requirement's optimum direction (the probability when
+    maximizing, one minus it when minimizing) and optimal actions; settled where every scheduler gets the same."""
+    from core.optimal import Optimal
+    mdp = ExplicitMDP(domain, instance, config)
+    reqs = [r for r in mdp.spec.requirements if requirement in (None, r.name)]
+    if len(reqs) != 1:
+        raise ValueError(f"name one of the requirements {[r.name for r in mdp.spec.requirements]} for its optimum")
+    req = reqs[0]
+    maximize = req.best_op() == "Pmax"
+    best, optimal = mdp.optimal_actions(req)
+    worst = mdp.reach(req.formula, maximize=not maximize)
+    success = best if maximize else 1.0 - best
+    index = {row.tobytes(): i for i, row in enumerate(mdp.values)}
+    dtype = mdp.values.dtype
+
+    def strategy(state: dict):
+        i = index.get(np.array([int(state[v]) for v in mdp.variables], dtype=dtype).tobytes())
+        if i is None:
+            return None
+        return Optimal(float(success[i]), tuple(a for a, ok in zip(mdp.actions, optimal[i]) if ok),
+                       settled=abs(best[i] - worst[i]) <= 1e-9)
+    return strategy
 
 
 def _decides(policy: np.ndarray) -> np.ndarray:

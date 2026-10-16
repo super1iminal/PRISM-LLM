@@ -157,3 +157,48 @@ def test_a_failing_pool_instance_joins_the_training_set(grids):
     assert result["counterexamples"] == ["1"]                # ... fails on grid 1, which joins the set
     assert "### Instance 2" in second["prompt"] and [m["instance"] for m in result["members"]] == ["0", "1"]
     assert result["success"]                                 # BOTH passes both
+
+
+def test_chains_need_training_sets_without_a_pool():
+    load_config(overrides=["planner.chains=2", "run.train_sets=[[0, 1]]"])
+    for extra in ([], ["run.train_sets=[[0]]", "run.pool_sets=[[1]]"]):
+        with pytest.raises(ValueError, match="planner.chains > 1"):
+            load_config(overrides=["planner.chains=2"] + extra)
+
+
+@needs_prism
+def test_chains_keep_the_chain_with_the_largest_margin(tmp_path, grids, monkeypatch):
+    """Two independent loops on one set: the one whose rules pass both members wins over the one that fails a
+    member, wherever it comes in the chain order; every chain's rounds are kept, and the chains' seeds differ."""
+    backend = FakeBackend(lambda task: BOTH if task.meta["instance"].endswith("chain1") else RIGHT)
+    monkeypatch.setattr(run_symbolic, "make_backend", lambda config: backend)
+    cfg = load_config(overrides=[f"domain.dataset={grids.as_posix()}", "run.workers=2", "planner.max_rounds=1",
+                                 "llm.seed=1", "run.train_sets=[[0, 1]]", "planner.chains=2"])
+    run_dir = tmp_path / "run"
+    run_symbolic.run(cfg, str(run_dir))
+    record = json.loads((run_dir / "outputs" / "sample_000.json").read_text(encoding="utf-8"))
+    assert record["instance"] == "set0" and record["success"] and record["chain"] == 1
+    margins = [c["margin"] for c in record["chains"]]
+    assert margins[0] < 0 <= margins[1] and [c["success"] for c in record["chains"]] == [False, True]
+    assert [(it["iteration"], it["chain"], it["chain_iteration"]) for it in record["iterations"]] == [(1, 0, 1), (2, 1, 1)]
+    assert record["final_rules"] == record["iterations"][1]["rules"]
+    df = pd.read_parquet(run_dir / SYMBOLIC_RESULTS).reset_index()
+    assert df.instance.tolist() == ["set0", "set0"] and df.success.tolist() == [True, True]
+    seeds = {task.meta["instance"]: task.params["seed"] for batch in backend.batches for task in batch}
+    assert seeds["set0.chain1"] - seeds["set0.chain0"] == 100_000
+    shutil.rmtree(run_dir)
+
+
+@needs_prism
+def test_keep_ties_newer_keeps_the_newer_of_two_equal_lists(grids):
+    """Two lists with the same values on the members (neither passes row 1): keep-best keeps the first by default,
+    the second with planner.keep_ties=newer, so the next feedback is about the newer list."""
+    domain = load_domain("gridworld", ["obs_idx"])
+    same = answer(("x >= 0", "right"))                                   # the same policy as RIGHT
+    for ties, want in (("older", "true"), ("newer", "x >= 0")):
+        cfg = load_config(overrides=["planner.max_rounds=2", "llm.seed=1", f"planner.keep_ties={ties}"])
+        target, = training_sets(domain.load_instances(str(grids)), [[0, 1]])
+        result = SymbolicPlanner(domain, ScriptedBackend([RIGHT, same]), cfg).solve(
+            target, logging.getLogger("test_training"))
+        assert [r["condition"] for r in result["final_rules"]] == [want]
+        assert result["iterations"][1]["improved"] == (ties == "newer")

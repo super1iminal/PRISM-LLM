@@ -262,3 +262,52 @@ def test_feature_space_feedback_names_no_position(tiny_grid):
         feedback = prompt[prompt.index(section):prompt.index("## Task")]
         assert "## A likely way to fail" in feedback and "g1=false & g2=false | up: wall" in feedback
         assert not re.search(r"\b(x|y|obs_idx)=", feedback)
+
+
+def test_optimal_feedback_names_what_the_optimal_strategy_does(tiny_grid):
+    """With `feedback.optimal`, the states blame, uncovered hotspots and the trace name say what the optimal strategy
+    (the gridworld trees' combined objective) does there, against the rules' action, with the features that hold for
+    each of the actions named (extended vocabulary)."""
+    refined, _ = solve(tiny_grid, [LEFT, LEFT], 2, "feedback.optimal=true", "feedback.trajectory=true")
+    prompt = refined["iterations"][1]["prompt"]
+    assert "Most in:\n  - x=0 & y=0 & g1=false & g2=false & obs_idx=0: optimal: right, not left\n" in prompt
+    assert "rule 1 chose left; optimal: right, not left; this outcome" in prompt
+    assert "`optimal` names what the best strategy" in prompt and "brackets" not in prompt
+    extended = ["rules.extended=true", "rules.general=true", "feedback.optimal=true", "feedback.trajectory=true"]
+    covered, _ = solve(tiny_grid, [EMPTY, EMPTY], 2, *extended)
+    prompt = covered["iterations"][1]["prompt"]
+    assert "%: x=0 & y=0 & g1=false & g2=false & obs_idx=0: optimal: right [right: toward, closer]\n" in prompt
+    assert "up (no rule decides here); optimal: right, not up [right: toward, closer; up: wall]" in prompt
+    assert "brackets list the features" in prompt
+    plain, _ = solve(tiny_grid, [LEFT, LEFT], 2, "feedback.trajectory=true")
+    assert "optimal" not in plain["iterations"][1]["prompt"]
+
+
+def test_demonstration_shows_one_optimal_run(tiny_grid):
+    """With `prompt.demonstration`, the initial prompt shows the optimal strategy's run along the outcomes most likely
+    to succeed, until the last goal is reached: per decision the state (with the extended vocabulary, the features
+    per action) and the optimal action."""
+    result, llm = solve(tiny_grid, [LEFT], 1, "prompt.demonstration=true")
+    prompt = llm.prompts[0]
+    run = prompt[prompt.index("## An optimal run on this instance"):prompt.index("## Output")]
+    assert "1. x=0 & y=0 & g1=false & g2=false & obs_idx=0 -> right\n" in run
+    assert "6. x=2 & y=3 & g1=true & g2=false & obs_idx=1 -> down\n\n" in run and "7." not in run
+    _, llm = solve(tiny_grid, [LEFT], 1, "prompt.demonstration=true", "rules.extended=true", "rules.general=true")
+    assert "1. x=0 & y=0 & g1=false & g2=false & obs_idx=0 | wall: up, left; toward: right; closer: right -> right\n" \
+        in llm.prompts[0]
+    _, llm = solve(tiny_grid, [LEFT], 1)
+    assert "## An optimal run" not in llm.prompts[0]
+
+
+def test_deviations_list_where_the_rules_leave_the_optimal_strategy(tiny_grid):
+    """With `feedback.deviations`, the prompt lists the states the rules decide where their action loses most against
+    the optimal strategy, weighted by how often the rules reach them; `feedback.stuck` says which actions change
+    nothing (none here: the obstacle moves every step)."""
+    result, _ = solve(tiny_grid, [LEFT, LEFT], 2, "feedback.optimal=true", "feedback.deviations=true",
+                      "feedback.stuck=true")
+    prompt = result["iterations"][1]["prompt"]
+    section = prompt[prompt.index("## Where your rules leave the optimal strategy"):prompt.index("## Task")]
+    assert "%: x=1 & y=0 & g1=false & g2=false & obs_idx=1: optimal: up, not left\n" in section   # stuck at the wall
+    assert "changes nothing" not in prompt
+    shares = [int(m) for m in re.findall(r"^- (\d+)%", section, re.M)]
+    assert shares == sorted(shares, reverse=True) and 95 <= sum(shares) <= 105
