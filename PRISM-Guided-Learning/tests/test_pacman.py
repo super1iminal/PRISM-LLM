@@ -101,6 +101,21 @@ def test_early_check_flags_the_dead_end(domain):
     assert down.mean < up.mean and not any(r.place == (("xP", 3), ("yP", 4)) and r.move == "up" for r in down.rules)
 
 
+def test_narrowing_keeps_the_dead_end_move_away(domain):
+    """`rules.early_narrow`: a list that passes horizons 14, 16, 18 but goes up into the dead end at (3,4) gets `up`
+    kept away from (3,4) by the verifier, still passes, and the run stops there (`early_tolerance: 1`)."""
+    cfg = load_config("haiku_pac_narrow", ["rules.any_order=rotations", "planner.max_rounds=2"])
+    rules = [("!wall & !nearer_g0 & !nearer_g1", "any"), ("!nearer_g0 & !nearer_g1", "any"), ("!wall & !nearer_g0", "any"),
+             ("!wall & !nearer_g1", "any"), ("!nearer_g0", "any"), ("!nearer_g1", "any"), ("true", "right")]
+    from core.training import training_sets
+    target = training_sets(domain.load_instances("pacman_transfer.csv"), [[3, 4, 5]])[0]
+    result = SymbolicPlanner(domain, ScriptedBackend([answer(*rules)]), cfg).solve(target, logging.getLogger("test_pacman"))
+    assert result["success"] and len(result["iterations"]) == 1
+    assert result["iterations"][0]["narrowed"] == ["up kept away from xP = 3 & yP = 4"]
+    up = [r["condition"] for r in result["final_rules"] if r["action"] == "up"]
+    assert up and all(c.endswith("& !(xP = 3 & yP = 4)") for c in up)
+
+
 def test_sealed_horizons_are_refused(domain, tmp_path):
     """Horizons 50 and 100 (pacman_transfer.csv ids 10, 11) are Pac-Man's sealed test set."""
     import yaml
