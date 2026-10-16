@@ -393,6 +393,7 @@ def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 2
         futures = [pool.submit(chain, insts, rounds, out, f"pacman_c{i}") for i in range(chains)]
         attempts = [a for f in futures for a in f.result()]
     llm_seconds = time.time() - start
+    usage = {k: sum(a["usage"].get(k, 0) for a in attempts) for k in ("calls", "prompt_tokens", "output_tokens", "cost")}
     valid = sorted((a for a in attempts if a.get("score")), key=lambda a: a["score"], reverse=True)
     seen, cands = set(), []
     for a in valid:
@@ -414,7 +415,7 @@ def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 2
             finals[-1]["det_regret"] = mean_regret(det, insts)
     finals.sort(key=selection_key, reverse=True)
     summary = {"chains": chains, "rounds": rounds, "uniform": UNIFORM, "llm_seconds": round(llm_seconds, 1),
-               "seconds": round(time.time() - start, 1), "usage": dict(llm.USAGE), "attempts": len(attempts),
+               "seconds": round(time.time() - start, 1), "usage": usage, "process_usage": dict(llm.USAGE), "attempts": len(attempts),
                "valid": len(valid), "best": finals[0] if finals else None, "finals": finals}
     (out / "pacman_summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
     return summary

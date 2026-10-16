@@ -67,10 +67,25 @@ An ordered list of rules {{"condition": ..., "action": ...}}; in each state the 
 decides. Actions: the names above, or `any` (allows every action for which the condition holds, with the
 per-action sensor evaluated for that action). Conditions use ! & | => ( ), = != < <= > >=, + -, and only the numbers
 0 and 1, which may not be added together (use the named codes instead). Names:
-- variables: {"; ".join(f"`{v['name']}` ({v['description']})" for v in spec["variables"])}
+- variables (compare them with the codes, never with numbers above 1):
+{chr(10).join(f"  - {line}" for line in VARIABLES)}
 - codes: {codes}; `N` and `X_PCT` (the instance's n and x in percent)
 - `shortcuts_left` (= N - k); per-action sensor `enabled`: the action is possible here
 End the list with a catch-all rule (condition `true`)."""
+
+
+VARIABLES = [
+    "`s`: the arbiter: 0 idle, `USER1` or `USER2` serving that user's request, -1 about to grant comm to user 1 at once",
+    "`r`: the user the arbiter asked to give up drive (0 = nobody, `USER1`, `USER2`)",
+    "`k`: user 1's comm requests made while drive was held (at most `N`; `shortcuts_left` = N - k)",
+    "`commUser`, `driveUser`: the user holding comm / drive (0 = free, `USER1`, `USER2`)",
+    "`gc`, `gd`, `dc`, `dd` (bool): a comm grant / drive grant / comm denial / drive denial is pending",
+    "`s1`, `s2`: user 1's / user 2's status: `IDLE`, `READY`, `WAITING`, `HOLDING`, `MUST_CANCEL`",
+    "`r1`, `r2`: the resource user 1 / user 2 wants or holds: 0 none, `COMM`, `DRIVE`",
+    "`rescind1`, `rescind2` (bool): user 1 / user 2 has been asked to give up drive",
+    "`e`: the monitor: 0 nothing granted, `COMM` comm granted, `DRIVE` drive granted, `BOTH` both at once (the error)",
+    "`u`: the monitor's user holding the watched resource (0 = none, `USER1`, `USER2`)",
+]
 
 
 def initial_prompt(head: str) -> str:
@@ -78,7 +93,8 @@ def initial_prompt(head: str) -> str:
 
 ## Answer
 Think about which order of user and arbiter steps makes the error (both resources granted at once) most likely,
-in every instance. Then give the complete list as JSON: {"rules": [{"condition": "...", "action": "..."}, ...]}"""
+in every instance. Keep your explanation short (a few lines), then give the complete list as JSON:
+{"rules": [{"condition": "...", "action": "..."}, ...]}"""
 
 
 def revise_prompt(head: str, rules, report: str, history: str) -> str:
@@ -92,8 +108,9 @@ def revise_prompt(head: str, rules, report: str, history: str) -> str:
 ## Its exact worst-case results on the training instances
 {report}
 {history}
-Revise the list so that the requirement holds on every training instance, keeping the rules general. Give the
-complete revised list as JSON: {{"rules": [{{"condition": "...", "action": "..."}}, ...]}}"""
+Revise the list so that the requirement holds on every training instance, keeping the rules general. Keep your
+explanation short, then give the complete revised list as JSON:
+{{"rules": [{{"condition": "...", "action": "..."}}, ...]}}"""
 
 
 def evaluate(rules, insts) -> List[float]:
@@ -198,7 +215,7 @@ def chain(insts, head: str, rounds: int, log: Path, tag: str) -> List[Dict]:
     attempts, best, history_lines = [], None, []
     prompt = initial_prompt(head)
     for rnd in range(rounds + 1):
-        text, usage = llm.chat([{"role": "user", "content": prompt}])
+        text, usage = llm.chat([{"role": "user", "content": prompt}], max_tokens=32000)
         rules = llm.parse_rules(text)
         err = validate(rules, insts)
         entry = {"chain": tag, "round": rnd, "rules": rules, "error": err, "usage": usage}
@@ -300,6 +317,7 @@ def run(dataset: str, chains: int, rounds: int, out: Path, top: int = 6, repair_
         futures = [pool.submit(chain, insts, head, rounds, out, f"mer_c{i}") for i in range(chains)]
         attempts = [a for f in futures for a in f.result()]
     llm_seconds = time.time() - start
+    usage = {k: sum(a["usage"].get(k, 0) for a in attempts) for k in ("calls", "prompt_tokens", "output_tokens", "cost")}
     valid = sorted((a for a in attempts if a.get("score")), key=lambda a: a["score"], reverse=True)
     seen, cands = set(), []
     for a in valid:
@@ -320,7 +338,7 @@ def run(dataset: str, chains: int, rounds: int, out: Path, top: int = 6, repair_
     finals.sort(key=lambda f: (f["det_score"][0], f["score"][0], round(f["score"][2], 9),
                                round(f["det_score"][2], 9), -size(f["rules"])), reverse=True)
     summary = {"dataset": dataset, "chains": chains, "rounds": rounds, "llm_seconds": round(llm_seconds, 1),
-               "seconds": round(time.time() - start, 1), "usage": dict(llm.USAGE), "attempts": len(attempts),
+               "seconds": round(time.time() - start, 1), "usage": usage, "process_usage": dict(llm.USAGE), "attempts": len(attempts),
                "valid": len(valid), "best": finals[0] if finals else None, "finals": finals}
     (out / "mer_summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
     return summary
