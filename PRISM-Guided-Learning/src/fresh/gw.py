@@ -80,7 +80,7 @@ class Result:
 class Member(VecEval):
     """One gridworld instance with its vocabulary, states and transition table."""
 
-    def __init__(self, idx: int, row: pd.Series):
+    def __init__(self, idx: int, row: pd.Series, hidden=None):
         self.id = idx
         self.family = row.get("family", "")
         self.n = n = int(row["n"])
@@ -95,7 +95,7 @@ class Member(VecEval):
         voc = rule_vocabulary(n, goal_list, sorted(self.static), self.cycle, phase_visible=True)
         self.constants = [Constant(c["name"], c["value"], c["description"]) for c in voc["rule_constants"]]
         self.features = [Feature(f["name"], f["description"], per_action=f["per_action"])
-                         for f in voc["rule_features"] if f["name"] not in HIDDEN]
+                         for f in voc["rule_features"] if f["name"] not in (HIDDEN if hidden is None else set(hidden))]
         self.vocabulary = Vocabulary(self.constants, self.features, allow_any=True, general=True)
         self.variables = [Variable("x", "int", 0, n - 1, "agent row (0 = top)"),
                           Variable("y", "int", 0, n - 1, "agent column (0 = left)")]
@@ -174,8 +174,10 @@ class Member(VecEval):
     def policy(self, rules: Sequence[Tuple[str, str]]) -> SymbolicPolicy:
         return SymbolicPolicy.from_raw(self.variables, ACTIONS, rules, self.vocabulary)
 
-    def allowed(self, rules: Sequence[Tuple[str, str]]) -> Tuple[np.ndarray, np.ndarray]:
-        """(S x 4 bool allowed actions, S int deciding rule or -1)."""
+    def allowed(self, rules: Sequence[Tuple[str, str]], order: Optional[Sequence[str]] = None
+                ) -> Tuple[np.ndarray, np.ndarray]:
+        """(S x 4 bool allowed actions, S int deciding rule or -1). With `order`, an `any` rule takes the first
+        action in `order` that it allows (the verifier resolves it) instead of leaving them all open."""
         pol = self.policy(rules)
         cache = {}
         for (name, a), v in self.feature_values.items():
@@ -187,6 +189,14 @@ class Member(VecEval):
             per = np.zeros((self.S, 4), bool)
             for a, e in rule.allows.items():
                 per[:, ACTIONS.index(a)] = np.broadcast_to(self.veval(e, cache), (self.S,))
+            if order is not None and rule.action == ANY:
+                first = np.zeros_like(per)
+                taken = np.zeros(self.S, bool)
+                for a in order:
+                    j = ACTIONS.index(a)
+                    first[:, j] = per[:, j] & ~taken
+                    taken |= per[:, j]
+                per = first
             fires = undecided & per.any(axis=1)
             allowed[fires] = per[fires]
             decider[fires] = i
@@ -262,11 +272,11 @@ class Member(VecEval):
         return (v, act) if return_policy else v
 
     def check(self, rules: Sequence[Tuple[str, str]], best: bool = True,
-              allowed: Optional[np.ndarray] = None) -> Result:
+              allowed: Optional[np.ndarray] = None, order: Optional[Sequence[str]] = None) -> Result:
         """Worst (and best) case of every requirement; with several initial states (`self.inits`), the smallest
         value over them."""
         if allowed is None:
-            allowed, decider = self.allowed(rules)
+            allowed, decider = self.allowed(rules, order)
         else:
             decider = None
         inits = self.inits
@@ -315,9 +325,12 @@ class Member(VecEval):
         return self.check([], best=True).best
 
 
-def load(ids: Sequence[int], data: Path = DATA) -> List[Member]:
+def load(ids: Sequence[int], data=DATA, hidden=None) -> List[Member]:
+    data = Path(data)
+    if not data.exists():
+        data = DATA.parent / data
     df = pd.read_csv(data)
-    return [Member(i, df.loc[i]) for i in ids]
+    return [Member(i, df.loc[i], hidden) for i in ids]
 
 
 FAMILIES = {"rooms": [0, 4, 8], "crossing": [60, 64, 68], "adjacent": [120, 124, 128]}

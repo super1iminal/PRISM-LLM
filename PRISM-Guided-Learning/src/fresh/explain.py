@@ -84,13 +84,16 @@ def action_effects(m: Member, s: int) -> Dict[str, str]:
     return out
 
 
-def describe(m: Member, rules, results, top_reqs: int = 3, per_req: int = 2) -> str:
-    """Feedback text for one member: the failing requirements and where they fail."""
+def describe(m: Member, rules, results, top_reqs: int = 3, per_req: int = 2, order=None,
+             action_lines: bool = True) -> str:
+    """Feedback text for one member: the failing requirements and where they fail (with `order`, for the list
+    whose `any` rules take the first allowed action in that order; without `action_lines`, no per-action
+    sensor and risk lines)."""
     res = results
     failing = sorted(res.failing(), key=lambda r: res.worst[r] - THRESH[r])
     if not failing:
         return ""
-    allowed, decider = m.allowed(rules)
+    allowed, decider = m.allowed(rules, order)
     lines = []
     seen = set()
     for req in failing[:top_reqs]:
@@ -108,6 +111,7 @@ def describe(m: Member, rules, results, top_reqs: int = 3, per_req: int = 2) -> 
             verb = "fails from here" if kind == "enters" else "is still stuck here at the end"
             lines.append(f"    * {mass:.3f} of runs {verb}: {state_text(m, s)}; decided by {who}; "
                          f"allowed {opts}, worst case takes {ACTIONS[a]}.")
-            eff = action_effects(m, s)
-            lines.append("      actions here: " + "; ".join(f"{a}: {e}" for a, e in eff.items()))
+            if action_lines:
+                eff = action_effects(m, s)
+                lines.append("      actions here: " + "; ".join(f"{a}: {e}" for a, e in eff.items()))
     return "\n".join(lines)

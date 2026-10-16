@@ -10,6 +10,7 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -21,6 +22,19 @@ from fresh.explain import describe  # noqa: E402
 from fresh.gw import ACTIONS, FAMILIES, REQS, THRESH, Member, Result, load  # noqa: E402
 
 POSITION_NAMES = re.compile(r"\b(x|y|N|G\d[RC])\b")
+
+
+@dataclass
+class Settings:
+    """Everything a run may change; the defaults are the frozen family method."""
+    kind: str = "family"                 # family | random (prompt wording)
+    data: str = "families_v0.csv"
+    hidden: tuple = ("hazard",)          # sensors left out of the vocabulary
+    resolve_in_loop: bool = False        # the verifier resolves each candidate's `any` before scoring and feedback
+    action_lines: bool = True            # feedback shows each action's sensors and one-step risks
+
+
+CFG = Settings()
 
 FEATURE_TEXT = {
     "wall": "the move would leave the grid or hit a static obstacle (the agent then stays where it is)",
@@ -35,31 +49,42 @@ FEATURE_TEXT = {
 }
 
 
+PATROL = {
+    "family": """- A moving obstacle patrols a short path of cells, advancing one position per agent step through a cycle of 4
+  positions (obs_idx 0 -> 1 -> 2 -> 3 -> 0 ...). Its cells may be entered, but being on the same cell as the
+  obstacle at the same time is a collision.""",
+    "random": """- A moving obstacle patrols a short path of cells back and forth, advancing one position per agent step through
+  its cycle (obs_idx 0 -> 1 -> ... -> 0; the cycle's length differs between grids, see each grid below). Its cells
+  may be entered, but being on the same cell as the obstacle at the same time is a collision.""",
+}
+
+
 def world_text(position: bool) -> str:
     names = ["- `g1`, `g2`, `g3` (bool): goal k has been reached in order (g2 only counts after g1, g3 after g2).",
              "- `obs_idx` (int): the moving obstacle's current position in its patrol cycle (0, 1, 2, 3; see each "
-             "member below)."]
+             "member below)." if CFG.kind == "family" else
+             "- `obs_idx` (int): the moving obstacle's current position in its patrol cycle (see each grid below; "
+             "the same index means different cells in different grids)."]
     if position:
         names += ["- `x`, `y` (int): the agent's row and column.",
                   "- constants: `N` (grid size), `G1R`, `G1C`, `G2R`, `G2C`, `G3R`, `G3C` (goal rows and columns)."]
     names += ["- per-action sensors (true/false for the rule's action; with `any`, for each action separately):"]
-    names += [f"    - `{k}`: {v}" for k, v in FEATURE_TEXT.items()]
+    names += [f"    - `{k}`: {v}" for k, v in FEATURE_TEXT.items() if k not in CFG.hidden]
     restrict = ("Conditions may only use these names, `true`/`false` and the numbers 0 and 1 (write e.g. "
                 "`obs_idx = 1 + 1` for 2)." if position else
                 "Conditions may only use the names above, `true`/`false` and the numbers 0 and 1 (write e.g. "
                 "`obs_idx = 1 + 1` for 2). The agent's coordinates and the grid size are NOT available: the rules "
                 "must work from the sensors, the flags and the obstacle phase alone, which is what makes them carry "
                 "over to every member.")
-    return f"""## The world (the same in every member)
+    WHAT = "member" if CFG.kind == "family" else "grid"
+    return f"""## The world (the same in every {WHAT})
 - An agent moves on an NxN grid: x = row (0 = top), y = column (0 = left). It starts at (0,0).
 - Goals 1, 2, 3 must be visited in this order. Flag g1 becomes true when the agent enters goal 1's cell; g2 when it
   enters goal 2's cell while g1 is true; g3 when it enters goal 3's cell while g2 is true.
 - Each step the agent picks up, right, down or left. The move succeeds with probability 0.7 and slips 90 degrees to
   either side with probability 0.15 each (e.g. `down` goes down 0.7, left 0.15, right 0.15).
 - Moving off the grid or into a static obstacle leaves the agent where it is.
-- A moving obstacle patrols a short path of cells, advancing one position per agent step through a cycle of 4
-  positions (obs_idx 0 -> 1 -> 2 -> 3 -> 0 ...). Its cells may be entered, but being on the same cell as the
-  obstacle at the same time is a collision.
+{PATROL[CFG.kind]}
 
 ## Requirements (checked exactly, in the WORST case)
 - goal1, goal2, goal3: the agent eventually enters goal k's cell; probability >= 0.8 each.
@@ -104,8 +129,27 @@ def member_text(m: Member) -> str:
     return "\n".join(lines)
 
 
+INTRO_RANDOM = """You write ONE controller for random gridworlds, as an ordered list of rules. The same list, unchanged, will be
+checked on the training grids below ({sizes}) and on LARGER random grids (12x12 and 13x13) with other goals,
+obstacles and patrols. Rules that only work because of one grid's exact layout will fail there; describe a
+strategy that holds in every grid."""
+
+
 def initial_prompt(fam: str, members: List[Member], position: bool) -> str:
     sizes = ", ".join(f"{m.n}x{m.n}" for m in members)
+    if CFG.kind == "random":
+        return f"""{INTRO_RANDOM.format(sizes=sizes)}
+
+{world_text(position)}
+
+## Training grids (S = start, 1/2/3 = goals, X = static obstacle, M = patrol cells, . = free)
+{chr(10).join(member_text(m) for m in members)}
+
+## Answer
+Think about a strategy that works in every grid: how to make progress towards the next goal, how to cross or
+avoid the patrol without collisions, how slips can hurt, and what to do when the preferred move is unsafe. Then
+give the complete list as JSON:
+{{"rules": [{{"condition": "...", "action": "..."}}, ...]}}"""
     return f"""You write ONE controller for a whole family of gridworlds ("{fam}"), as an ordered list of rules. The same list,
 unchanged, will be checked on every member: the training members below ({sizes}) and LARGER members of the same
 family (up to about 14x14) that have the same structure (same kind of walls, doors or gaps, goal placement and
@@ -166,11 +210,26 @@ def score(results: List[Result]) -> Tuple:
     return (sum(r.certified for r in results), -round(shortfall, 6), min(r.margin for r in results))
 
 
-def evaluate(rules, members: List[Member]) -> List[Result]:
-    return [m.check(rules, best=False) for m in members]
+def evaluate(rules, members: List[Member], order=None) -> List[Result]:
+    return [m.check(rules, best=False, order=order) for m in members]
 
 
-def report(rules, members: List[Member], results: List[Result]) -> str:
+def best_order(rules, members: List[Member]):
+    """The action order that resolves the list's `any` rules best on the training members (None if it has none),
+    with the results under it."""
+    from itertools import permutations
+    if not any(a == "any" for _, a in rules):
+        return None, evaluate(rules, members)
+    best = None
+    for order in permutations(ACTIONS):
+        results = evaluate(rules, members, list(order))
+        sc = score(results)
+        if best is None or (sc[0], sc[2]) > (best[2][0], best[2][2]):
+            best = (list(order), results, sc)
+    return best[0], best[1]
+
+
+def report(rules, members: List[Member], results: List[Result], order=None) -> str:
     out = []
     for m, res in zip(members, results):
         if res.certified:
@@ -178,7 +237,10 @@ def report(rules, members: List[Member], results: List[Result]) -> str:
         else:
             out.append(f"### {m.n}x{m.n}: FAILS {', '.join(res.failing())}"
                        + (f"; {res.uncovered} reachable states are uncovered" if res.uncovered else ""))
-            out.append(describe(m, rules, res))
+            out.append(describe(m, rules, res, order=order, action_lines=CFG.action_lines))
+    if order is not None:
+        out.insert(0, f"(Your `any` rules are resolved by the verifier: each takes the first action it allows in the "
+                      f"order {', '.join(order)}, the order that does best on the training members.)")
     return "\n".join(out)
 
 
@@ -196,7 +258,10 @@ def chain(fam: str, members: List[Member], position: bool, rounds: int, log: Pat
         err = validate(rules, members, position)
         entry = {"chain": tag, "round": rnd, "rules": rules, "error": err, "usage": usage}
         if err is None:
-            results = evaluate(rules, members)
+            if CFG.resolve_in_loop:
+                entry["order"], results = best_order(rules, members)
+            else:
+                results = evaluate(rules, members)
             entry["score"] = score(results)
             entry["worst"] = [r.worst for r in results]
             entry["certified"] = [r.certified for r in results]
@@ -220,8 +285,8 @@ def chain(fam: str, members: List[Member], position: bool, rounds: int, log: Pat
             history = "\n## Your attempts so far\n" + "\n".join(history_lines) + "\n"
             if err is not None:
                 history += f"Your last answer was rejected: {err}\n"
-        prompt = revise_prompt(fam, members, position, best["rules"], report(best["rules"], members, best["results"]),
-                               history)
+        prompt = revise_prompt(fam, members, position, best["rules"],
+                               report(best["rules"], members, best["results"], best.get("order")), history)
     return attempts
 
 
@@ -267,8 +332,11 @@ def finalize(members: List[Member], attempts: List[Dict], top: int, steps: int) 
     finals = []
     for i, a in enumerate(cands[:top]):
         rules = [tuple(r) for r in a["rules"]]
+        if a.get("order"):
+            from core.rules import fixed_order
+            rules = fixed_order(rules, a["order"])   # in-loop resolution: the candidate is the resolved list
         if steps:
-            rules, _ = repair(rules, members, steps=steps, seed=i)
+            rules, _ = repair(rules, members, steps=steps, seed=i, hidden=CFG.hidden)
         results = evaluate(rules, members)
         det, order, det_score = determinize(rules, members)
         finals.append({"from": [a["chain"], a["round"]], "llm_score": a["score"], "rules": rules,
@@ -281,7 +349,7 @@ def finalize(members: List[Member], attempts: List[Dict], top: int, steps: int) 
 def run(fam: str, chains: int, rounds: int, out: Path, position: bool, ids: Optional[Sequence[int]] = None,
         repair_top: int = 8, repair_steps: int = 40, phases: bool = False):
     out.mkdir(parents=True, exist_ok=True)
-    members = load(ids or FAMILIES[fam])
+    members = load(ids or FAMILIES[fam], CFG.data, CFG.hidden)
     for m in members:
         if phases:
             m.all_phases()
@@ -294,6 +362,7 @@ def run(fam: str, chains: int, rounds: int, out: Path, position: bool, ids: Opti
     final, finals = finalize(members, attempts, repair_top, repair_steps)
     valid = [a for a in attempts if a.get("score")]
     summary = {"family": fam, "chains": chains, "rounds": rounds, "position": position, "phases": phases,
+               "settings": asdict(CFG),
                "ids": [m.id for m in members], "repair_top": repair_top, "repair_steps": repair_steps,
                "llm_seconds": round(llm_seconds, 1), "seconds": round(time.time() - start, 1),
                "usage": dict(llm.USAGE), "attempts": len(attempts), "valid": len(valid),
@@ -306,7 +375,7 @@ def run(fam: str, chains: int, rounds: int, out: Path, position: bool, ids: Opti
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("family", choices=sorted(FAMILIES))
+    ap.add_argument("family", help="a family name (rooms, crossing, adjacent) or a label with --ids")
     ap.add_argument("--chains", type=int, default=6)
     ap.add_argument("--rounds", type=int, default=6)
     ap.add_argument("--position", action="store_true", help="allow x, y and the grid constants in conditions")
@@ -314,8 +383,15 @@ def main():
     ap.add_argument("--repair-top", type=int, default=8)
     ap.add_argument("--repair-steps", type=int, default=40)
     ap.add_argument("--phases", action="store_true", help="check from every initial obstacle phase")
+    ap.add_argument("--kind", choices=["family", "random"], default="family")
+    ap.add_argument("--data", default="families_v0.csv")
+    ap.add_argument("--hide", default="hazard", help="comma-separated sensors to leave out")
+    ap.add_argument("--resolve-in-loop", action="store_true")
+    ap.add_argument("--no-action-lines", action="store_true")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    CFG.kind, CFG.data, CFG.hidden = args.kind, args.data, tuple(h for h in args.hide.split(",") if h)
+    CFG.resolve_in_loop, CFG.action_lines = args.resolve_in_loop, not args.no_action_lines
     ids = [int(i) for i in args.ids.split(",")] if args.ids else None
     s = run(args.family, args.chains, args.rounds, Path(args.out), args.position, ids, args.repair_top,
             args.repair_steps, args.phases)

@@ -35,7 +35,13 @@ def conjuncts(cond: str) -> List[str]:
     return [p for p in parts if p]
 
 
-def neighbours(rules: Rules, rng: random.Random, k: int) -> List[Rules]:
+def literals(hidden=()) -> List[str]:
+    """The repair's conjuncts, without the hidden sensors."""
+    hidden = set(hidden)
+    return [lit for lit in LITERALS if lit.lstrip("!") not in hidden]
+
+
+def neighbours(rules: Rules, rng: random.Random, k: int, lits: Sequence[str] = LITERALS) -> List[Rules]:
     out = []
     n = len(rules)
     for _ in range(k):
@@ -46,7 +52,7 @@ def neighbours(rules: Rules, rng: random.Random, k: int) -> List[Rules]:
         if kind == "drop" and n > 1 and i < n - 1:
             del new[i]
         elif kind == "add":
-            new[i] = (f"{c} & {rng.choice(LITERALS)}" if c != "true" else rng.choice(LITERALS), a)
+            new[i] = (f"{c} & {rng.choice(lits)}" if c != "true" else rng.choice(lits), a)
         elif kind == "remove":
             parts = conjuncts(c)
             if len(parts) < 2:
@@ -58,7 +64,7 @@ def neighbours(rules: Rules, rng: random.Random, k: int) -> List[Rules]:
         elif kind == "swap" and i < n - 2:
             new[i], new[i + 1] = new[i + 1], new[i]
         elif kind == "specialize":
-            lit = rng.choice(LITERALS)
+            lit = rng.choice(lits)
             new.insert(i, (f"{c} & {lit}" if c != "true" else lit, rng.choice(ACTIONS + ["any"])))
         else:
             continue
@@ -67,7 +73,7 @@ def neighbours(rules: Rules, rng: random.Random, k: int) -> List[Rules]:
 
 
 def repair(rules: Rules, members: Sequence[Member], steps: int = 40, tries: int = 60, seed: int = 0,
-           log=None) -> Tuple[Rules, float]:
+           log=None, hidden=()) -> Tuple[Rules, float]:
     rng = random.Random(seed)
 
     def value(rs):
@@ -84,7 +90,7 @@ def repair(rules: Rules, members: Sequence[Member], steps: int = 40, tries: int 
         if best >= target - 1e-9:
             break
         improved = False
-        for nb in neighbours(cur, rng, tries):
+        for nb in neighbours(cur, rng, tries, literals(hidden)):
             v = value(nb)
             if v is not None and v > best + 1e-9:
                 cur, best, improved = nb, v, True
