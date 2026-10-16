@@ -42,7 +42,7 @@ from core.episode import Answer, Check, Episode, Kept, Member, margin, pessimist
 from core.prism import PrismCall, PrismError, PrismRunner
 from core.prompts import Prompts
 from core.retry import RetryPolicy
-from core.rules import ANY, OpenChoices, RuleError, SymbolicPolicy, action_orders, fixed_order
+from core.rules import ANY, OpenChoices, RuleError, SymbolicPolicy, Vocabulary, action_orders, fixed_order
 from core.scheduler import drive
 from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.training import TrainingSet
@@ -367,6 +367,8 @@ class SymbolicPlanner:
         members = list(target.members)
         specs = [self.domain.spec(i) for i in members]
         vocabs = [s.vocabulary(cfg.rules) for s in specs]
+        if cfg.rules.early_narrow and cfg.feedback.early:     # the narrowing below names places with numbers
+            vocabs = [self._places(v) for v in vocabs]
         reqs = {i.id: s.requirements for i, s in zip(members, specs)}
         req_lists = [s.requirements for s in specs]
         found = candidates(results, reqs, cfg.planner.pick_top)
@@ -483,10 +485,14 @@ class SymbolicPlanner:
         narrowings may name places with numbers."""
         cfg = self.config
         checks = [early.EarlyCheck(vf, cfg.feedback.early, f"instance {vf.instance.id}") for vf in verifiers]
-        places = [replace(v, literal_vars=tuple(dict.fromkeys(v.literal_vars + tuple(cfg.feedback.early_group))))
-                  for v in vocabs]
+        places = [self._places(v) for v in vocabs]
         return lambda rules: early.check([(c, s.policy(rules, v)) for c, s, v in zip(checks, specs, places)],
                                          cfg.feedback.states_per_rule, cfg.feedback.early_group)
+
+    def _places(self, vocabulary: Vocabulary) -> Vocabulary:
+        """`vocabulary` with numbers allowed in comparisons with `feedback.early_group`, as the narrowings write."""
+        group = tuple(self.config.feedback.early_group)
+        return replace(vocabulary, literal_vars=tuple(dict.fromkeys(vocabulary.literal_vars + group)))
 
     def _narrow_rules(self, rules, evaluate, req_lists, early_loss, log) -> Tuple[List[Tuple[str, str]], List[str]]:
         """`rules.early_narrow` on the picked list (`any` already resolved): as `_narrow` in the loop, with the members
@@ -723,8 +729,7 @@ class SymbolicPlanner:
                           and g.losing >= NARROW_SHARE * g.decided][:k]:
                 place = " & ".join(f"{name} = {value}" for name, value in group.place)
                 variant = [(f"({c}) & !({place})" if a == group.move else c, a) for c, a in raw]
-                policies = [m.verifier.spec.policy(variant, replace(m.vocabulary, literal_vars=tuple(dict.fromkeys(
-                    m.vocabulary.literal_vars + tuple(self.config.feedback.early_group))))) for m in ep.members]
+                policies = [m.verifier.spec.policy(variant, self._places(m.vocabulary)) for m in ep.members]
                 candidate = self._with_early(ep, (yield from self._check(ep, policies)))
                 if candidate.passes(ep.members) and candidate.early.mean < (best or check).early.mean - 1e-12:
                     best = candidate
