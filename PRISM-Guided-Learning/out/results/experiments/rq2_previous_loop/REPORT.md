@@ -10,9 +10,9 @@ Targets 12-19 (each list's own training instances left out); certified of 8.
 
 | condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
 |---|---|---|---|---|---|---|---|---|---|
-| New loop (core) | New | 0 | – | – | – | – | – | – | – |
-| Previous loop, Haiku 5.5 | Prev | 5 | 6.25 (5.50–7.00) | – | 5.20 (4.00–6.25) | 8.0 | 10% (0%–25%) | 4.9 (4.5–5.0) | 11,315 (8,570–15,009) |
-| Previous loop, Sonnet 5.5 | Prev Sonnet | 3 | 6.67 (5.75–7.25) | – | 6.42 (5.50–7.00) | 8.0 | 75% | 2.8 (2.8–3.0) | 27,330 (22,730–35,251) |
+| New loop (core) | New | 1 | 6.00 | reference | 6.00 | 8.0 | 75% | 55.5 | 117,726 |
+| Previous loop, Haiku 5.5 | Prev | 5 | 6.25 (5.50–7.00) | +0.25 [-0.10, +0.60] | 5.20 (4.00–6.25) | 8.0 | 10% (0%–25%) | 4.9 (4.5–5.0) | 11,315 (8,570–15,009) |
+| Previous loop, Sonnet 5.5 | Prev Sonnet | 3 | 6.67 (5.75–7.25) | +0.67 [+0.17, +1.17] | 6.42 (5.50–7.00) | 8.0 | 75% | 2.8 (2.8–3.0) | 27,330 (22,730–35,251) |
 
 ## Random grids without `closer`
 
@@ -20,9 +20,9 @@ Targets 12-19 (each list's own training instances left out); certified of 8.
 
 | condition | code | runs | certified | Δ vs reference | ties open | library | sets solved | rounds / set | output tokens / set |
 |---|---|---|---|---|---|---|---|---|---|
-| New loop (core) | New | 0 | – | – | – | – | – | – | – |
-| Previous loop, Haiku 5.5 | Prev | 5 | 3.40 (3.00–3.75) | – | 0.00 | 6.0 (5.0–7.0) | 0% | 5.0 | 13,596 (12,449–15,153) |
-| Previous loop, Sonnet 5.5 | Prev Sonnet | 3 | 2.92 (2.75–3.00) | – | 0.58 (0.50–0.75) | 6.3 (6.0–7.0) | 50% | 3.9 (3.8–4.0) | 54,993 (47,218–70,154) |
+| New loop (core) | New | 1 | 3.25 | reference | 3.25 | 6.0 | 50% | 55.5 | 108,444 |
+| Previous loop, Haiku 5.5 | Prev | 5 | 3.40 (3.00–3.75) | +0.15 [-0.05, +0.35] | 0.00 | 6.0 (5.0–7.0) | 0% | 5.0 | 13,596 (12,449–15,153) |
+| Previous loop, Sonnet 5.5 | Prev Sonnet | 3 | 2.92 (2.75–3.00) | -0.33 [-0.42, -0.25] | 0.58 (0.50–0.75) | 6.3 (6.0–7.0) | 50% | 3.9 (3.8–4.0) | 54,993 (47,218–70,154) |
 
 ## Gridworld families
 
