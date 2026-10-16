@@ -36,3 +36,17 @@ One list per training set [0,4,8], [1,5,9], [2,6,10], [3,7,11]; certified of 8 v
 
 To beat: 6.25 (current method), 6.00 (template), 5.50 (PPO). Set 0's kept list never passes all three training
 grids (2 of 3, margins -0.034/-0.006/-0.034) yet certifies all 8 validation grids each time.
+
+## MER (`mer/x`, `mer/n`; train ids 0-2, certified of validation ids 3-8)
+Explicit-MDP checker (PRISM exports, matches PRISM), same pipeline as the families (8 chains x 6 rounds, repair,
+largest margin, `any` resolved by the best of 24 sampled action orders), prompt with the model's named codes.
+
+| benchmark | repeat 1 | repeat 2 | repeat 3 | mean | cost per repeat |
+|---|---|---|---|---|---|
+| across x (mer_transfer.csv) | 3 | 3 | 3 | 3.00 | $0.44, $0.49, $0.38 |
+| across n (mer_n_transfer.csv) | 6 | 0 | 0 | 2.00 | $0.54, $0.51, $0.53 |
+
+Across x every kept list holds the error probability at 0.2, enough only where the threshold is below 0.2 (x <= 0.03:
+ids 3, 7, 8); none exploits the x-dependent part (training: x = 0.13 fails in all three repeats). Across n, repeat
+1's list is optimal on every training instance and stays optimal on n = 4..15 (6/6); repeats 2 and 3 miss n = 3 in
+training and certify nothing.
