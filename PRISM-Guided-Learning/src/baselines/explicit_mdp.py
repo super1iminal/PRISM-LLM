@@ -207,7 +207,7 @@ class ExplicitMDP(Model):
             cmd = [self.runner.prism_path, str(base.with_suffix(".prism")), "-explicit",
                    "-exportstates", f"{base}.sta", "-exporttrans", f"{base}.tra", "-exportlabels", f"{base}.lab",
                    "-javamaxmem", self.runner.java_max_mem]
-            out = run_call(PrismCall(tuple(cmd), self.runner.timeout))
+            out = run_call(PrismCall(tuple(cmd), self.runner.timeout, self.runner.max_concurrent))
             if "Error" in out or not Path(f"{base}.tra").exists():
                 raise PrismError("\n".join(l for l in out.splitlines() if "rror" in l) or out[-2000:])
             self.variables, self.values = _read_states(f"{base}.sta")
@@ -363,7 +363,7 @@ class ExplicitMDP(Model):
             for args in solvers:
                 cmd = [self.runner.prism_path, "-importmodel", files, str(props), "-explicit", "-javamaxmem",
                        self.runner.java_max_mem, "-maxiters", str(cfg.exact_max_iters), *args]
-                out = run_call(PrismCall(tuple(cmd), self.runner.timeout))
+                out = run_call(PrismCall(tuple(cmd), self.runner.timeout, self.runner.max_concurrent))
                 results = re.findall(r"^Result: (\S+)", out, re.M)
                 if "Error" not in out and "did not converge" not in out and len(results) == len(reqs):
                     return {r.name: float(v) for r, v in zip(reqs, results)}

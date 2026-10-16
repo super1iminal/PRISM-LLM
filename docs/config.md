@@ -63,6 +63,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `prism.fallback_methods` | `[modpoliter]` | tried in order when `method` does not converge (seen on a real qwen rule set) | — |
 | `prism.multi_engine` / `multi_method` | `sparse` / `lp` | joint queries (the explicit engine can't do them; LP is exact) | — |
 | `prism.java_max_mem` / `max_iters` / `timeout_s` | 4g / 1,000,000 / 900 | PRISM limits | — |
+| `prism.max_concurrent` | 8 | PRISM processes at once on the whole machine, across every run, session and tool (half of the 16 logical cores, so Asher keeps CPU; Asher, Oct 15). Each process takes one of N lock-file slots in the system temp directory (`prism_slots/`), held with an OS file lock that the OS frees when its holder dies. A call in place waits for a slot; the event and lockstep schedulers keep a waiting call queued and go on. `null`: no cap. The run store ignores it | — |
 | `prism.exact_check` | `true` | re-verify the final policy with interval iteration; the run reports those values (the loop's are kept as `loop_best` / `loop_worst`). Seconds per policy, minutes on chains that leak probability slowly. Runs whose `config.json` has no `exact_check` report the loop's values | — |
 | `prism.exact_epsilon` / `exact_fallback_epsilon` / `exact_max_iters` | `"1e-9"` / `"1e-12"` / 100,000,000 | interval iteration's precision; Gauss-Seidel's where interval iteration does not converge; their iteration cap | — |
 | `rules.max_enumeration` | 200,000 | state-space size up to which first-match guards are simplified | — |

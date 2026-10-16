@@ -9,6 +9,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
+from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple, TypeVar
 
 from config import PrismConfig
@@ -135,6 +136,66 @@ class PrismCall:
     """
     cmd: Tuple[str, ...]
     timeout: float
+    max_concurrent: Optional[int] = None    # machine-wide PRISM processes at once (`prism.max_concurrent`); None: no cap
+
+
+# ---------------------------------------------------------------- machine-wide slots (`prism.max_concurrent`)
+
+SLOT_DIR = Path(tempfile.gettempdir()) / "prism_slots"
+SLOT_POLL_SECONDS = 0.2
+
+if os.name == "nt":
+    import msvcrt
+
+    def _lock(f) -> None:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)   # raises OSError if another handle holds it
+
+    def _unlock(f) -> None:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock(f) -> None:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(f) -> None:
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+class Slot:
+    """One of `n` slots for a PRISM process, shared by every process on the machine: a lock file in SLOT_DIR held with
+    an OS file lock, which the OS releases when the holder exits, however it ends."""
+
+    def __init__(self, file):
+        self._file = file
+
+    @classmethod
+    def take(cls, n: int) -> Optional["Slot"]:
+        """A free slot among the first `n`, or None if every one is held."""
+        SLOT_DIR.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            f = open(SLOT_DIR / f"slot_{i}.lock", "a+b")
+            try:
+                _lock(f)
+            except OSError:
+                f.close()
+                continue
+            return cls(f)
+        return None
+
+    @classmethod
+    def wait(cls, n: int) -> "Slot":
+        """A slot among the first `n`, once one is free."""
+        while (slot := cls.take(n)) is None:
+            time.sleep(SLOT_POLL_SECONDS)
+        return slot
+
+    def release(self) -> None:
+        if not self._file.closed:
+            _unlock(self._file)
+            self._file.close()
 
 
 T = TypeVar("T")
@@ -156,6 +217,7 @@ class PrismRunner:
         self.java_max_mem = config.java_max_mem
         self.max_iters = config.max_iters
         self.timeout = config.timeout_s
+        self.max_concurrent = config.max_concurrent
         self.multi_args = [f"-{config.multi_engine}"] + ([f"-{config.multi_method}"] if config.multi_method else [])
         self.method_args = [f"-{config.method}"] if config.method else []
         self.fallback_args = [[f"-{m}"] for m in config.fallback_methods] if config.method else []
@@ -233,22 +295,27 @@ class PrismRunner:
 
     def _call(self, cmd: List[str]) -> PrismSteps[str]:
         """One PRISM process: yields it and returns its output. Its input files must outlive the yield."""
-        return (yield PrismCall(tuple(cmd), self.timeout))
+        return (yield PrismCall(tuple(cmd), self.timeout, self.max_concurrent))
 
 
 # ---------------------------------------------------------------- running PRISM calls
 
 def run_call(call: PrismCall) -> str:
-    """Run `call` here and wait for it: its output, or `subprocess.TimeoutExpired` after killing the whole
-    process tree."""
-    with subprocess.Popen(list(call.cmd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                          start_new_session=os.name != "nt") as proc:
-        try:
-            return proc.communicate(timeout=call.timeout)[0]
-        except subprocess.TimeoutExpired:
-            _kill_tree(proc)
-            proc.communicate()
-            raise
+    """Run `call` here once it has a slot, and wait for it: its output, or `subprocess.TimeoutExpired` after killing
+    the whole process tree."""
+    slot = Slot.wait(call.max_concurrent) if call.max_concurrent else None
+    try:
+        with subprocess.Popen(list(call.cmd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              start_new_session=os.name != "nt") as proc:
+            try:
+                return proc.communicate(timeout=call.timeout)[0]
+            except subprocess.TimeoutExpired:
+                _kill_tree(proc)
+                proc.communicate()
+                raise
+    finally:
+        if slot:
+            slot.release()
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -293,7 +360,8 @@ def _text_encoding() -> str:
 
 
 class PrismProcess:
-    """A `PrismCall` running in the background without a thread: started at once, checked with `done()`.
+    """A `PrismCall` running in the background without a thread: started as soon as it has a slot (at once if one is
+    free, else at a later `done()`), checked with `done()`. Its timeout counts from the start.
 
     Output goes to a temporary file, not a pipe, so PRISM never blocks on a full pipe while nobody reads.
     """
@@ -301,19 +369,43 @@ class PrismProcess:
     def __init__(self, call: PrismCall):
         self.call = call
         self._out = tempfile.TemporaryFile()
-        self._proc = subprocess.Popen(list(call.cmd), stdout=self._out, stderr=subprocess.STDOUT,
-                                      start_new_session=os.name != "nt")
-        self._deadline = time.monotonic() + call.timeout
+        self._proc: Optional[subprocess.Popen] = None
+        self._slot: Optional[Slot] = None
         self._timed_out = False
+        self._start()
+
+    def _start(self) -> bool:
+        """Start the process if it has not started and a slot is free; whether it has started."""
+        if self._proc is None:
+            if self.call.max_concurrent:
+                self._slot = Slot.take(self.call.max_concurrent)
+                if self._slot is None:
+                    return False
+            self._proc = subprocess.Popen(list(self.call.cmd), stdout=self._out, stderr=subprocess.STDOUT,
+                                          start_new_session=os.name != "nt")
+            self._deadline = time.monotonic() + self.call.timeout
+        return True
+
+    def _release(self) -> None:
+        if self._slot is not None:
+            self._slot.release()
+            self._slot = None
 
     def done(self) -> bool:
-        """Whether the process has exited, or has been killed for running past its timeout."""
-        if self._proc.poll() is not None or self._timed_out:
+        """Whether the process has exited, or has been killed for running past its timeout; False while it waits
+        for a slot."""
+        if self._timed_out:
+            return True
+        if not self._start():
+            return False
+        if self._proc.poll() is not None:
+            self._release()
             return True
         if time.monotonic() > self._deadline:
             _kill_tree(self._proc)
             self._proc.wait()
             self._timed_out = True
+            self._release()
             return True
         return False
 
@@ -329,8 +421,9 @@ class PrismProcess:
             self._out.close()
 
     def kill(self) -> None:
-        """Stop the process if it still runs, wait for it to exit, and drop its output."""
-        if self._proc.poll() is None:
+        """Stop the process if it still runs, wait for it to exit, and drop its output (and its slot)."""
+        if self._proc is not None and self._proc.poll() is None:
             _kill_tree(self._proc)
             self._proc.wait()
+        self._release()
         self._out.close()

@@ -111,6 +111,7 @@ class PrismConfig:
     exact_epsilon: str                        # interval iteration's precision (passed to PRISM as written)
     exact_fallback_epsilon: str               # Gauss-Seidel's, where interval iteration does not converge
     exact_max_iters: int
+    max_concurrent: Optional[int]            # PRISM processes at once on the whole machine (lock-file slots); null: no cap
 
 
 @dataclass
@@ -292,6 +293,9 @@ def validate(cfg: Config) -> None:
         value = getattr(cfg.llm.openrouter, key)
         if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
             raise ValueError(f"llm.openrouter.{key}={value!r} must be a list of names, e.g. [deepinfra]")
+    limit = cfg.prism.max_concurrent
+    if limit is not None and not (isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1):
+        raise ValueError(f"prism.max_concurrent={limit!r} must be a number of processes (>= 1) or null")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":

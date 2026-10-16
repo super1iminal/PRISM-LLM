@@ -32,7 +32,7 @@ The blocking methods (`run`, `verify`, `optimum`, …) are thin wrappers that ru
 The three schedulers drive these generators differently:
 
 - **`threads`**: `planner.solve` drives one instance per worker thread with `drive()`, which answers LLM tasks with `backend.execute` and runs PRISM calls with `subprocess.run`, in that thread. Runs whose `config.json` records `threads`, or no `run.scheduler`, ran this way.
-- **`lockstep`** and **`event`**: run every instance from the calling thread. PRISM calls start as background processes (`PrismProcess`), with output going to a temporary file rather than a pipe, so no thread needs to read it, and are checked every 10 ms. LLM tasks go to the backend, which runs them concurrently.
+- **`lockstep`** and **`event`**: run every instance from the calling thread. PRISM calls start as background processes (`PrismProcess`), with output going to a temporary file rather than a pipe, so no thread needs to read it, and are checked every 10 ms. A call starts once it holds one of the machine-wide slots (`prism.max_concurrent`); until then it counts as not done, and the loop goes on. LLM tasks go to the backend, which runs them concurrently.
 
 ## The event scheduler
 

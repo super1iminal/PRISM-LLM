@@ -1,10 +1,11 @@
 """Runs indexed by what they did, so that experiments share them instead of repeating them.
 
 A run's identity is its resolved config (recorded in <run>/config.json; keys it lacks take their default) without the
-settings that cannot change its results: the condition's name, parallelism and scheduler, timeouts and client
-retries, pruning the orders for `any` rules, and the seed, which only labels a repeat. Runs made under different condition names with the same identity
-are repeats of one configuration. A code change that alters what a run does must therefore come with a config key
-(as every behaviour change here does), or the store would mix runs made before and after it.
+settings that cannot change its results: the condition's name, parallelism, scheduler and PRISM's machine-wide cap,
+timeouts and client retries, pruning the orders for `any` rules, and the seed, which only labels a repeat. Runs made
+under different condition names with the same identity are repeats of one configuration. A code change that alters
+what a run does must therefore come with a config key (as every behaviour change here does), or the store would mix
+runs made before and after it.
 
 A run's optional <run>/identity.json corrects what its config.json could not record, e.g. domain features its
 prompts never showed although its config does not hide them (recorded as hidden): {"note": ..., "<section>": {"<key>": value}}.
@@ -23,7 +24,8 @@ ABLATIONS_PATH = RESULTS_PATH / "ablations"
 ROOTS = (CORE_PATH, ABLATIONS_PATH)
 
 IGNORED = {"condition", "run.workers", "run.scheduler", "llm.seed", "llm.openrouter.timeout_s",
-           "llm.openrouter.max_retries", "prism.java_max_mem", "prism.timeout_s", "rules.any_prune"}
+           "llm.openrouter.max_retries", "prism.java_max_mem", "prism.timeout_s",
+           "prism.max_concurrent", "rules.any_prune"}
 
 
 def _flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
