@@ -187,3 +187,18 @@ def test_chains_keep_the_chain_with_the_largest_margin(tmp_path, grids, monkeypa
     seeds = {task.meta["instance"]: task.params["seed"] for batch in backend.batches for task in batch}
     assert seeds["set0.chain1"] - seeds["set0.chain0"] == 100_000
     shutil.rmtree(run_dir)
+
+
+@needs_prism
+def test_keep_ties_newer_keeps_the_newer_of_two_equal_lists(grids):
+    """Two lists with the same values on the members (neither passes row 1): keep-best keeps the first by default,
+    the second with planner.keep_ties=newer, so the next feedback is about the newer list."""
+    domain = load_domain("gridworld", ["obs_idx"])
+    same = answer(("x >= 0", "right"))                                   # the same policy as RIGHT
+    for ties, want in (("older", "true"), ("newer", "x >= 0")):
+        cfg = load_config(overrides=["planner.max_rounds=2", "llm.seed=1", f"planner.keep_ties={ties}"])
+        target, = training_sets(domain.load_instances(str(grids)), [[0, 1]])
+        result = SymbolicPlanner(domain, ScriptedBackend([RIGHT, same]), cfg).solve(
+            target, logging.getLogger("test_training"))
+        assert [r["condition"] for r in result["final_rules"]] == [want]
+        assert result["iterations"][1]["improved"] == (ties == "newer")

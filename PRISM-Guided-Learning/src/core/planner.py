@@ -229,7 +229,8 @@ class SymbolicPlanner:
             check, answer = yield from self._round(ep, mode, prompt, attempt, kept)
             score = check.score(members)
             previous_shortfall = kept.score[2] if kept else None
-            improved = kept is None or score < kept.score
+            improved = kept is None or score < kept.score or (
+                self.config.planner.keep_ties == "newer" and score == kept.score)
             if improved:
                 kept = Kept(check, score, check.focus(members))
             gain = previous_shortfall - kept.score[2] if previous_shortfall is not None else float("inf")

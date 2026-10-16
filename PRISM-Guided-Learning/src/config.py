@@ -68,6 +68,7 @@ class PlannerConfig:
     max_condition_chars: int
     chains: int                               # independent loops per training set; the final list is the chain's
                                               # with the largest worst-case margin on the members (1: one loop)
+    keep_ties: str                            # keep-best on equal scores: older (the kept list stays) | newer
 
 
 @dataclass
@@ -278,6 +279,7 @@ def validate(cfg: Config) -> None:
         "approach": (cfg.approach, {"symbolic", "legacy"}),
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
+        "planner.keep_ties": (cfg.planner.keep_ties, {"older", "newer"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),
