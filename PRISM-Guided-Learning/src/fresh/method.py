@@ -359,13 +359,14 @@ def run(fam: str, chains: int, rounds: int, out: Path, position: bool, ids: Opti
         futures = [pool.submit(chain, fam, members, position, rounds, out, f"{fam}_c{i}") for i in range(chains)]
         attempts = [a for f in futures for a in f.result()]
     llm_seconds = time.time() - start
+    usage = {k: sum(a["usage"].get(k, 0) for a in attempts) for k in ("calls", "prompt_tokens", "output_tokens", "cost")}
     final, finals = finalize(members, attempts, repair_top, repair_steps)
     valid = [a for a in attempts if a.get("score")]
     summary = {"family": fam, "chains": chains, "rounds": rounds, "position": position, "phases": phases,
                "settings": asdict(CFG),
                "ids": [m.id for m in members], "repair_top": repair_top, "repair_steps": repair_steps,
                "llm_seconds": round(llm_seconds, 1), "seconds": round(time.time() - start, 1),
-               "usage": dict(llm.USAGE), "attempts": len(attempts), "valid": len(valid),
+               "usage": usage, "process_usage": dict(llm.USAGE), "attempts": len(attempts), "valid": len(valid),
                "certified_llm_lists": sum(1 for a in valid if a["score"][0] == len(members)),
                "certified_final_lists": sum(1 for f in finals if f["score"][0] == len(members)),
                "best": final, "finals": finals}

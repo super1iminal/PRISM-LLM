@@ -21,6 +21,7 @@ def _client():
 def chat(messages: List[Dict], max_tokens: int = 20000, temperature: float = 1.0,
          reasoning_tokens: int = 8000) -> Tuple[str, Dict]:
     client = _client()
+    usage = {"prompt_tokens": 0, "output_tokens": 0, "cost": 0.0, "calls": 0}   # summed over empty retries
     for attempt in range(4):
         try:
             r = client.chat.completions.create(
@@ -30,11 +31,14 @@ def chat(messages: List[Dict], max_tokens: int = 20000, temperature: float = 1.0
             text = r.choices[0].message.content or ""
             u = r.usage
             cost = float(getattr(u, "cost", 0.0) or 0.0)
-            usage = {"prompt_tokens": u.prompt_tokens or 0, "output_tokens": u.completion_tokens or 0, "cost": cost}
+            call = {"prompt_tokens": u.prompt_tokens or 0, "output_tokens": u.completion_tokens or 0, "cost": cost}
             with _lock:
                 USAGE["calls"] += 1
                 for k in ("prompt_tokens", "output_tokens", "cost"):
-                    USAGE[k] += usage[k]
+                    USAGE[k] += call[k]
+            for k in ("prompt_tokens", "output_tokens", "cost"):
+                usage[k] += call[k]
+            usage["calls"] += 1
             if not text.strip() and attempt < 3:
                 continue   # the budget went to reasoning; ask again (its cost is counted above)
             return text, usage
