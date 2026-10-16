@@ -26,6 +26,7 @@ core/scheduler.py run many instances' tasks and PRISM processes at once from one
 works with is in core/episode.py; the prompts it sends are built by core/prompts.py.
 """
 import zlib
+from dataclasses import replace
 from time import time
 from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple, TypeVar, Union
 
@@ -506,7 +507,8 @@ class SymbolicPlanner:
         loss, try each with `& !(place)` added to every rule that chooses its move (another rule then decides there),
         verified on every member; keep the variant that still passes and loses least early, if it loses less than the
         candidate; repeat up to k times. Only where the move loses in at least NARROW_SHARE of the situations its rule
-        decides there: elsewhere it is often the best move."""
+        decides there: elsewhere it is often the best move. The verifier may name places with numbers whatever the
+        LLM may write (`rules.shared_literals`)."""
         k = self.config.rules.early_narrow
         if check.early is None or not self.config.feedback.early_group or not check.passes(ep.members):
             return check
@@ -517,7 +519,9 @@ class SymbolicPlanner:
                           and g.losing >= NARROW_SHARE * g.decided][:k]:
                 place = " & ".join(f"{name} = {value}" for name, value in group.place)
                 variant = [(f"({c}) & !({place})" if a == group.move else c, a) for c, a in raw]
-                candidate = self._with_early(ep, (yield from self._check(ep, self._parse(ep, variant))))
+                policies = [m.verifier.spec.policy(variant, replace(m.vocabulary, literal_vars=tuple(dict.fromkeys(
+                    m.vocabulary.literal_vars + tuple(self.config.feedback.early_group))))) for m in ep.members]
+                candidate = self._with_early(ep, (yield from self._check(ep, policies)))
                 if candidate.passes(ep.members) and candidate.early.mean < (best or check).early.mean - 1e-12:
                     best = candidate
                     narrowed = f"{group.move} kept away from {place}"

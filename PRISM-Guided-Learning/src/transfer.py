@@ -166,7 +166,7 @@ def main(argv=None):
                          args.set + ([f"workers={args.workers}"] if args.workers is not None else []))
 
     cfg = load_run_config(args.run_dir)
-    if args.rules == "narrowed":       # narrowings name places with numbers (rules.shared_literals)
+    if args.rules == "narrowed" or cfg.rules.early_narrow:   # narrowings name places with numbers
         cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     dataset = args.data or cfg.domain.dataset
