@@ -155,7 +155,7 @@ class Prompts:
         out = [{"mass": m, "state": t} for t, (m, _) in merged.items()]
         if v is not None and self.config.feedback.optimal:
             for row, (_, h) in zip(out, merged.values()):
-                row["note"] = self._optimal_note(member, v, h.state, [])
+                row["note"] = self._note(member, v, h.state, [])
         return out
 
     # ---------------------------------------------------------------- the optimal strategy (core/optimal.py)
@@ -182,10 +182,30 @@ class Prompts:
                              if values[(n, a)] is not False) or "none"
         return "; ".join(f"{a}: {holding(a)}" for a in actions)
 
-    def _optimal_note(self, member: Member, v: Verification, s: Optional[int], chosen: Sequence[str]) -> str:
+    def _note(self, member: Member, v: Verification, s: Optional[int], chosen: Sequence[str]) -> str:
+        """What the feedback adds about state `s` of `v`, where the rules take the actions `chosen` (none where no
+        rule decides): what the optimal strategy does there (`feedback.optimal`), and which of `chosen` change nothing
+        there (`feedback.stuck`)."""
+        idle = self._idle(v, s, chosen) if self.config.feedback.stuck and s is not None else []
+        if self.config.feedback.optimal:
+            return self._optimal_note(member, v, s, chosen, idle)
+        return f"{' or '.join(idle)} changes nothing here, so the run stays in this state" if idle else ""
+
+    @staticmethod
+    def _idle(v: Verification, s: int, actions: Sequence[str]) -> List[str]:
+        """The `actions` whose every choice in state `s` of `v` leaves the state unchanged (a self-loop)."""
+        loops: Dict[str, bool] = {}
+        for c in (v.result.choices[s] if v.result.choices else []):
+            if c.action in actions:
+                loops[c.action] = loops.get(c.action, True) and all(t == s for t, _ in c.successors)
+        return [a for a in actions if loops.get(a)]
+
+    def _optimal_note(self, member: Member, v: Verification, s: Optional[int], chosen: Sequence[str],
+                      idle: Sequence[str] = ()) -> str:
         """What the optimal strategy does in state `s` of `v`, against the actions the rules take there (`chosen`;
-        none where no rule decides): `optimal: down, not right [right: closer; down: toward]`. '' where the strategy
-        does not know the state or finds every action optimal."""
+        none where no rule decides): `optimal: down, not right [right: closer; down: toward]`, saying of the rules'
+        actions in `idle` that they change nothing. '' where the strategy does not know the state or finds every
+        action optimal."""
         if s is None:
             return ""
         info = at(self._strategy(member), v.result, s)
@@ -198,8 +218,8 @@ class Prompts:
             return f"optimal: {best}, as the rules"
         named = list(info.actions) + wrong
         features = self._action_features(member, member.verifier.policy_valuation(v.result, s), named)
-        return (f"optimal: {best}" + (f", not {' or '.join(wrong)}" if wrong else "")
-                + (f" [{features}]" if features else ""))
+        bad = " or ".join(f"{a} (it changes nothing here)" if a in idle else a for a in wrong)
+        return f"optimal: {best}" + (f", not {bad}" if wrong else "") + (f" [{features}]" if features else "")
 
     def _situation(self, member: Member, valuation: Dict[str, Any]) -> str:
         """The features that hold in a state: each state feature (by name if boolean and true, `name=value` if
@@ -243,7 +263,7 @@ class Prompts:
             "states": list(dict.fromkeys(self._state(member, h.valuation) for h in b.hotspots)),
             **({"notes": list(dict.fromkeys(self._noted(member, v, h.valuation, h.state,
                                                         policy.allowed(h.valuation) or [] if b.rule is not None else [])
-                                            for h in b.hotspots))} if self.config.feedback.optimal else {}),
+                                            for h in b.hotspots))} if self._noting() else {}),
         } for b in (member.analyzer.rule_blame(v, blamed) if kind != "none" else [])]
         return self.render(ep, "refine.md.j2", member, **results, failing=[r.name for r in blamed], blame=blame,
                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
@@ -263,9 +283,12 @@ class Prompts:
 
     def _noted(self, member: Member, v: Verification, valuation: Dict[str, Any], s: Optional[int],
                chosen: Sequence[str]) -> str:
-        """A state as feedback names it, followed by what the optimal strategy does there (`feedback.optimal`)."""
-        note = self._optimal_note(member, v, s, chosen)
+        """A state as feedback names it, followed by its note (`_note`)."""
+        note = self._note(member, v, s, chosen)
         return self._state(member, valuation) + (f": {note}" if note else "")
+
+    def _noting(self) -> bool:
+        return self.config.feedback.optimal or self.config.feedback.stuck
 
     def _legend(self, member: Member) -> Dict[str, str]:
         """How to read the notes of `feedback.optimal`."""
@@ -290,9 +313,9 @@ class Prompts:
         def move(s) -> str:
             text = (f"rule {s.rule + 1} chose {s.action}" if s.rule is not None and s.rule < len(rules)
                     else f"{s.action} (no rule decides here)" if s.action else "a move the policy does not choose")
-            if not self.config.feedback.optimal or s.action not in member.verifier.spec.actions or not v.decisions[s.state]:
+            if not self._noting() or s.action not in member.verifier.spec.actions or not v.decisions[s.state]:
                 return text
-            note = self._optimal_note(member, v, s.state, [s.action])
+            note = self._note(member, v, s.state, [s.action])
             return text + (f"; {note}" if note else "")
         return {"trace": {"requirement": req.name, "adversarial": adversarial, "steps": [{
             "state": self._state(member, s.valuation), "move": move(s),
