@@ -19,3 +19,20 @@ per family, mostly reasoning); the ablations cost nothing extra.
 
 Pac-Man (`pm/trial2_strict`, `pm/run2`, `pm/run3`): 3, 4, 3 of 6 validation horizons (to beat: 4); every kept list
 reaches the training optimum 0.5511 on horizons 14, 16, 18.
+
+## Verifier picks the action order each round (`attr/inloop`, one repeat)
+Each candidate's `any` resolved by the best of 24 orders on the training members before it is scored and fed back:
+rooms 9, crossing 20, adjacent 19 (mean 16.00); frozen method 19.00 / 20.00 / 19.33 (19.44).
+
+## Random grids (`grids/`, grid_20_large.csv, my vocabulary with `hazard` hidden)
+One list per training set [0,4,8], [1,5,9], [2,6,10], [3,7,11]; certified of 8 validation grids (ids 12-19):
+
+| repeat | set 0 | set 1 | set 2 | set 3 | mean | cost |
+|---|---|---|---|---|---|---|
+| 1 | 8 | 8 | 8 | 8 | 8.00 | $0.91 |
+| 2 | 8 | 7 | 8 | 8 | 7.75 | $0.87 |
+| 3 | 8 | 8 | 8 | 8 | 8.00 | $0.83 |
+| mean | | | | | **7.92** (7.75-8.00) | |
+
+To beat: 6.25 (current method), 6.00 (template), 5.50 (PPO). Set 0's kept list never passes all three training
+grids (2 of 3, margins -0.034/-0.006/-0.034) yet certifies all 8 validation grids each time.
