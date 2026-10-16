@@ -34,7 +34,7 @@ from scipy.sparse.csgraph import breadth_first_order
 from config import Config
 from core.domain import Domain, Instance, Requirement
 from core.prism import Choice, PrismCall, PrismError, PrismRunner, run_call
-from core.rules import Vocabulary, _Scope, atomic_rules, evaluate
+from core.rules import Var, Vocabulary, _Scope, atomic_rules, evaluate
 from core.verifier import PolicyVerifier, forced
 
 TOL = 1e-12
@@ -254,6 +254,8 @@ class ExplicitMDP(Model):
                 parts = [(None, scope.state_features[name])]
             elif name in scope.action_features:
                 parts = [(a, scope.action_features[name][a]) for a in self.actions]
+            elif name in scope.variables:       # a policy variable itself (what rules.shared_literals lets rules name)
+                parts = [(None, Var(name))]
             else:
                 raise ValueError(f"unknown feature {name!r}; known: {', '.join(scope.state_features)}, "
                                  f"{', '.join(scope.action_features)}")

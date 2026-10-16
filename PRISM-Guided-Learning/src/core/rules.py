@@ -58,6 +58,7 @@ class Variable:
 @dataclass(frozen=True)
 class Const:
     value: Value
+    literal: bool = field(default=False, compare=False, repr=False)   # written as a number (not a named constant)
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,7 @@ class Vocabulary:
     features: List[Feature] = field(default_factory=list)
     allow_any: bool = False     # rules may use the action `any`
     general: bool = False       # only the numbers 0 and 1 in conditions
+    literal_vars: Tuple[str, ...] = ()   # general mode: variables other numbers may still be compared with
 
 
 @dataclass
@@ -141,12 +143,13 @@ class _Scope:
     state_features: Dict[str, "Expr"] = field(default_factory=dict)
     action_features: Dict[str, Dict[str, "Expr"]] = field(default_factory=dict)
     general: bool = False
+    literal_vars: Tuple[str, ...] = ()
 
     @classmethod
     def build(cls, variables: Sequence[Variable], actions: Sequence[str], vocab: Vocabulary) -> "_Scope":
         """Compile the vocabulary's feature expressions (over variables and constants) for these actions."""
         base = cls({v.name: v for v in variables}, {c.name: c.value for c in vocab.constants})
-        scope = cls(base.variables, base.constants, general=vocab.general)
+        scope = cls(base.variables, base.constants, general=vocab.general, literal_vars=tuple(vocab.literal_vars))
         for f in vocab.features:
             if f.is_action_feature:
                 missing = [a for a in actions if a not in f.per_action]
@@ -265,12 +268,12 @@ class _Parser:
         if tok == "false":
             return Const(False)
         if tok.isdigit():
-            if self.scope is not None and self.scope.general and int(tok) > 1:
+            if self.scope is not None and self.scope.general and int(tok) > 1 and not self.scope.literal_vars:
                 names = ", ".join(self.scope.constants) or "none"
                 raise RuleError(f"number {tok} is not allowed: conditions may only use the numbers 0 and 1, so that "
                                 f"the rules carry over to other instances; use the named constants ({names}) "
                                 f"or the features instead")
-            return Const(int(tok))
+            return Const(int(tok), literal=True)
         if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", tok):
             return self._name(tok)
         raise RuleError(f"unexpected {tok!r} in condition {self.text!r}")
@@ -291,6 +294,7 @@ class _Parser:
 def _parse(text: str, scope: _Scope) -> Expr:
     expr = _Parser(text, scope).parse()
     _type_of(expr, scope, text)
+    _check_literals(expr, scope, text)
     return expr
 
 
@@ -300,7 +304,49 @@ def parse_condition(text: str, variables: Dict[str, Variable], scope: Optional[_
     expr = _Parser(text, scope).parse()
     if _type_of(expr, scope, text) != "bool":
         raise RuleError(f"condition {text!r} is not a boolean expression")
+    _check_literals(expr, scope, text)
     return expr
+
+
+_COMPARISONS = ("=", "!=", "<", "<=", ">", ">=")
+
+
+def _check_literals(expr: Expr, scope: _Scope, text: str) -> None:
+    """General mode with `literal_vars`: a number other than 0 and 1 may only appear in a comparison whose
+    arithmetic sides name nothing but those variables (no constants, features or other variables)."""
+    if not (scope.general and scope.literal_vars):
+        return
+
+    def side(e: Expr, found: List[Expr]) -> None:          # the arithmetic below a comparison
+        if isinstance(e, Unary) and e.op == "-" or isinstance(e, Binary) and e.op in ("+", "-"):
+            for part in ((e.arg,) if isinstance(e, Unary) else (e.left, e.right)):
+                side(part, found)
+        elif not (isinstance(e, Unary) or isinstance(e, Binary)):
+            found.append(e)
+        else:
+            walk(e)
+
+    def walk(e: Expr) -> None:
+        if isinstance(e, Binary) and e.op in _COMPARISONS:
+            found: List[Expr] = []
+            side(e.left, found)
+            side(e.right, found)
+            numbers = [str(x.value) for x in found if isinstance(x, Const) and x.literal and not isinstance(x.value, bool)
+                       and x.value > 1]
+            other = [x for x in found if not (isinstance(x, Const) and (x.literal or isinstance(x.value, bool))
+                                              or isinstance(x, Var) and x.name in scope.literal_vars)]
+            if numbers and other:
+                raise RuleError(f"number {numbers[0]} is not allowed here: numbers other than 0 and 1 may only be "
+                                f"compared with {', '.join(scope.literal_vars)} (which mean the same on every "
+                                f"instance), not with constants, features or other variables; use the named "
+                                f"constants ({', '.join(scope.constants) or 'none'}) or the features instead")
+        elif isinstance(e, Unary):
+            walk(e.arg)
+        elif isinstance(e, Binary):
+            walk(e.left)
+            walk(e.right)
+
+    walk(expr)
 
 
 def _type_of(expr: Expr, scope: _Scope, text: str) -> str:

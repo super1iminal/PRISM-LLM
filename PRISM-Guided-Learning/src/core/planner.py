@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tupl
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from config import Config
+from core import early
 from core.analysis import MassAnalyzer
 from core.backends import LLMBackend
 from core.domain import Domain, Instance, Requirement, failing
@@ -104,6 +105,10 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
     }
     if answer.any_order is not None:
         record["any_order"] = answer.any_order
+    if check.early is not None:
+        record["early_loss"] = check.early.mean
+    if answer.narrowed:
+        record["narrowed"] = answer.narrowed
     if len(members) > 1:
         record["members"] = [{"instance": m.instance.id, "best": dict(v.best), "worst": dict(v.worst),
                               "reachable_situations": v.reachable_situations,
@@ -116,6 +121,10 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
 # The loop's solver stops early, mostly by less than 1e-4; where a verified order is off by more than this (138 of 2,113
 # recorded gridworld rounds), every order is verified (DECISIONS.md).
 PRUNE_SLACK = 1e-3
+
+# `rules.early_narrow`: a rule is kept from its move at a place only where that move loses in at least this share of the
+# checked situations the rule decides there
+NARROW_SHARE = 0.75
 
 
 def _score_bounds(reqs: List[Requirement], best: Dict[str, float], worst: Dict[str, float]) -> Tuple[Tuple, Tuple]:
@@ -216,6 +225,11 @@ class SymbolicPlanner:
         optimum_seconds = time() - opt_start
         for m, optimum in zip(members, optima):
             ep.log(f"Unconstrained optimum per requirement{ep.on(m)}: {optimum}")
+        if self.config.feedback.early:
+            for m in members:
+                if not m.hidden:
+                    m.early = early.EarlyCheck(m.verifier, self.config.feedback.early, m.label)
+                    ep.log(f"Early check{ep.on(m)}: {len(m.early.valuations)} states where the move matters")
 
         iterations: List[Dict[str, Any]] = []
         kept: Optional[Kept] = None
@@ -237,7 +251,7 @@ class SymbolicPlanner:
             record = _record(attempt, mode, prompt, check, members, improved=improved, gain=gain, answer=answer)
             iterations.append(record)
 
-            done = kept.check.passes(members)
+            done = kept.check.passes(members) and self._early_done(ep, kept.check)
             if done and ep.pool:
                 grown = yield from self._counterexample(ep, kept, optima)
                 if grown is not None:
@@ -281,6 +295,7 @@ class SymbolicPlanner:
             "loop_best": pessimistic([v.best for v in kept.check.vs], reqs),   # the loop solver's values
             "loop_worst": pessimistic([v.worst for v in kept.check.vs], reqs),
             "final_rules": kept.check.policy.to_dicts(),
+            **({"early_loss": kept.check.early.mean} if kept.check.early is not None else {}),
             "optimum": pessimistic(optima, reqs),
             "optimum_time": optimum_seconds,
             "iterations": iterations,
@@ -297,8 +312,11 @@ class SymbolicPlanner:
         cfg = self.config
         instances = target.members if isinstance(target, TrainingSet) else (target,)
         hidden = target.hidden if isinstance(target, TrainingSet) else ()
-        members = [self._member(instance, f"instance {k}") for k, instance in enumerate(instances, start=1)]
-        members += [self._member(instance, f"hidden instance {k}", hidden=True) for k, instance in enumerate(hidden, 1)]
+        shared = self._shared_variables(instances) if cfg.rules.shared_literals else None
+        members = [self._member(instance, f"instance {k}", literal_vars=shared)
+                   for k, instance in enumerate(instances, start=1)]
+        members += [self._member(instance, f"hidden instance {k}", hidden=True, literal_vars=shared)
+                    for k, instance in enumerate(hidden, 1)]
         self._check_compatible(members)
         primary = members[0]
         shown = [m for m in members if not m.hidden]
@@ -308,14 +326,23 @@ class SymbolicPlanner:
                        self.prompts.training_context(shown) if len(shown) > 1 else {},
                        pool=list(target.pool) if isinstance(target, TrainingSet) else [])
 
-    def _member(self, instance: Instance, label: str, hidden: bool = False) -> Member:
-        """An instance with its verifier, mass analyzer, vocabulary and prompt context."""
+    def _shared_variables(self, instances) -> List[str]:
+        """The policy variables whose type and range are the same on every one of `instances` (`rules.shared_literals`:
+        numbers may be compared with these)."""
+        specs = [self.domain.spec(i).variables for i in instances]
+        return [v.name for k, v in enumerate(specs[0])
+                if all((s[k].type, s[k].low, s[k].high) == (v.type, v.low, v.high) for s in specs)]
+
+    def _member(self, instance: Instance, label: str, hidden: bool = False,
+                literal_vars: Optional[List[str]] = None) -> Member:
+        """An instance with its verifier, mass analyzer, vocabulary and prompt context (`literal_vars`: the variables
+        numbers may be compared with, `rules.shared_literals`)."""
         cfg = self.config
         verifier = PolicyVerifier(self.domain, instance, cfg, self.runner)
         analyzer = MassAnalyzer(verifier, cfg.feedback.horizon_for(self.domain, instance), cfg.feedback.top_k,
                                 cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                 seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
-        vocabulary = verifier.spec.vocabulary(cfg.rules)
+        vocabulary = verifier.spec.vocabulary(cfg.rules, literal_vars)
         scorer = None
         if cfg.rules.any_order != "none" and (cfg.rules.any_scorer == "domain" or cfg.rules.any_prune):
             scorer = self.domain.rule_scorer(instance)
@@ -330,7 +357,9 @@ class SymbolicPlanner:
         re-checked with the new member, or None if every pool instance passes."""
         raw = [(r.condition, r.action) for r in kept.check.policy.rules]
         for instance in list(ep.pool):
-            member = self._member(instance, f"instance {sum(not m.hidden for m in ep.members) + 1}")
+            member = self._member(instance, f"instance {sum(not m.hidden for m in ep.members) + 1}",
+                                  literal_vars=ep.primary.vocabulary.literal_vars if self.config.rules.shared_literals
+                                  else None)
             self._check_compatible([ep.primary, member])
             policy = member.verifier.spec.policy(raw, member.vocabulary)
             v = yield from member.verifier.verify_steps(policy)
@@ -345,7 +374,7 @@ class SymbolicPlanner:
             policies, vs = list(kept.check.policies), list(kept.check.vs)
             policies.insert(len(shown), policy)
             vs.insert(len(shown), v)
-            check = Check(policies, vs, kept.check.any_report)
+            check = self._with_early(ep, Check(policies, vs, kept.check.any_report))
             ep.log(f"Counterexample: the rules fail on instance {instance.id}, which joins the training set")
             ep.added.append(instance.id)
             return Kept(check, check.score(ep.members), check.focus(ep.members))
@@ -375,8 +404,10 @@ class SymbolicPlanner:
             ep.log(f"Choosing an order for `any` failed ({str(e).splitlines()[0]}); keeping `any`")
         ep.log(f"Candidate policy ({len(policies[0].rules)} rules):\n{policies[0].listing()}")
         try:
-            check = yield from self._check(ep, policies)
+            check = self._with_early(ep, (yield from self._check(ep, policies)))
             check.any_report = answer.any_report
+            if self.config.rules.early_narrow:
+                check = yield from self._narrow(ep, check, answer)
             return check, answer
         except PrismError as e:
             # Rare: PRISM cannot solve this candidate's induced model even with the fallback methods.
@@ -386,7 +417,7 @@ class SymbolicPlanner:
             answer.errors.append(f"verification failed: {reason}")
             policies = (kept.check.policies if mode == "extend" and kept
                         else [m.verifier.empty_policy() for m in ep.members])
-            return (yield from self._check(ep, policies)), answer
+            return self._with_early(ep, (yield from self._check(ep, policies))), answer
 
     def _resolve_any(self, ep: Episode, policies: List[SymbolicPolicy], answer: Answer) -> Steps[List[SymbolicPolicy]]:
         """With `rules.any_order`, the candidate's `any` rules resolved into the action order that scores best on
@@ -432,7 +463,8 @@ class SymbolicPlanner:
         if rules.any_scorer == "domain" and fast:
             for k, order in enumerate(orders):
                 candidate = self._parse(ep, fixed_order(raw, order))
-                check = Check(candidate, [Verification(best, worst, None) for best, worst in (f[k] for f in fast)])
+                check = self._with_early(ep, Check(candidate, [Verification(best, worst, None)
+                                                               for best, worst in (f[k] for f in fast)]))
                 out[k] = (check.score(ep.members), candidate, check)
             return out
         todo = _contenders(ep.members, fast) if fast else list(range(len(orders)))
@@ -452,7 +484,7 @@ class SymbolicPlanner:
                     verified[i].append((orders[k], choices[i].at(reachable), v))
                     off = off or (fast is not None and _gap(v, *fast[i][k]) > PRUNE_SLACK)
                 vs.append(v)
-            check = Check(candidate, vs)
+            check = self._with_early(ep, Check(candidate, vs))
             out[k] = (check.score(ep.members), candidate, check)
             if off:
                 ep.log(f"PRISM and the fast model differ by more than {PRUNE_SLACK} on the order "
@@ -460,6 +492,48 @@ class SymbolicPlanner:
                 fast, todo = None, [j for j in range(len(orders)) if j not in out]
         ep.log(f"Orders for `any`: {checks} PRISM checks for {len(orders)} orders on {len(ep.members)} member(s)")
         return out
+
+    def _with_early(self, ep: Episode, check: Check) -> Check:
+        """`check` with the rules' loss early in the training games (`feedback.early`), if the members have it."""
+        pairs = [(m.early, p) for m, p in zip(ep.members, check.policies) if m.early is not None]
+        if pairs:
+            check.early = early.check(pairs, self.config.feedback.states_per_rule, self.config.feedback.early_group)
+        return check
+
+    def _narrow(self, ep: Episode, check: Check, answer: Answer) -> Steps[Check]:
+        """`rules.early_narrow` (k): when the candidate passes every member, keep the moves that lose most early in the
+        games (core/early.py, by rule, place and move) away from their places: of the k such groups with the largest
+        loss, try each with `& !(place)` added to every rule that chooses its move (another rule then decides there),
+        verified on every member; keep the variant that still passes and loses least early, if it loses less than the
+        candidate; repeat up to k times. Only where the move loses in at least NARROW_SHARE of the situations its rule
+        decides there: elsewhere it is often the best move."""
+        k = self.config.rules.early_narrow
+        if check.early is None or not self.config.feedback.early_group or not check.passes(ep.members):
+            return check
+        for _ in range(k):
+            raw = [(r.condition, r.action) for r in check.policy.rules]
+            best = None
+            for group in [g for g in check.early.rules if g.move and g.place
+                          and g.losing >= NARROW_SHARE * g.decided][:k]:
+                place = " & ".join(f"{name} = {value}" for name, value in group.place)
+                variant = [(f"({c}) & !({place})" if a == group.move else c, a) for c, a in raw]
+                candidate = self._with_early(ep, (yield from self._check(ep, self._parse(ep, variant))))
+                if candidate.passes(ep.members) and candidate.early.mean < (best or check).early.mean - 1e-12:
+                    best = candidate
+                    narrowed = f"{group.move} kept away from {place}"
+            if best is None:
+                break
+            ep.log(f"Narrowed {narrowed}: early loss {check.early.mean:.4f} -> {best.early.mean:.4f}")
+            answer.narrowed.append(narrowed)
+            check = best
+        return check
+
+    def _early_done(self, ep: Episode, check: Check) -> bool:
+        """Whether the rules' early loss is within `feedback.early_tolerance` (always, without `feedback.early`)."""
+        if check.early is None:
+            return True
+        ep.log(f"Early loss {check.early.mean:.4f} ({check.early.losing} of {check.early.states} states lose)")
+        return check.early.mean <= self.config.feedback.early_tolerance
 
     @staticmethod
     def _check(ep: Episode, policies: List[SymbolicPolicy]) -> Steps[Check]:
@@ -483,6 +557,8 @@ class SymbolicPlanner:
             results["hidden_results"] = hidden
         if ep.training:
             results.update(training_results=self.prompts.training_results(ep, kept), focus=member.label)
+        if kept.check.early is not None and kept.check.passes(ep.members):
+            return "early", self.prompts.early(ep, member, kept.check, results)
         failing_best, failing_worst = failing(reqs, v.best), failing(reqs, v.worst)
         # Every shown member passes but a hidden one fails: nothing on the shown members to blame, so ask for a
         # rewrite with the results only (the hidden members' details are never shown)
@@ -493,10 +569,11 @@ class SymbolicPlanner:
         # Every situation covered, yet best and worst differ: rules allow several actions (`any`) and some of
         # them are harmful. Appending rules cannot change covered states, so rewrite them.
         open_choices = bool(failing_worst) and v.uncovered_situations == 0
+        early_shown = kept.check if self.config.feedback.early_refine and kept.check.early is not None else None
         if failing_best or joint_conflict or open_choices:
             return "refine", self.prompts.refine(ep, member, policy, v, failing_best or failing_worst,
-                                                 joint_conflict, results)
-        return "extend", self.prompts.extend(ep, member, v, failing_worst, results)
+                                                 joint_conflict, results, early_shown)
+        return "extend", self.prompts.extend(ep, member, v, failing_worst, results, early_shown)
 
     def _joint_conflict(self, ep: Episode, kept: Kept, record: Dict[str, Any]) -> Steps[bool]:
         """Whether no single completion of the kept rules meets every threshold (on the member the feedback is

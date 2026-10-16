@@ -76,6 +76,11 @@ class FeedbackConfig:
     states_per_rule: int
     space: str                                # states (valuations) | features (feature values per action)
     trajectory: bool                          # show a likely way to fail the worst-failing requirement
+    early: Optional[str]                      # step counter: also score the rules' moves in the first half of the
+                                              # training games against the best moves (core/early.py); null: off
+    early_tolerance: float                    # with `early`: refine passing rules while their mean loss exceeds this
+    early_refine: bool                        # with `early`: show the early check in REFINE/EXTEND prompts too
+    early_group: List[str]                    # with `early`: group the losses by these variables' values (a place)
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
@@ -119,6 +124,8 @@ class RulesConfig:
     max_enumeration: int
     extended: bool                  # instance constants, domain features and `any` rules
     general: bool                   # only the numbers 0 and 1 in conditions (with extended)
+    shared_literals: bool           # general mode: other numbers too, compared with variables whose range is the
+                                    # same on every training member (Pac-Man: positions and headings, not steps)
     hidden_features: List[str]      # domain features left out of the vocabulary
     any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
                                     # on the members each round; declared: always the declared action order;
@@ -127,6 +134,7 @@ class RulesConfig:
                                     # then verifies only the chosen order, which can choose another order on ties)
     any_prune: bool                 # the domain's fast model rules out orders that cannot score best, PRISM verifies
                                     # the rest: the same choice (run store ignores it)
+    early_narrow: int               # with feedback.early: narrow up to this many losing rules at their places (0: off)
 
 
 @dataclass

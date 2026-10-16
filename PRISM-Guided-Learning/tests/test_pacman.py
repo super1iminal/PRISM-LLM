@@ -85,6 +85,22 @@ def test_feature_space_feedback_names_no_position(domain):
     assert not re.search(r"\b(xP|yP|dP|xG0|yG0|dG0|xG1|yG1|dG1|steps)=", feedback)
 
 
+def test_early_check_flags_the_dead_end(domain):
+    """`feedback.early` on horizon 14: going up at (3,4), into the dead end, loses in the first half of the game; a
+    list that goes down there instead loses less."""
+    from core import early
+    cfg = load_config("haiku_pac_early_refine")
+    verifier = PolicyVerifier(domain, instance(14), cfg)
+    check = early.EarlyCheck(verifier, "steps", "instance 1")
+    vocab = verifier.spec.vocabulary(cfg.rules, ["xP", "yP"])
+    up = early.check([(check, verifier.spec.policy([("!wall", "up"), ("true", "right")], vocab))], group=["xP", "yP"])
+    pocket = next(r for r in up.rules if r.place == (("xP", 3), ("yP", 4)))
+    assert pocket.move == "up" and pocket.rule == 0 and pocket.losing > 0 and "up" not in pocket.best
+    down = early.check([(check, verifier.spec.policy([("xP = 3 & yP = 4", "down"), ("!wall", "up"),
+                                                      ("true", "right")], vocab))], group=["xP", "yP"])
+    assert down.mean < up.mean and not any(r.place == (("xP", 3), ("yP", 4)) and r.move == "up" for r in down.rules)
+
+
 def test_sealed_horizons_are_refused(domain, tmp_path):
     """Horizons 50 and 100 (pacman_transfer.csv ids 10, 11) are Pac-Man's sealed test set."""
     import yaml
