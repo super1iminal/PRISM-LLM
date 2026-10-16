@@ -16,7 +16,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yaml
@@ -55,6 +55,8 @@ class Cell:
     launch: bool = True                         # false: only use existing runs (e.g. Sonnet, which needs approval)
     note: str = ""
     method: str = ""                            # comparisons: the method this configuration belongs to
+    rules: str = "final"                        # the rules "certified" counts (transfer.py --rules); with another
+                                                # than final, "ties open" counts the final rules (they keep `any`)
 
 
 @dataclass
@@ -131,7 +133,8 @@ def load_experiment(path: Path) -> dict:
                           set={b: list(sets.get(b) or []) for b in names},
                           condition=dict(spec.get("condition") or {}), only=_cell_benches(spec, names),
                           repeats=spec.get("repeats", data.get("repeats", 3)), launch=spec.get("launch", True),
-                          note=spec.get("note", ""), method=spec.get("method", "")))
+                          note=spec.get("note", ""), method=spec.get("method", ""),
+                          rules=spec.get("rules", "final")))
     return {**data, "benchmarks": benches, "cells": cells, "path": Path(path)}
 
 
@@ -202,7 +205,7 @@ class Experiment:
         """Certify a run's rules on the unit's targets, as written and with ties left open (skipped when done)."""
         log = run_dir.parent / f"{run_dir.name}.log"
         targets = parse_ids(unit.bench.targets)
-        for rules in RULES:
+        for rules in dict.fromkeys(cell_rules(unit.cell)):
             if transfer_done(run_dir, unit.dataset(), targets, rules):
                 continue
             cmd = [PYTHON, "src/transfer.py", str(run_dir), "--targets", unit.bench.targets, "--rules", rules,
@@ -232,10 +235,11 @@ class Experiment:
         rows = []
         for u in self.units:
             targets = parse_ids(u.bench.targets)
+            certified, ties_open = cell_rules(u.cell)
             for r in u.runs:
-                final = transfer_numbers(csv_path(r, u.dataset(), "final"), targets, u.bench.groups,
+                final = transfer_numbers(csv_path(r, u.dataset(), certified), targets, u.bench.groups,
                                          u.bench.source_groups)
-                opened = transfer_numbers(csv_path(r, u.dataset(), "open"), targets, u.bench.groups,
+                opened = transfer_numbers(csv_path(r, u.dataset(), ties_open), targets, u.bench.groups,
                                           u.bench.source_groups)
                 rows.append({"bench": u.bench.name, "cell": u.cell.name, "code": u.cell.code,
                              "dir": f"{r.parent.name}/{r.name}", **run_numbers(r, self.prices), **final,
@@ -287,6 +291,12 @@ def held_out(bench: Benchmark) -> List[int]:
         return targets
     trained = {i for s in cfg.run.train_sets for i in s}
     return [t for t in targets if t not in trained]
+
+
+def cell_rules(cell: Cell) -> Tuple[str, str]:
+    """The transfer.py rules a cell's "certified" and "ties open" columns count: final and open by default; with
+    `rules` set (e.g. determinized, for lists that keep `any`), those rules and the final ones."""
+    return RULES if cell.rules == "final" else (cell.rules, "final")
 
 
 def transfer_done(run_dir: Path, dataset: str, targets: List[int], rules: str = "final") -> bool:
