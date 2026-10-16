@@ -8,7 +8,7 @@ from config import Config
 from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
 from core.episode import Episode, Kept, Member
-from core.optimal import Strategy, at, demonstration
+from core.optimal import Strategy, at, demonstration, deviations
 from core.rules import SymbolicPolicy, Vocabulary, feature_values
 from core.verifier import Verification
 
@@ -268,10 +268,10 @@ class Prompts:
         return self.render(ep, "refine.md.j2", member, **results, failing=[r.name for r in blamed], blame=blame,
                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
                            show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, blamed, policy),
-                           **self._legend(member))
+                           **self._deviations(member, v, policy), **self._legend(member))
 
     def extend(self, ep: Episode, member: Member, v: Verification, failing_worst: List[Requirement],
-               results: Dict[str, Any]) -> str:
+               results: Dict[str, Any], policy: Optional[SymbolicPolicy] = None) -> str:
         """Add rules, shown the uncovered states where the worst case loses the most probability."""
         kind = self.config.feedback.blame
         hotspots = member.analyzer.uncovered_hotspots(v, failing_worst) if kind != "none" else []
@@ -279,7 +279,22 @@ class Prompts:
                            hotspots=self._merged(member, hotspots, v),
                            with_cost=any(r.reward is not None for r in failing_worst),
                            show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, failing_worst),
-                           **self._legend(member))
+                           **(self._deviations(member, v, policy) if policy is not None else {}), **self._legend(member))
+
+    def _deviations(self, member: Member, v: Verification, policy: SymbolicPolicy) -> Dict[str, Any]:
+        """With `feedback.deviations`, the states the rules decide where they leave the optimal strategy most
+        (`core.optimal.deviations`), each with what the optimal strategy does there instead."""
+        if not self.config.feedback.deviations:
+            return {}
+        rows = []
+        for h in deviations(member.verifier, v, self._strategy(member), member.analyzer.horizon,
+                            self.config.feedback.top_k):
+            chosen = policy.allowed(h.valuation) or []
+            idle = self._idle(v, h.state, chosen) if self.config.feedback.stuck else []
+            note = self._optimal_note(member, v, h.state, chosen, idle)
+            if ", not " in note:
+                rows.append({"mass": h.mass, "text": f"{self._state(member, h.valuation)}: {note}"})
+        return {"deviations": rows} if rows else {}
 
     def _noted(self, member: Member, v: Verification, valuation: Dict[str, Any], s: Optional[int],
                chosen: Sequence[str]) -> str:
@@ -291,8 +306,8 @@ class Prompts:
         return self.config.feedback.optimal or self.config.feedback.stuck
 
     def _legend(self, member: Member) -> Dict[str, str]:
-        """How to read the notes of `feedback.optimal`."""
-        if not self.config.feedback.optimal:
+        """How to read the notes of `feedback.optimal` and `feedback.deviations`."""
+        if not (self.config.feedback.optimal or self.config.feedback.deviations):
             return {}
         features = any(f.is_action_feature for f in member.vocabulary.features)
         return {"optimal_legend": OPTIMAL_LEGEND.format(features=OPTIMAL_FEATURES if features else "")}

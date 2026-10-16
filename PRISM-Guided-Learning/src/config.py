@@ -78,6 +78,7 @@ class FeedbackConfig:
     trajectory: bool                          # show a likely way to fail the worst-failing requirement
     optimal: bool                             # name the optimal strategy's actions at the states the feedback names
     stuck: bool                               # say where the rules' action there changes nothing (a self-loop)
+    deviations: bool                          # list the states the rules reach where they lose most against the optimum
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own

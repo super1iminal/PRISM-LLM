@@ -496,7 +496,7 @@ class SymbolicPlanner:
         if failing_best or joint_conflict or open_choices:
             return "refine", self.prompts.refine(ep, member, policy, v, failing_best or failing_worst,
                                                  joint_conflict, results)
-        return "extend", self.prompts.extend(ep, member, v, failing_worst, results)
+        return "extend", self.prompts.extend(ep, member, v, failing_worst, results, policy)
 
     def _joint_conflict(self, ep: Episode, kept: Kept, record: Dict[str, Any]) -> Steps[bool]:
         """Whether no single completion of the kept rules meets every threshold (on the member the feedback is

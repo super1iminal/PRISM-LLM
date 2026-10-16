@@ -297,3 +297,17 @@ def test_demonstration_shows_one_optimal_run(tiny_grid):
         in llm.prompts[0]
     _, llm = solve(tiny_grid, [LEFT], 1)
     assert "## An optimal run" not in llm.prompts[0]
+
+
+def test_deviations_list_where_the_rules_leave_the_optimal_strategy(tiny_grid):
+    """With `feedback.deviations`, the prompt lists the states the rules decide where their action loses most against
+    the optimal strategy, weighted by how often the rules reach them; `feedback.stuck` says which actions change
+    nothing (none here: the obstacle moves every step)."""
+    result, _ = solve(tiny_grid, [LEFT, LEFT], 2, "feedback.optimal=true", "feedback.deviations=true",
+                      "feedback.stuck=true")
+    prompt = result["iterations"][1]["prompt"]
+    section = prompt[prompt.index("## Where your rules leave the optimal strategy"):prompt.index("## Task")]
+    assert "%: x=1 & y=0 & g1=false & g2=false & obs_idx=1: optimal: up, not left\n" in section   # stuck at the wall
+    assert "changes nothing" not in prompt
+    shares = [int(m) for m in re.findall(r"^- (\d+)%", section, re.M)]
+    assert shares == sorted(shares, reverse=True) and 95 <= sum(shares) <= 105

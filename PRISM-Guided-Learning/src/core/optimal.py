@@ -1,5 +1,6 @@
 """What an optimal strategy of an instance does, shown to the LLM: at the states the feedback names
-(`feedback.optimal`) and along one optimal run in the initial prompt (`prompt.demonstration`).
+(`feedback.optimal`), at the states where the rules leave it (`feedback.deviations`) and along one optimal run in
+the initial prompt (`prompt.demonstration`).
 
 The domain supplies the strategy (`Domain.optimal_strategy`): per state, its optimal actions and the chance of
 success from there. It is the information 1-2-3-Go! learns from (gridworld: one objective for every requirement
@@ -9,9 +10,12 @@ at once, the trees' `gridworld_mdp.optimal_actions`; Pac-Man and MER: their requ
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+import numpy as np
+
+from core.analysis import Hotspot, _occupancy
 from core.prism import PrismResult
 from core.rules import Value
-from core.verifier import PolicyVerifier
+from core.verifier import PolicyVerifier, Verification
 
 DEMO_STEPS = 30          # decisions shown in a demonstration at most
 MAX_TRANSITIONS = 2000   # transitions followed while looking for them
@@ -74,3 +78,42 @@ def demonstration(verifier: PolicyVerifier, strategy: Strategy, max_steps: int =
         choice = max(choices, key=lambda c: sum(p * value(t) for t, p in c.successors))
         s = max(choice.successors, key=lambda tp: tp[1] * value(tp[0]))[0]
     return steps
+
+
+def deviations(verifier: PolicyVerifier, v: Verification, strategy: Strategy, horizon: int,
+               top_k: int) -> List[Hotspot]:
+    """Where the rules leave the optimal strategy, as DAgger labels the learner's own states: each decision state the
+    rules decide, weighted by how often the run is there within `horizon` steps (the rules where they decide, the
+    optimal completion elsewhere) times the chance of success the rules' choice gives up there (the state's optimal
+    value minus the optimal value expected after the rules' choice; with several, the worst). Summed per valuation of
+    the policy variables (the heaviest state represents it) and shown as shares of the total, the largest `top_k`.
+    The total is about the optimal strategy's chance of success minus the rules' (the performance difference). A
+    choice that leaves the state unchanged (a self-loop) gives up the whole optimal value there, since the run then
+    stays forever, although its expected optimal value equals the state's."""
+    result = v.result
+    cache: Dict[int, float] = {}
+
+    def value(t: int) -> float:
+        if t not in cache:
+            info = at(strategy, result, t)
+            cache[t] = info.value if info else 0.0
+        return cache[t]
+
+    def expected(c, s: int = -1) -> float:
+        return 0.0 if all(t == s for t, _ in c.successors) else sum(p * value(t) for t, p in c.successors)
+
+    loss, follow = np.zeros(len(result.states)), []
+    for s, choices in enumerate(result.choices):
+        follow.append(int(np.argmax([expected(c) for c in choices])) if choices else -1)
+        if v.decisions[s] and v.state_rules[s] is not None:
+            mine = [expected(c, s) for c in choices if c.action in verifier.spec.actions]
+            loss[s] = max(0.0, value(s) - min(mine)) if mine else 0.0
+    masses = _occupancy(result, follow, horizon) * loss
+    spots: Dict[Tuple, Hotspot] = {}
+    for s in np.flatnonzero(masses > 1e-9):
+        valuation = verifier.policy_valuation(result, int(s))
+        spots.setdefault(tuple(valuation.values()), Hotspot(valuation, 0.0)).add(int(s), float(masses[s]))
+    total = sum(h.mass for h in spots.values())
+    for h in spots.values():
+        h.mass /= total
+    return sorted(spots.values(), key=lambda h: -h.mass)[:top_k]
