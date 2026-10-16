@@ -29,9 +29,14 @@ class FailureState:
     choice: int                     # the adversary's choice there (index into the state's choices)
 
 
-def lost_sets(verifier: PolicyVerifier) -> Tuple[Dict[str, np.ndarray], Dict]:
+Met = Callable[[Requirement], Optional[Callable[[Dict], bool]]]
+
+
+def lost_sets(verifier: PolicyVerifier, met: Optional[Met] = None) -> Tuple[Dict[str, np.ndarray], Dict]:
     """Per probability requirement, the bare model's states where it is lost (bool array), and the bare model's
-    state index (state tuple -> index). Needs the optimum's vectors (`verifier.optimum`, cached by the loop)."""
+    state index (state tuple -> index). Needs the optimum's vectors (`verifier.optimum`, cached by the loop). With
+    `met` (`feedback.history`: the domain's test per requirement), a state that shows the requirement met is not
+    lost."""
     _, vectors, result = verifier.optimum()
     out = {}
     for r in verifier.spec.requirements:
@@ -39,16 +44,29 @@ def lost_sets(verifier: PolicyVerifier) -> Tuple[Dict[str, np.ndarray], Dict]:
             continue
         v = np.asarray(vectors[r.name], dtype=float)
         out[r.name] = v <= 1e-12 if r.maximize else v >= 1.0 - 1e-12
+        done = met_states(verifier, result, met(r)) if met else None
+        if done is not None:
+            out[r.name] &= ~done
     return out, result.index_of()
 
 
+def met_states(verifier: PolicyVerifier, result, test: Optional[Callable[[Dict], bool]]) -> Optional[np.ndarray]:
+    """The states of `result` whose policy variables pass `test` (Domain.met), or None without a test."""
+    if test is None:
+        return None
+    return np.array([test(verifier.policy_valuation(result, s)) for s in range(len(result.states))], dtype=bool)
+
+
 def failure_states(v: Verification, req: Requirement, lost_here: np.ndarray, horizon: int,
-                   top: int = 2) -> List[FailureState]:
+                   top: int = 2, met: Optional[np.ndarray] = None) -> List[FailureState]:
     """The `top` states the worst-case run of `req` fails from (by flux into `lost_here`, per state of the rules'
-    model), then the `top` states it is still stuck in after `horizon` steps."""
+    model), then the `top` states it is still stuck in after `horizon` steps. Runs stop where `met` (the states that
+    show `req` met, `feedback.history`) holds, as where it is certain to hold."""
     result = v.result
     w = np.asarray(v.worst_vectors[req.name], dtype=float)
     success = (w >= 1.0 - 1e-12) if req.maximize else (w <= 1e-12)
+    if met is not None:
+        success = success | met
     stop = lost_here | success
     strategy = _greedy(_q_values(result, _signed(req, w)), maximize=False)
     n = len(result.states)
@@ -78,10 +96,12 @@ def failure_states(v: Verification, req: Requirement, lost_here: np.ndarray, hor
 
 
 def action_lines(verifier: PolicyVerifier, v: Verification, s: int, lost: Dict[str, np.ndarray], bare_index: Dict,
-                 features: Callable[[Dict], Dict], feature_names: Sequence[str]) -> List[Tuple[str, str]]:
+                 features: Callable[[Dict], Dict], feature_names: Sequence[str],
+                 words: Optional[Callable[[str], Optional[str]]] = None) -> List[Tuple[str, str]]:
     """Per policy action at state `s` of the rules' model: the action features true for it, and its one-step risk on
-    the bare model (`loses r with p`, requirements with equal chances together; `changes nothing` for a choice whose
-    every outcome is the state itself)."""
+    the bare model (`loses r with p`, requirements with equal chances together, or with `words` (requirement name ->
+    what losing it means, `feedback.words`) those words; `changes nothing` for a choice whose every outcome is the
+    state itself)."""
     _, _, bare = verifier.optimum()
     i = bare_index.get(v.result.states[s])
     valuation = verifier.policy_valuation(v.result, s)
@@ -102,7 +122,14 @@ def action_lines(verifier: PolicyVerifier, v: Verification, s: int, lost: Dict[s
                 if p > 1e-9:
                     risk[round(p, 2)].append(name)
             if risk:
-                text += " risk: " + "; ".join(f"loses {', '.join(names)} {p:.2f}" for p, names in sorted(risk.items(), reverse=True))
+                parts = []
+                for p, names in sorted(risk.items(), reverse=True):
+                    said = [words(n) if words else None for n in names]
+                    parts += [f"{w} {p:.2f}" for w in dict.fromkeys(w for w in said if w)]
+                    plain = [n for n, w in zip(names, said) if not w]
+                    if plain:
+                        parts.append(f"loses {', '.join(plain)} {p:.2f}")
+                text += " risk: " + "; ".join(parts)
         out.append((a, text))
     return out
 

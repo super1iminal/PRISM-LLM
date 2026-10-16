@@ -10,7 +10,7 @@ from config import Config
 from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
 from core.episode import Check, Episode, Kept, Member, margin
-from core.failures import action_lines, allowed_here, choice_label, failure_states, lost_sets
+from core.failures import action_lines, allowed_here, choice_label, failure_states, lost_sets, met_states
 from core.optimal import Strategy, at, demonstration, deviations
 from core.rules import SymbolicPolicy, Vocabulary, feature_values
 from core.verifier import Verification
@@ -46,8 +46,12 @@ class Prompts:
         prompt = self.config.prompt
         strict = self.strict([instance])
         hide = strict["hide"] if strict else set()
+        compact = prompt.compact and self.domain.has_template("description_compact.md.j2")
         return {
-            "description": self.domain.description(instance),
+            "description": (self.domain.render("description_compact.md.j2", instance).strip() if compact
+                            else self.domain.description(instance)),
+            **({"world": self.domain.render("world.md.j2", instance).strip()}
+               if compact and self.domain.has_template("world.md.j2") else {}),
             "visual": self.domain.visual(instance),
             "examples": self.domain.examples(instance, extended=vocabulary.allow_any) if prompt.examples else "",
             "catch_all_instruction": prompt.catch_all_instruction,
@@ -290,7 +294,8 @@ class Prompts:
 
     def _lost_sets(self, member: Member):
         if member.instance.id not in self._lost:
-            self._lost[member.instance.id] = lost_sets(member.verifier)
+            met = (lambda r: self.domain.met(member.instance, r)) if self.config.feedback.history else None
+            self._lost[member.instance.id] = lost_sets(member.verifier, met)
         return self._lost[member.instance.id]
 
     def _member_report(self, m: Member, policy: SymbolicPolicy, v: Verification, several: bool, top_reqs: int = 3,
@@ -305,6 +310,10 @@ class Prompts:
                  + (f"; {v.uncovered_situations} reachable situations are uncovered" if v.uncovered_situations else "")]
         lost, index = self._lost_sets(m)
         where = np.array([index.get(s, -1) for s in v.result.states])
+        by_name = {r.name: r for r in reqs}
+
+        def words(name: str) -> Optional[str]:
+            return self.domain.loss_words(by_name[name]) if name in by_name else None
         rules, actions = policy.rules, list(m.verifier.spec.actions)
         names = [f.name for f in m.vocabulary.features if f.is_action_feature]
         seen = set()
@@ -313,8 +322,12 @@ class Prompts:
             if r.name not in lost:
                 continue
             here = np.where(where >= 0, lost[r.name][np.maximum(where, 0)], False)
-            for fs in failure_states(v, r, here, m.analyzer.horizon, per_req):
-                state = self._state(m, m.verifier.policy_valuation(v.result, fs.state))
+            met = (met_states(m.verifier, v.result, self.domain.met(m.instance, r)) if self.config.feedback.history
+                   else None)
+            for fs in failure_states(v, r, here, m.analyzer.horizon, per_req, met):
+                valuation = m.verifier.policy_valuation(v.result, fs.state)
+                state = ((self.domain.state_words(m.instance, valuation) if self.config.feedback.words else None)
+                         or self._state(m, valuation))
                 if (fs.state, fs.kind) in seen:
                     lines.append(f"    * the same state as above: {state} ({fs.mass:.3f} of runs)")
                     continue
@@ -328,7 +341,8 @@ class Prompts:
                              f"{', '.join(allowed_here(m.verifier, v, fs.state)) or 'none'}; the worst case takes "
                              f"{took if took in actions else 'a move the policy does not choose'}.")
                 effects: Dict[str, List[str]] = {}
-                for a, text in action_lines(m.verifier, v, fs.state, lost, index, self._values(m), names):
+                for a, text in action_lines(m.verifier, v, fs.state, lost, index, self._values(m), names,
+                                            words if self.config.feedback.words else None):
                     effects.setdefault(text, []).append(a)
                 lines.append("      actions here: " + "; ".join(f"{', '.join(acts)}: {text}"
                                                                 for text, acts in effects.items()))

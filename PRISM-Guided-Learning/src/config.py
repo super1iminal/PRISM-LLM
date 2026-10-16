@@ -93,6 +93,10 @@ class FeedbackConfig:
     early_refine: bool                        # with `early`: show the early check in REFINE/EXTEND prompts too
     early_group: List[str]                    # with `early`: group the losses by these variables' values (a place)
     early_rank: bool                          # with `early`: the early loss ranks lists (keep-best, `any` order)
+    history: bool                             # planner.feedback failures: a state whose own variables show a
+                                              # requirement met is not lost there (Domain.met)
+    words: bool                               # planner.feedback failures: states and one-step risks in the
+                                              # domain's words (Domain.state_words, Domain.loss_words)
 
     def horizon_for(self, domain, instance) -> int:
         """Occupancy horizon for `instance`: `horizon` steps, or with "domain" the domain's own
@@ -115,6 +119,8 @@ class PromptConfig:
     hint: str                       # extra advice for the policy section ("" = none), set by a condition
     worst_case: bool                # spell out the worst case (the adversary, stalling, a catch-all)
     demonstration: bool             # the initial prompt shows one optimal run on the first training member
+    compact: bool                   # the domain's compact descriptions where it has them: its rules once
+                                    # (world.md.j2), a short text per instance (description_compact.md.j2)
 
 
 @dataclass
