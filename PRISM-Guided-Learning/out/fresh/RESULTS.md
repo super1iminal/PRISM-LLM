@@ -98,3 +98,9 @@ and 30 at 0.68 / 0.79 / 0.82 fail). To beat: 4 (tied in every repeat, not beaten
 | v2: v1 + uniform regret over all states | 3, 3, 3 | 3.00 |
 | v3: numbers on positions and headings | 4, 3, 4 | 3.67 |
 | v4: v3 + early-game regret | 4, 4, 4 | 4.00 |
+
+## Random grids without `closer`, coordinates and goal constants allowed (`grids_noclose_pos/`)
+Same frozen method with `--position` (x, y, N, G*R, G*C; numbers 0/1). Certified of 8:
+3, 4, 4, 4 / 2, 4, 4, 2 / 4, 3, 3, 5 (means 3.75, 3.00, 3.75; overall **3.50**), costs $1.05 / $1.07 / $1.10.
+No better than without coordinates (3.58): Haiku hardly used them (14 of 625 valid answers; 1 of 12 kept lists), so
+the template's offset logic was never tried. Certification took 21-86 min per repeat (PRISM's fallback solver).

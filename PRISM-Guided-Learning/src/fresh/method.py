@@ -33,6 +33,7 @@ class Settings:
     hidden: tuple = ("hazard",)          # sensors left out of the vocabulary
     resolve_in_loop: bool = False        # the verifier resolves each candidate's `any` before scoring and feedback
     action_lines: bool = True            # feedback shows each action's sensors and one-step risks
+    position_hint: bool = False          # with position: one sentence on comparing the position with the goal's
 
 
 CFG = Settings()
@@ -69,6 +70,10 @@ def world_text(position: bool) -> str:
     if position:
         names += ["- `x`, `y` (int): the agent's row and column.",
                   "- constants: `N` (grid size), `G1R`, `G1C`, `G2R`, `G2C`, `G3R`, `G3C` (goal rows and columns)."]
+        if CFG.position_hint:
+            names += ["  With these you can compare where the agent is with where the next goal is, e.g. `x < G1R` "
+                      "(goal 1 is further down), `G1R - x > G1C - y` (goal 1 is further away in rows than in columns); "
+                      "the flags tell which goal is next (goal 1 while !g1, goal 2 while g1 & !g2, goal 3 while g2 & !g3)."]
     names += ["- per-action sensors (true/false for the rule's action; with `any`, for each action separately):"]
     names += [f"    - `{k}`: {v}" for k, v in FEATURE_TEXT.items() if k not in CFG.hidden]
     restrict = ("Conditions may only use these names, `true`/`false` and the numbers 0 and 1 (write e.g. "

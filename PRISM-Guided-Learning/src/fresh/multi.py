@@ -24,10 +24,12 @@ ap.add_argument("--hide", default="hazard")
 ap.add_argument("--resolve-in-loop", action="store_true")
 ap.add_argument("--no-action-lines", action="store_true")
 ap.add_argument("--position", action="store_true", help="allow x, y and the grid constants in conditions")
+ap.add_argument("--position-hint", action="store_true")
 ap.add_argument("--out", required=True)
 args = ap.parse_args()
 M.CFG.kind, M.CFG.data, M.CFG.hidden = args.kind, args.data, tuple(h for h in args.hide.split(",") if h)
 M.CFG.resolve_in_loop, M.CFG.action_lines = args.resolve_in_loop, not args.no_action_lines
+M.CFG.position_hint = args.position_hint
 runs = [(label, [int(i) for i in ids.split(",")]) for label, ids in (r.split("=") for r in args.runs)]
 
 
