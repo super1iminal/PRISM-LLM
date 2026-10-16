@@ -50,7 +50,7 @@ candidate instead of each chain's kept list (`cand_cache.py`, `cand_eval.py`): +
 | MER across x | haiku_mi_mer_chains5 | 3 | 3.00 (3, 3, 3) | 2.40 (0-3) | 6 (1-2-3-Go!, one-instance strategy) |
 | families | haiku_fam_order_chains5 | 2 | 11.83 (9.67, 14.00*) | 9.67 (5.67-15.00) | 12.67 (PPO, our features) |
 
-Families per run (rooms / crossing / adjacent): run 1 12 / 0 / 17, run 2 15 / 8 / 19 (*numpy; its PRISM transfer was still queued for PRISM slots). Within these runs (numpy, every
+Families per run (rooms / crossing / adjacent): run 1 12 / 0 / 17, run 2 15 / 8 / 19. Within these runs (numpy, every
 chain's kept list, `chain_numpy.py`): the chosen chain certifies 13.5 / 4.0 / 18.0, a single chain 8.1 / 1.5 / 13.0,
 the best chain in hindsight 13.5 / 5.0 / 18.0; the margin picked the best chain in 5 of 6 set-runs. The better of
 the two runs' chosen lists per set (= 10 chains): 12 / 8 / 19, 13.0.
