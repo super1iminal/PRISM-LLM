@@ -104,3 +104,9 @@ Same frozen method with `--position` (x, y, N, G*R, G*C; numbers 0/1). Certified
 3, 4, 4, 4 / 2, 4, 4, 2 / 4, 3, 3, 5 (means 3.75, 3.00, 3.75; overall **3.50**), costs $1.05 / $1.07 / $1.10.
 No better than without coordinates (3.58): Haiku hardly used them (14 of 625 valid answers; 1 of 12 kept lists), so
 the template's offset logic was never tried. Certification took 21-86 min per repeat (PRISM's fallback solver).
+
+## MER across x with optimal-scheduler feedback (`mer_v2/x`)
+Feedback (training-only) shows, on the states the best scheduler or the rules' worst case reaches, where the action
+the rules take loses against the optimal one (with optimal continuation) and the optimal actions. Certified of 6:
+3, 3, 3 (mean 3.00, ids 3, 7, 8 as before); cost per repeat $0.35-0.38. Training is unchanged: over 316 answers of
+both MER-x variants the best value at x = 0.13 is 0.2027 (needs 0.212, optimum 0.2232). Not tried on MER across n.
