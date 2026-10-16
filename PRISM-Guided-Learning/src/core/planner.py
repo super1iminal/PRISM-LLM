@@ -34,16 +34,16 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 from config import Config
 from core.analysis import MassAnalyzer
 from core.backends import LLMBackend
-from core.domain import Domain, Instance, failing
+from core.domain import Domain, Instance, Requirement, failing
 from core.episode import Answer, Check, Episode, Kept, Member, pessimistic
 from core.prism import PrismCall, PrismError, PrismRunner
 from core.prompts import Prompts
 from core.retry import RetryPolicy
-from core.rules import ANY, RuleError, SymbolicPolicy, action_orders, fixed_order
+from core.rules import ANY, OpenChoices, RuleError, SymbolicPolicy, action_orders, fixed_order
 from core.scheduler import drive
 from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.training import TrainingSet
-from core.verifier import PolicyVerifier
+from core.verifier import PolicyVerifier, Verification
 
 T = TypeVar("T")
 # Yields LLM tasks and PRISM calls, is sent their results (an LLMResult, PRISM's output), returns T.
@@ -110,6 +110,44 @@ def _record(attempt: int, mode: str, prompt: str, check: Check, members: List[Me
                               "uncovered_situations": v.uncovered_situations, **({"hidden": True} if m.hidden else {})}
                              for m, v in zip(members, check.vs)]
     return record
+
+
+# `rules.any_prune`: how far PRISM's values may be from the domain's fast model before an order is ruled out wrongly.
+# The loop's solver stops early, mostly by less than 1e-4; where a verified order is off by more than this (138 of 2,113
+# recorded gridworld rounds), every order is verified (DECISIONS.md).
+PRUNE_SLACK = 1e-3
+
+
+def _score_bounds(reqs: List[Requirement], best: Dict[str, float], worst: Dict[str, float]) -> Tuple[Tuple, Tuple]:
+    """Bounds on `core.episode.score` of a member whose values are each within PRUNE_SLACK of these."""
+    lo, hi = [0, 0, 0.0, 0.0], [0, 0, 0.0, 0.0]
+    for r in reqs:
+        for c, value in ((0, worst[r.name]), (1, best[r.name])):
+            ends = (value - PRUNE_SLACK, value + PRUNE_SLACK)
+            passes = [r.satisfied(e) for e in ends]
+            lo[c] += not any(passes)
+            hi[c] += not all(passes)
+            gaps = [r.shortfall(e) for e in ends]
+            lo[c + 2] += min(gaps) - 1e-12    # rounding in the sums
+            hi[c + 2] += max(gaps) + 1e-12
+    return tuple(lo), tuple(hi)
+
+
+def _contenders(members: List[Member], values: List[List[Tuple[Dict[str, float], Dict[str, float]]]]) -> List[int]:
+    """The orders that can score best on the members when PRISM's values are within PRUNE_SLACK of `values` (per
+    member, the fast model's (best, worst) for each order): those whose lowest possible score is at most the least
+    highest possible one. A score is a tuple compared in order, and summed bounds bound it in each place."""
+    bounds = []
+    for k in range(len(values[0])):
+        parts = [_score_bounds(m.requirements, *v[k]) for m, v in zip(members, values)]
+        bounds.append([tuple(map(sum, zip(*side))) for side in zip(*parts)])
+    cap = min(hi for _, hi in bounds)
+    return [k for k, (lo, _) in enumerate(bounds) if lo <= cap]
+
+
+def _gap(v: Verification, best: Dict[str, float], worst: Dict[str, float]) -> float:
+    """The largest difference between PRISM's values and the fast model's."""
+    return max(max(abs(v.best[n] - best[n]), abs(v.worst[n] - worst[n])) for n in best)
 
 
 class SymbolicPlanner:
@@ -278,8 +316,13 @@ class SymbolicPlanner:
                                 cfg.feedback.states_per_rule, method=cfg.feedback.blame,
                                 seed=zlib.crc32(f"{cfg.llm.seed}/{instance.id}".encode()))
         vocabulary = verifier.spec.vocabulary(cfg.rules)
+        scorer = None
+        if cfg.rules.any_order != "none" and (cfg.rules.any_scorer == "domain" or cfg.rules.any_prune):
+            scorer = self.domain.rule_scorer(instance)
+            if scorer is None and cfg.rules.any_scorer == "domain":
+                raise ValueError(f"rules.any_scorer=domain: the {self.domain.name} domain has no fast model")
         return Member(label, instance, verifier, analyzer, vocabulary,
-                      self.prompts.context(instance, verifier.spec, vocabulary), hidden=hidden)
+                      self.prompts.context(instance, verifier.spec, vocabulary), hidden=hidden, scorer=scorer)
 
     def _counterexample(self, ep: Episode, kept: Kept, optima: List[Dict[str, float]]) -> Steps[Optional[Kept]]:
         """Once the members pass, check the kept rules on the pool (`run.pool_sets`) in order; the first instance
@@ -347,21 +390,15 @@ class SymbolicPlanner:
 
     def _resolve_any(self, ep: Episode, policies: List[SymbolicPolicy], answer: Answer) -> Steps[List[SymbolicPolicy]]:
         """With `rules.any_order`, the candidate's `any` rules resolved into the action order that scores best on
-        the members (each order verified without analysis; ties go to the first order); otherwise unchanged."""
+        the members (ties go to the first order); otherwise unchanged."""
         kind = self.config.rules.any_order
         raw = [(r.condition, r.action) for r in policies[0].rules]
         if kind == "none" or not any(a == ANY for _, a in raw):
             return policies
-        best = None
-        for order in action_orders(list(ep.primary.verifier.spec.actions), "all" if kind == "report" else kind):
-            candidate = self._parse(ep, fixed_order(raw, order))
-            vs = []
-            for m, p in zip(ep.members, candidate):
-                vs.append((yield from m.verifier.verify_steps(p, analysis=False)))
-            check = Check(candidate, vs)
-            score = check.score(ep.members)
-            if best is None or score < best[0]:
-                best = (score, order, candidate, check)
+        orders = action_orders(list(ep.primary.verifier.spec.actions), "all" if kind == "report" else kind)
+        scored = yield from self._score_orders(ep, policies, raw, orders)
+        k = min(scored, key=lambda k: (scored[k][0], k))
+        best = (scored[k][0], orders[k], *scored[k][1:])
         if kind == "report":   # feedback only: the rules stay as written, the LLM is told which order would do best
             check = best[3]
             answer.any_report = {"order": list(best[1]), "members": len(ep.members),
@@ -374,6 +411,55 @@ class SymbolicPlanner:
         answer.any_order = list(best[1])
         ep.log(f"`any` resolved in the order {', '.join(best[1])}")
         return best[2]
+
+    def _score_orders(self, ep: Episode, policies: List[SymbolicPolicy], raw: List[Tuple[str, str]],
+                      orders: List[Tuple[str, ...]]) -> Steps[Dict[int, Tuple[Tuple, List[SymbolicPolicy], Check]]]:
+        """Order index -> (score, the rules resolved in that order for each member, their check), for each order that
+        can score best. Each order is verified on each member without analysis, except where it resolves the rules
+        into the same action as an order already verified there at every state reachable under that order: PRISM
+        then builds the same model, so the order takes that order's values. With `rules.any_scorer: domain`, the
+        domain's fast model scores every order instead; with `rules.any_prune`, it only rules out the orders that
+        cannot score best, and PRISM verifies the rest (all of them if PRISM and the fast model disagree by more
+        than PRUNE_SLACK on one). Both only where the fast model scores every order (gridworld: the rules decide
+        every reachable state); otherwise PRISM verifies every order."""
+        rules = self.config.rules
+        fast = None
+        if rules.any_scorer == "domain" or (rules.any_prune and all(m.scorer for m in ep.members)):
+            fast = [m.scorer.order_values(p, orders) for m, p in zip(ep.members, policies)]
+            if any(values is None for f in fast for values in f):
+                fast = None
+        out = {}
+        if rules.any_scorer == "domain" and fast:
+            for k, order in enumerate(orders):
+                candidate = self._parse(ep, fixed_order(raw, order))
+                check = Check(candidate, [Verification(best, worst, None) for best, worst in (f[k] for f in fast)])
+                out[k] = (check.score(ep.members), candidate, check)
+            return out
+        todo = _contenders(ep.members, fast) if fast else list(range(len(orders)))
+        choices = [OpenChoices(p) for p in policies]
+        verified: List[List[Tuple[Tuple[str, ...], set, Verification]]] = [[] for _ in ep.members]
+        checks = 0
+        while todo:
+            k = todo.pop(0)
+            candidate = self._parse(ep, fixed_order(raw, orders[k]))
+            vs, off = [], False
+            for i, (m, p) in enumerate(zip(ep.members, candidate)):
+                v = next((v for order, sets, v in verified[i] if OpenChoices.agree(orders[k], order, sets)), None)
+                if v is None:
+                    v = yield from m.verifier.verify_steps(p, analysis=False)
+                    checks += 1
+                    reachable = (m.verifier.policy_valuation(v.result, s) for s in range(len(v.result.states)))
+                    verified[i].append((orders[k], choices[i].at(reachable), v))
+                    off = off or (fast is not None and _gap(v, *fast[i][k]) > PRUNE_SLACK)
+                vs.append(v)
+            check = Check(candidate, vs)
+            out[k] = (check.score(ep.members), candidate, check)
+            if off:
+                ep.log(f"PRISM and the fast model differ by more than {PRUNE_SLACK} on the order "
+                       f"{', '.join(orders[k])}: verifying every order")
+                fast, todo = None, [j for j in range(len(orders)) if j not in out]
+        ep.log(f"Orders for `any`: {checks} PRISM checks for {len(orders)} orders on {len(ep.members)} member(s)")
+        return out
 
     @staticmethod
     def _check(ep: Episode, policies: List[SymbolicPolicy]) -> Steps[Check]:

@@ -204,6 +204,59 @@ def _reach(mon: _Monitor, nxt: np.ndarray, p: np.ndarray, initial: int, safety: 
     return 1.0 - value if safety else value
 
 
+class RuleScorer:
+    """Rule lists scored on the numpy gridworld as the verifier scores them with PRISM, where they leave one action in
+    every reachable state (best = worst). Rules are evaluated by the core rule evaluator on each state's policy
+    variables, so they mean what the PRISM policy module means."""
+
+    def __init__(self, data: dict, variables):
+        self.mdp = GridMDP(data)
+        names = {v.name for v in variables}
+        self.valuations = [{"x": r, "y": c, **{f"g{k + 1}": k < s for k in range(self.mdp.K)},
+                            **({"obs_idx": o} if "obs_idx" in names else {})} for (r, c, s, o) in self.mdp.states]
+        self.monitors = self.mdp.monitors()
+
+    def order_values(self, policy, orders) -> List[Optional[Tuple[Dict[str, float], Dict[str, float]]]]:
+        """(best, worst) of `policy` with its `any` rules resolved in each of `orders` (core.rules.fixed_order: where
+        an `any` rule decides, the first action in the order that it allows); None for an order that leaves several
+        actions in a reachable state (where no rule decides)."""
+        table, cache, out = [], {}, []
+        for state in self.valuations:
+            i = policy.first_match(state)
+            table.append(None if i is None else ([ACTIONS.index(a) for a in policy.allowed(state)],
+                                                 policy.rules[i].action == "any"))
+        for order in orders:
+            rank = [ACTIONS.index(a) for a in order]
+            allow = np.zeros((self.mdp.S, 4), dtype=bool)
+            for i, entry in enumerate(table):
+                if entry is None:
+                    allow[i] = True
+                elif entry[1]:
+                    allow[i, next(a for a in rank if a in entry[0])] = True
+                else:
+                    allow[i, entry[0]] = True
+            key = allow.tobytes()
+            if key not in cache:
+                cache[key] = self.values(allow)
+            out.append(cache[key])
+        return out
+
+    def values(self, allow: np.ndarray) -> Optional[Tuple[Dict[str, float], Dict[str, float]]]:
+        """(best, worst) per requirement when the actions in `allow` (S, 4) are allowed, or None if several are in a
+        state reachable with them."""
+        seen = np.zeros(self.mdp.S, dtype=bool)
+        seen[self.mdp.initial] = True
+        frontier = np.array([self.mdp.initial])
+        while frontier.size:
+            nxt = self.mdp.succ[frontier][allow[frontier]].reshape(-1)
+            frontier = np.unique(nxt[~seen[nxt]])
+            seen[frontier] = True
+        if (allow[seen].sum(axis=1) > 1).any():
+            return None
+        v = self.mdp.evaluate(allow.argmax(axis=1), self.monitors)   # unreachable states: any allowed action
+        return v, dict(v)
+
+
 def first_allowed(mdp: GridMDP, rules: List[Tuple[Dict[str, bool], Optional[List[int]]]],
                   fallback: int = 0) -> np.ndarray:
     """A deterministic policy from a decision list over feature literals: each rule is ({feature: wanted value},

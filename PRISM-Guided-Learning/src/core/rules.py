@@ -575,6 +575,36 @@ def action_orders(actions: Sequence[str], kind: str) -> List[Tuple[str, ...]]:
     raise ValueError(f"unknown action orders {kind!r} (all | rotations)")
 
 
+class OpenChoices:
+    """Where `policy`'s `any` rules leave several actions open. In a state an `any` rule decides, `fixed_order(rules,
+    order)` takes the first action in `order` that the rule allows, so two orders resolve the rules into the same
+    action in a set of states iff they put the same action first in each set of actions left open there."""
+
+    def __init__(self, policy: SymbolicPolicy):
+        self.policy = policy
+        self._cache: Dict[Tuple, Optional[frozenset]] = {}
+
+    def at(self, valuations: Iterable[Dict[str, Value]]) -> set:
+        """The sets of several actions an `any` rule leaves open at these valuations (of the policy variables)."""
+        out = set()
+        for state in valuations:
+            key = tuple(state.values())
+            if key not in self._cache:
+                i = self.policy.first_match(state)
+                rule = self.policy.rules[i] if i is not None else None
+                allowed = (frozenset(a for a, e in rule.allows.items() if evaluate(e, state))
+                           if rule is not None and rule.action == ANY else frozenset())
+                self._cache[key] = allowed if len(allowed) > 1 else None
+            if self._cache[key] is not None:
+                out.add(self._cache[key])
+        return out
+
+    @staticmethod
+    def agree(order: Sequence[str], other: Sequence[str], choices: Iterable[frozenset]) -> bool:
+        """Whether the two orders put the same action first in each of `choices`."""
+        return all(next(a for a in order if a in c) == next(a for a in other if a in c) for c in choices)
+
+
 def feature_values(variables: Sequence[Variable], actions: Sequence[str], vocabulary: Vocabulary
                    ) -> Callable[[Dict[str, Value]], Dict[Tuple[str, Optional[str]], Value]]:
     """A function from a valuation of `variables` to the value of each of `vocabulary`'s features, keyed by

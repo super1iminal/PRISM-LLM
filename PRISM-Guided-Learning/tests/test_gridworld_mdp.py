@@ -4,9 +4,10 @@ import shutil
 
 import pytest
 
-from baselines.gridworld_mdp import ACTIONS, FEATURES, GridMDP, first_allowed
+from baselines.gridworld_mdp import ACTIONS, FEATURES, GridMDP, RuleScorer, first_allowed
 from config import load_config
 from core.domain import load_domain
+from core.rules import fixed_order
 from core.verifier import PolicyVerifier
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
@@ -34,6 +35,26 @@ def test_features_match_the_core_rule_evaluator(dataset, i):
             state = {"x": r, "y": c, "obs_idx": o, **{f"g{k + 1}": k < s for k in range(mdp.K)}}
             for ai, a in enumerate(ACTIONS):
                 assert (policies[a].allowed(state) == [a]) == bool(mdp.features[f][idx, ai]), (f, a, mdp.states[idx])
+
+
+@needs_prism
+@pytest.mark.parametrize("dataset, i", [("grid_20_balanced.csv", 12), ("families_v0.csv", 13)])
+def test_rule_scorer_matches_prism_on_each_order(dataset, i):
+    """RuleScorer.order_values: the values PRISM finds for the rules with `any` resolved in each order, or None where
+    some reachable state is left open."""
+    domain, inst = _instance(dataset, i)
+    spec = domain.spec(inst)
+    vocab = spec.vocabulary(CFG.rules)
+    raw = [("closer & !hazard & !risky", "any"), ("closer & !hazard", "right"), ("!wall & !hazard", "any")]
+    orders = [("up", "right", "down", "left"), ("left", "down", "right", "up")]
+    scorer = RuleScorer(inst.data, spec.variables)
+    values = scorer.order_values(spec.policy(raw + [("true", "any")], vocab), orders)
+    assert values[0] != values[1]
+    for order, (best, worst) in zip(orders, values):
+        v, _ = PolicyVerifier(domain, inst, CFG).verify_exact(spec.policy(fixed_order(raw + [("true", "any")], order),
+                                                                          vocab))
+        assert best == worst == pytest.approx(v.worst, abs=1e-7)
+    assert scorer.order_values(spec.policy([("g1", "any")], vocab), orders) == [None, None]   # the start is open
 
 
 @needs_prism

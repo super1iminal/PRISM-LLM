@@ -10,13 +10,14 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
 import core.prism
 import core.scheduler
 from config import load_config
-from core.prism import PrismCall, PrismProcess, run_call
+from core.prism import PrismCall, PrismProcess, Slot, run_call
 from core.scheduler import EventScheduler, LockstepScheduler, drive
 from core.tasks import LLMError, TaskFactory
 from fakes import FakeBackend
@@ -26,14 +27,14 @@ LOG = logging.getLogger("test_event_scheduler")
 SCHEDULERS = [LockstepScheduler, EventScheduler]
 
 
-def py(code: str, timeout: float = 60) -> PrismCall:
+def py(code: str, timeout: float = 60, max_concurrent=None) -> PrismCall:
     """A PRISM call that runs a short Python program instead of PRISM."""
-    return PrismCall((sys.executable, "-c", code), timeout)
+    return PrismCall((sys.executable, "-c", code), timeout, max_concurrent)
 
 
 class Toy:
-    def __init__(self, id, rounds=2, prism_seconds=0.0):
-        self.id, self.rounds, self.prism_seconds = id, rounds, prism_seconds
+    def __init__(self, id, rounds=2, prism_seconds=0.0, max_concurrent=None):
+        self.id, self.rounds, self.prism_seconds, self.max_concurrent = id, rounds, prism_seconds, max_concurrent
 
 
 def toy_steps(instance, logger):
@@ -41,7 +42,8 @@ def toy_steps(instance, logger):
     thread that runs each step, and fails on an answer "boom" or a failed task."""
     tasks, answers, threads = TaskFactory(LLM, instance.id), [], {threading.get_ident()}
     for r in range(1, instance.rounds + 1):
-        out = yield py(f"import time; time.sleep({instance.prism_seconds}); print('{instance.id}:{r}')")
+        out = yield py(f"import time; time.sleep({instance.prism_seconds}); print('{instance.id}:{r}')",
+                       max_concurrent=instance.max_concurrent)
         threads.add(threading.get_ident())
         result = yield tasks.make(f"{instance.id} round {r} after {out.strip()}", None, round=r)
         threads.add(threading.get_ident())
@@ -98,6 +100,72 @@ def test_a_timeout_is_thrown_into_the_instance(kind):
         return {"success": True, "iterations": []}
     results = kind(steps, FakeBackend(echo), 1, lambda i: LOG).run([Toy("t")])
     assert results["t"]["timed_out"]
+
+
+# ---------------------------------------------------------------- machine-wide slots (`prism.max_concurrent`)
+
+SLEEP = "import time; time.sleep(30)"
+
+
+def test_with_two_slots_a_third_process_waits_for_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(core.prism, "SLOT_DIR", tmp_path)
+    first, second, third = (PrismProcess(py(SLEEP, max_concurrent=2)) for _ in range(3))
+    try:
+        assert first._proc and second._proc and third._proc is None
+        assert not third.done() and third._proc is None
+        first.kill()
+        assert not third.done() and third._proc is not None   # it took the freed slot and runs
+    finally:
+        for process in (first, second, third):
+            process.kill()
+
+
+def test_with_two_slots_taken_a_call_in_place_waits(tmp_path, monkeypatch):
+    monkeypatch.setattr(core.prism, "SLOT_DIR", tmp_path)
+    held = [Slot.take(2), Slot.take(2)]
+    assert all(held) and Slot.take(2) is None
+    out = []
+    thread = threading.Thread(target=lambda: out.append(run_call(py("print('ran')", max_concurrent=2))))
+    thread.start()
+    thread.join(1.0)
+    assert thread.is_alive() and not out
+    held[0].release()
+    thread.join(10)
+    assert out == ["ran\n"]
+    held[1].release()
+
+
+def test_a_killed_holder_frees_its_slot(tmp_path, monkeypatch):
+    monkeypatch.setattr(core.prism, "SLOT_DIR", tmp_path)
+    src = str(Path(core.prism.__file__).resolve().parents[1])
+    holder = subprocess.Popen([sys.executable, "-c", (
+        f"import sys, time; sys.path.insert(0, {src!r}); import core.prism as p; from pathlib import Path; "
+        f"p.SLOT_DIR = Path({str(tmp_path)!r}); s = p.Slot.take(1); print('held' if s else 'none', flush=True); "
+        f"time.sleep(60)")], stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        assert Slot.take(1) is None
+    finally:
+        holder.kill()
+        holder.wait()
+        holder.stdout.close()
+    deadline, slot = time.monotonic() + 10, None
+    while slot is None and time.monotonic() < deadline:
+        slot = Slot.take(1)
+        time.sleep(0.05)
+    assert slot is not None
+    slot.release()
+
+
+@pytest.mark.parametrize("kind", SCHEDULERS)
+def test_schedulers_queue_prism_calls_beyond_the_cap(kind, tmp_path, monkeypatch):
+    """With one slot, the instances' PRISM calls run one after another while the loop keeps going."""
+    monkeypatch.setattr(core.prism, "SLOT_DIR", tmp_path)
+    instances = [Toy(f"i{k}", rounds=1, prism_seconds=0.5, max_concurrent=1) for k in range(3)]
+    start = time.monotonic()
+    results = solve_with(kind, instances, FakeBackend(echo), slots=3)
+    assert time.monotonic() - start > 1.4
+    assert all(results[inst.id]["answers"] == expected(inst) for inst in instances)
 
 
 # ---------------------------------------------------------------- the same answers as one at a time

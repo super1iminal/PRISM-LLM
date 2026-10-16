@@ -111,6 +111,7 @@ class PrismConfig:
     exact_epsilon: str                        # interval iteration's precision (passed to PRISM as written)
     exact_fallback_epsilon: str               # Gauss-Seidel's, where interval iteration does not converge
     exact_max_iters: int
+    max_concurrent: Optional[int]            # PRISM processes at once on the whole machine (lock-file slots); null: no cap
 
 
 @dataclass
@@ -122,6 +123,10 @@ class RulesConfig:
     any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
                                     # on the members each round; declared: always the declared action order;
                                     # report: keep `any`, tell the LLM the best order (none: worst case over them)
+    any_scorer: str                 # prism | domain: what scores the orders (domain: the domain's fast model; PRISM
+                                    # then verifies only the chosen order, which can choose another order on ties)
+    any_prune: bool                 # the domain's fast model rules out orders that cannot score best, PRISM verifies
+                                    # the rest: the same choice (run store ignores it)
 
 
 @dataclass
@@ -274,6 +279,7 @@ def validate(cfg: Config) -> None:
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),
+        "rules.any_scorer": (cfg.rules.any_scorer, {"prism", "domain"}),
         "llm.backend": (cfg.llm.backend, set(BACKENDS)),
         "run.scheduler": (cfg.run.scheduler, {"threads", *SCHEDULERS}),
     }
@@ -287,6 +293,9 @@ def validate(cfg: Config) -> None:
         value = getattr(cfg.llm.openrouter, key)
         if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
             raise ValueError(f"llm.openrouter.{key}={value!r} must be a list of names, e.g. [deepinfra]")
+    limit = cfg.prism.max_concurrent
+    if limit is not None and not (isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1):
+        raise ValueError(f"prism.max_concurrent={limit!r} must be a number of processes (>= 1) or null")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
