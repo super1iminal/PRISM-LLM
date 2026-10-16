@@ -279,10 +279,10 @@ class SymbolicPlanner:
     def _final(self, ep: Episode, kept: Kept, optima: List[Dict[str, float]], optimum_seconds: float,
                iterations: List[Dict[str, Any]]) -> Steps[Dict[str, Any]]:
         """The result: the kept rules, re-verified exactly (`prism.exact_check`; else the loop's values), and
-        every round's record."""
+        every round's record. With `planner.pick: candidates` only the picked list is re-verified (pick_candidates)."""
         members = ep.members
         finals, checks, check_start = list(kept.check.vs), ["off"] * len(members), time()
-        if self.config.prism.exact_check:
+        if self.config.prism.exact_check and self.config.planner.pick != "candidates":
             for i, (m, policy) in enumerate(zip(members, kept.check.policies)):
                 exact, solver = yield from m.verifier.verify_exact_steps(policy)
                 finals[i], checks[i] = (exact, solver) if exact else (kept.check.vs[i], "failed")
@@ -448,7 +448,8 @@ class SymbolicPlanner:
             # repair's control from the same chains: the pick among the candidates without repair
             alt = choose(plain)
             result["pick"]["norepair"] = {"chosen": plain.index(alt), "candidates": plain,
-                                          **verified([tuple(r) for r in alt["rules"]])}
+                                          **(values if alt["rules"] == chosen["rules"]
+                                             else verified([tuple(r) for r in alt["rules"]]))}
             log(f"{target.id}: without repair, candidate {plain.index(alt) + 1} (from chain {alt['from'][0]} round "
                 f"{alt['from'][1]}), exact worst {result['pick']['norepair']['final_worst']}")
         return result
