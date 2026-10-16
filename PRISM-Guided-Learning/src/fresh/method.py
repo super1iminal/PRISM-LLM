@@ -225,6 +225,17 @@ def chain(fam: str, members: List[Member], position: bool, rounds: int, log: Pat
     return attempts
 
 
+def size(rules) -> int:
+    """Names and numbers in the conditions: the tie-break between lists with equal training margins."""
+    return sum(len(re.findall(r"[A-Za-z_]\w*|\d+", c)) for c, _ in rules)
+
+
+def selection_key(f: Dict) -> Tuple:
+    """Certified on the most training members (deterministic, then with `any`), then the largest smallest margin
+    (with `any`, then deterministic), then the simplest list."""
+    return (f["det_score"][0], f["score"][0], round(f["score"][2], 9), round(f["det_score"][2], 9), -size(f["rules"]))
+
+
 def determinize(rules, members: List[Member]):
     """Resolve every `any` by one global action order (the first allowed action in the order is taken): the order
     whose deterministic list does best on the training members. A list certified with `any` stays certified under
@@ -263,7 +274,7 @@ def finalize(members: List[Member], attempts: List[Dict], top: int, steps: int) 
         finals.append({"from": [a["chain"], a["round"]], "llm_score": a["score"], "rules": rules,
                        "score": score(results), "worst": [r.worst for r in results],
                        "det_rules": det, "det_order": order, "det_score": det_score})
-    finals.sort(key=lambda f: (f["det_score"][0], f["score"][0], f["score"][2], f["det_score"][2]), reverse=True)
+    finals.sort(key=selection_key, reverse=True)
     return (finals[0] if finals else None), finals
 
 

@@ -66,5 +66,26 @@ def main():
         print(df.head())
 
 
+
+PACMAN_CONFIG = {"approach": "symbolic", "domain": {"name": "pacman", "dataset": "pacman_transfer.csv"},
+                 "rules": {"extended": True, "general": True}}
+
+
+def write_pacman_run(run: Path, rules):
+    """One Pac-Man list trained on ids 3, 4, 5 (horizons 14, 16, 18); certify with --targets 0-7,9 --workers 1."""
+    (run / "outputs").mkdir(parents=True, exist_ok=True)
+    (run / "config.json").write_text(json.dumps(PACMAN_CONFIG, indent=1), encoding="utf-8")
+    sample = {"final_rules": [{"condition": c, "action": a} for c, a in rules],
+              "members": [{"instance": m} for m in ("3", "4", "5")]}
+    (run / "outputs" / "sample_000.json").write_text(json.dumps(sample, indent=1), encoding="utf-8")
+
+
+def certify_pacman(run: Path):
+    cmd = [str(MAIN.parent / ".venv" / "Scripts" / "python"), "src/transfer.py", str(run.resolve()),
+           "--targets", "0-7,9", "--workers", "1"]
+    env = {**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    return subprocess.run(cmd, cwd=MAIN, env=env).returncode
+
+
 if __name__ == "__main__":
     main()

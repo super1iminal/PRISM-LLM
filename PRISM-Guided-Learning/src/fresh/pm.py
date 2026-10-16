@@ -164,3 +164,13 @@ def load(ids: Sequence[int]) -> List[PacInstance]:
 
 
 TRAIN = [3, 4, 5]
+
+
+def uniform_regret(p: PacInstance, rules, opt: Optional[np.ndarray] = None) -> float:
+    """Mean, over every decision state of the model, of how much more often the rules crash from there (worst
+    case) than the best controller would: 0 for a list that is optimal from every state, not just the start."""
+    if opt is None:
+        opt = p.values(np.ones(len(p.ch_state), bool), maximize=False)
+    allowed, _ = p.allowed(rules)
+    v = p.values(p.choice_mask(allowed))
+    return float((v - opt)[p.decision].mean())

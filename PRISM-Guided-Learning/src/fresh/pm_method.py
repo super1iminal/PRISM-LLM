@@ -18,7 +18,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.rules import RuleError, fixed_order  # noqa: E402
 from fresh import llm  # noqa: E402
-from fresh.pm import ACTIONS, CROSSINGS, DIRECTIONS, GHOST_START, ROWS, START, TRAIN, PacInstance, load  # noqa: E402
+from fresh.pm import (ACTIONS, CROSSINGS, DIRECTIONS, GHOST_START, ROWS, START, TRAIN, PacInstance,  # noqa: E402
+                      load, uniform_regret)
 
 THRESHOLD = 0.56
 HEADING = {0: "right", 1: "up", 2: "left", 3: "down"}
@@ -104,6 +105,26 @@ state, the rule that decided, and the crash probability after each direction (if
 Give the complete revised list as JSON: {{"rules": [{{"condition": "...", "action": "..."}}, ...]}}"""
 
 
+def uniform_prompt(rules, insts, history: str) -> str:
+    listing = "\n".join(f'{i}. {{"condition": {json.dumps(c)}, "action": {json.dumps(a)}}}'
+                        for i, (c, a) in enumerate(rules, start=1))
+    reports = "\n".join(regret_report(p, rules) for p in insts)
+    return PROBLEM + f"""
+
+## Your current list
+{listing}
+
+It meets the requirement in every training game (crash probability 0.551 from the start, the best possible).
+Longer games give the ghosts more time, so the list must also evade well from every situation, not only from the
+start. Below, for each training game, are the situations where the rules crash most often compared with the best
+possible controller (from any configuration of Pac-Man and the ghosts):
+{reports}
+{history}
+Revise the list so that it evades well in these situations too, without losing the result from the start (keep
+the rules general: no particular cells). Give the complete revised list as JSON:
+{{"rules": [{{"condition": "...", "action": "..."}}, ...]}}"""
+
+
 # ------------------------------------------------------------------ evaluation and feedback
 
 def evaluate(rules, insts: List[PacInstance]) -> List[float]:
@@ -175,6 +196,53 @@ def report(rules, insts: List[PacInstance], crash: List[float]) -> str:
     return "\n".join(out)
 
 
+OPT: Dict[int, np.ndarray] = {}
+
+
+def optimum_values(p: PacInstance) -> np.ndarray:
+    if p.H not in OPT:
+        OPT[p.H] = p.values(np.ones(len(p.ch_state), bool), maximize=False)
+    return OPT[p.H]
+
+
+def regret_report(p: PacInstance, rules, top: int = 5) -> str:
+    """States of the model (any configuration, not only those the start leads to) where the rules crash most
+    often compared with the best controller: what makes a list hold up in longer or shorter games."""
+    opt = optimum_values(p)
+    allowed, decider = p.allowed(rules)
+    v = p.values(p.choice_mask(allowed))
+    q = np.zeros(len(p.ch_state))
+    np.add.at(q, p.tr_choice, p.tr_prob * v[p.tr_target])
+    pol = p.ch_action >= 0
+    qa = np.full((p.S, 4), np.nan)
+    qa[p.ch_state[pol], p.ch_action[pol]] = q[pol]
+    regret = np.where(p.decision, v - opt, 0.0)
+    lines, seen = [f"### {p.H}-move game: average excess crash probability over all decision situations "
+                   f"{regret[p.decision].mean():.4f}"], set()
+    for s in np.argsort(-regret):
+        if len(seen) >= top or regret[s] < 1e-3:
+            break
+        sv = {k: int(p.state_vars[k][s]) for k in ("xP", "yP", "dP", "xG0", "yG0", "dG0", "xG1", "yG1", "dG1",
+                                                    "steps")}
+        key = (sv["xP"], sv["yP"], sv["dP"], int(decider[s]))
+        if key in seen:
+            continue
+        seen.add(key)
+        g = [f"ghost {i} " + (f"at ({sv[f'xG{i}']},{sv[f'yG{i}']}) heading {HEADING[sv[f'dG{i}']]}"
+                              if sv[f"xG{i}"] else "removed") for i in (0, 1)]
+        rule = int(decider[s])
+        who = f"rule {rule + 1} `{rules[rule][0]} -> {rules[rule][1]}`" if rule >= 0 else "NO RULE (uncovered)"
+        acts = ", ".join(f"{a} {qa[s, i]:.3f}" + ("*" if allowed[s, i] else "") for i, a in enumerate(ACTIONS))
+        lines.append(f"    * Pac-Man at ({sv['xP']},{sv['yP']}) heading {HEADING[sv['dP']]}, {g[0]}, {g[1]}, "
+                     f"moves_left {p.H - sv['steps']}: crashes {v[s]:.3f} (best possible {opt[s]:.3f}); decided by "
+                     f"{who}. Crash probability after each direction (* = allowed): {acts}")
+    return "\n".join(lines)
+
+
+def mean_regret(rules, insts) -> float:
+    return float(np.mean([uniform_regret(p, rules, optimum_values(p)) for p in insts]))
+
+
 LITERAL_SUM = re.compile(r"(?<!\w)\d+\s*[-+]\s*\d+(?!\w)")
 
 
@@ -192,6 +260,9 @@ def validate(rules, insts) -> Optional[str]:
     return None
 
 
+UNIFORM = False   # --uniform: after the training games pass, keep revising to lower the regret everywhere
+
+
 def chain(insts, rounds: int, log: Path, tag: str) -> List[Dict]:
     attempts, best, history_lines = [], None, []
     prompt = initial_prompt()
@@ -203,21 +274,30 @@ def chain(insts, rounds: int, log: Path, tag: str) -> List[Dict]:
         if err is None:
             crash = evaluate(rules, insts)
             entry["score"], entry["crash"] = score(crash), crash
+            if UNIFORM and entry["score"][0] == len(insts):
+                entry["regret"] = mean_regret(rules, insts)
+                entry["score"] = entry["score"] + (-round(entry["regret"], 6),)
+            else:
+                entry["score"] = entry["score"] + (-1.0,)
             if best is None or entry["score"] > best["score"]:
                 best = entry
-            history_lines.append(f"- attempt {rnd + 1}: crash " + ", ".join(f"{c:.3f}" for c in crash))
+            history_lines.append(f"- attempt {rnd + 1}: crash " + ", ".join(f"{c:.3f}" for c in crash)
+                                 + (f", average excess {entry['regret']:.4f}" if "regret" in entry else ""))
         else:
             history_lines.append(f"- attempt {rnd + 1}: rejected ({err.splitlines()[0][:200]})")
         attempts.append(entry)
         with open(log / f"{tag}.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({**entry, "prompt": prompt, "answer": text}) + "\n")
-        if best is not None and best["score"][0] == len(insts) and best["score"][2] > 0.002:
+        if not UNIFORM and best is not None and best["score"][0] == len(insts) and best["score"][2] > 0.002:
             break
         if best is None:
             prompt = initial_prompt() + (f"\n\nYour previous answer was rejected:\n{err}\nFix this." if err else "")
             continue
         history = "\n## Your attempts so far\n" + "\n".join(history_lines) + "\n" if len(history_lines) > 1 else ""
-        prompt = revise_prompt(best["rules"], report(best["rules"], insts, best["crash"]), history)
+        if UNIFORM and best["score"][0] == len(insts):
+            prompt = uniform_prompt(best["rules"], insts, history)
+        else:
+            prompt = revise_prompt(best["rules"], report(best["rules"], insts, best["crash"]), history)
     return attempts
 
 
@@ -276,16 +356,33 @@ def repair(rules, insts, steps: int = 25, tries: int = 40, seed: int = 0):
     return cur
 
 
+def size(rules) -> int:
+    """Names and numbers in the conditions: the tie-break between lists with equal training margins."""
+    return sum(len(re.findall(r"[A-Za-z_]\w*|\d+", c)) for c, _ in rules)
+
+
+def selection_key(f: Dict) -> Tuple:
+    """Certified on the most training members (deterministic, then with `any`), then the largest smallest margin
+    (with `any`, then deterministic), then the simplest list."""
+    return (f["det_score"][0], f["score"][0], round(f["score"][2], 9), round(f["det_score"][2], 9),
+            -round(f.get("det_regret", 0.0), 6), -size(f["rules"]))
+
+
 def determinize(rules, insts):
+    """The global action order whose deterministic list does best on the training games (in uniform mode, then
+    with the lowest regret in the longest training game)."""
     if not any(a == "any" for _, a in rules):
         return list(rules), None, score(evaluate(rules, insts))
     best = None
     for order in permutations(ACTIONS):
         det = fixed_order(rules, order)
         sc = score(evaluate(det, insts))
-        if best is None or (sc[0], sc[2]) > (best[2][0], best[2][2]):
-            best = (det, list(order), sc)
-    return best
+        key = (sc[0], sc[2])
+        if UNIFORM and sc[0] == len(insts):
+            key += (-uniform_regret(insts[-1], det, optimum_values(insts[-1])),)
+        if best is None or key > best[3]:
+            best = (det, list(order), sc, key)
+    return best[:3]
 
 
 def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 25):
@@ -313,8 +410,10 @@ def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 2
         finals.append({"from": [a["chain"], a["round"]], "llm_score": a["score"], "rules": rules,
                        "score": score(crash), "crash": crash, "det_rules": det, "det_order": order,
                        "det_score": det_score})
-    finals.sort(key=lambda f: (f["det_score"][0], f["score"][0], f["score"][2], f["det_score"][2]), reverse=True)
-    summary = {"chains": chains, "rounds": rounds, "llm_seconds": round(llm_seconds, 1),
+        if UNIFORM and det_score[0] == len(insts):
+            finals[-1]["det_regret"] = mean_regret(det, insts)
+    finals.sort(key=selection_key, reverse=True)
+    summary = {"chains": chains, "rounds": rounds, "uniform": UNIFORM, "llm_seconds": round(llm_seconds, 1),
                "seconds": round(time.time() - start, 1), "usage": dict(llm.USAGE), "attempts": len(attempts),
                "valid": len(valid), "best": finals[0] if finals else None, "finals": finals}
     (out / "pacman_summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
@@ -327,8 +426,10 @@ if __name__ == "__main__":
     ap.add_argument("--rounds", type=int, default=6)
     ap.add_argument("--top", type=int, default=6)
     ap.add_argument("--repair-steps", type=int, default=25)
+    ap.add_argument("--uniform", action="store_true", help="keep improving the regret over all situations")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    UNIFORM = args.uniform
     s = run(args.chains, args.rounds, Path(args.out), args.top, args.repair_steps)
     print(json.dumps({k: v for k, v in s.items() if k not in ("best", "finals")}, default=str))
     b = s["best"]
