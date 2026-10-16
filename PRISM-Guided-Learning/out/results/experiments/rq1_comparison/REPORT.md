@@ -44,7 +44,7 @@ Targets 16-35,76-95,136-155: 60 held out (each list's own training instances are
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Ours (Haiku 5.5) | **Ours, Haiku 5.5** |  | 5 | 9.67 (5.67–15.00) | 19.20 (9.33–30.67) | 17 (12–19) | 33.8 (24.0–56.0) | 3.07 (0.33–5.67) | 40% (33%–67%) | 0.008 (0.007–0.011) |
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5, family prompt, failure feedback and pick** | ✓ | 2 | 16.83 (14.67–19.00) | 30.67 (29.33–32.00) | 19 (18–20) | 57.5 (56.0–59.0) | 15.83 (13.33–18.33) | 100% | 0.073 (0.072–0.074) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5, family prompt, failure feedback and pick** | ✓ | 3 | 17.44 (14.67–19.00) | 31.00 (29.33–32.00) | 19 (18–20) | 58.3 (56.0–60.0) | 16.33 (13.33–18.33) | 100% | 0.074 (0.072–0.077) |
 | Ours (Sonnet 5.5) | **Ours, Sonnet 5.5** | ✓ | 3 | 14.00 (12.67–15.00) | 32.33 (29.00–36.67) | 19 | 54.3 (45.0–59.0) | 6.56 (5.67–7.33) | 67% | 0.787 (0.663–0.932) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 12.33 | 20.33 | 19 | 43.0 | 12.33 | – | – |
@@ -59,7 +59,7 @@ Per group (certified per rule list on its own group):
 |---|---|---|---|
 | Ours, Haiku 5.5 | 8.4 | 4.6 | 16.0 |
 | Ours, Sonnet 5.5 | 17.7 | 6.7 | 17.7 |
-| Ours, Haiku 5.5, family prompt, failure feedback and pick | 14.0 | 19.0 | 17.5 |
+| Ours, Haiku 5.5, family prompt, failure feedback and pick | 16.0 | 18.3 | 18.0 |
 | 1-2-3-Go! (reimplemented: trees over raw variables) | 0.0 | 0.0 | 0.0 |
 | 1-2-3-Go! with our features | 2.0 | 19.0 | 16.0 |
 | Rule-list search | 10.0 | 7.0 | 1.0 |
