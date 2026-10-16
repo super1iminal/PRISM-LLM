@@ -123,8 +123,9 @@ def run(cfg: Config, run_dir: str) -> str:
 def write_determinized(results: List[Dict[str, Any]], run_dir: str) -> None:
     """`planner.pick: candidates`: <run>/determinized.json (src/determinize.py's format) with each chosen list's `any`
     rules resolved by the order the pick found best on the training members, so that `transfer.py --rules
-    determinized` certifies that variant without determinize.py's PRISM search."""
-    out = {}
+    determinized` certifies that variant without determinize.py's PRISM search. With repair, also <run>/norepair.json:
+    the pick without repair from the same chains (`norepair_entry`; `transfer.py --rules norepair`)."""
+    out, plain = {}, {}
     for sid, result in enumerate(results):
         pick = result.get("pick")
         if not pick:
@@ -133,8 +134,23 @@ def write_determinized(results: List[Dict[str, Any]], run_dir: str) -> None:
         rules, order = [tuple(r) for r in chosen["rules"]], chosen["resolved_order"]
         out[str(sid)] = {"order": order, "rules": [list(r) for r in (fixed_order(rules, order) if order else rules)],
                          "source": "planner.pick"}
+        if pick.get("norepair"):
+            plain[str(sid)] = norepair_entry(pick["norepair"])
     with open(os.path.join(run_dir, "determinized.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1)
+    if plain:
+        with open(os.path.join(run_dir, "norepair.json"), "w", encoding="utf-8") as f:
+            json.dump(plain, f, indent=1)
+
+
+def norepair_entry(norepair: Dict[str, Any]) -> Dict[str, Any]:
+    """norepair.json's entry for a pick's `norepair`: the list as chosen (`rules`, `any` open), with `any` resolved by
+    its best order on the members (`determinized`), and its exact values on the members."""
+    alt = norepair["candidates"][norepair["chosen"]]
+    rules, order = [tuple(r) for r in alt["rules"]], alt["resolved_order"]
+    return {"from": alt["from"], "order": order, "rules": [list(r) for r in rules],
+            "determinized": [list(r) for r in (fixed_order(rules, order) if order else rules)],
+            "success": norepair["success"], "final_worst": norepair["final_worst"], "source": "planner.pick"}
 
 
 def solve_threaded(planner: SymbolicPlanner, instances: List[Instance], workers: int,
