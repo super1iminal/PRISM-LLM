@@ -35,6 +35,25 @@ class PacMan(Domain):
         """Mass-analysis horizon: three transitions (Pac-Man, ghost 0, ghost 1) per Pac-Man move."""
         return 3 * instance.data["max_steps"] + 3
 
+    def strict(self, instance: Instance) -> Dict[str, Any]:
+        """`rules.strict`: number literals may not be added, so conditions cannot name particular cells."""
+        return {"hide": [], "literal_sums": False,
+                "note": "Number literals may not be added or subtracted (no `1 + 1`): the rules cannot name particular "
+                        "cells, so compare positions with each other (e.g. `xG0 < xP`, `yG1 = yP`) and use the "
+                        "features."}
+
+    def fast_checker(self, instance: Instance, config, vocabulary):
+        """The explicit model's numpy checker (baselines/explicit_mdp.RuleChecker)."""
+        from baselines.explicit_mdp import RuleChecker
+        return RuleChecker(self, instance, config, vocabulary)
+
+    def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
+        """The default and comparisons of Pac-Man's position with the ghosts', headings and removed ghosts."""
+        return super().repair_literals(instance, vocabulary) + [
+            f"{a} {op} {b}" for a, b in (("xG0", "xP"), ("yG0", "yP"), ("xG1", "xP"), ("yG1", "yP"))
+            for op in ("<", ">", "=")] + ["dP = 0", "dP = 1", "dP > 1", "dP < 1", "xG0 = 0", "xG1 = 0", "xG0 != 0",
+                                          "xG1 != 0"]
+
     def optimal_strategy(self, instance: Instance, config):
         """The crash requirement's optimal actions on the explicit model, what 1-2-3-Go!'s trees learn from."""
         from baselines.explicit_mdp import optimal_strategy

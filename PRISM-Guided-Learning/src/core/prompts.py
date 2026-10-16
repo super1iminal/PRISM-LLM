@@ -4,10 +4,13 @@ this module only builds them.
 """
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+import numpy as np
+
 from config import Config
 from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
-from core.episode import Episode, Kept, Member
+from core.episode import Episode, Kept, Member, margin
+from core.failures import action_lines, allowed_here, choice_label, failure_states, lost_sets
 from core.optimal import Strategy, at, demonstration, deviations
 from core.rules import SymbolicPolicy, Vocabulary, feature_values
 from core.verifier import Verification
@@ -25,21 +28,35 @@ class Prompts:
         self._feature_values: Dict[int, Callable] = {}   # id(member) -> its `feature_values` function
         self._strategies: Dict[int, Strategy] = {}       # id(member) -> its optimal strategy (core/optimal.py)
         self._demos: Dict[int, Dict[str, Any]] = {}      # id(member) -> the demonstration on it
+        self._lost: Dict[int, Any] = {}                   # id(member) -> its lost sets (core/failures.py)
 
     # ---------------------------------------------------------------- context
+
+    def strict(self, instances: Sequence[Instance]) -> Optional[Dict[str, Any]]:
+        """With `rules.strict`, what conditions may not name on any of `instances` (`Domain.strict`); else None."""
+        if not self.config.rules.strict:
+            return None
+        parts = [self.domain.strict(i) for i in instances]
+        return {"hide": set().union(*(p["hide"] for p in parts)), "literal_sums": all(p["literal_sums"] for p in parts),
+                "note": parts[0]["note"]}
 
     def context(self, instance: Instance, spec: Spec, vocabulary: Vocabulary) -> Dict[str, Any]:
         """The context every template of one instance shares: the problem, the vocabulary, the prompt options."""
         prompt = self.config.prompt
+        strict = self.strict([instance])
+        hide = strict["hide"] if strict else set()
         return {
             "description": self.domain.description(instance),
             "visual": self.domain.visual(instance),
             "examples": self.domain.examples(instance, extended=vocabulary.allow_any) if prompt.examples else "",
             "catch_all_instruction": prompt.catch_all_instruction,
-            "variables": spec.variables,
+            "variables": [v for v in spec.variables if v.name not in hide],
             "actions": spec.actions,
             "requirements": spec.requirements,
-            "constants": vocabulary.constants,
+            "constants": [c for c in vocabulary.constants if c.name not in hide],
+            **({"strict_note": strict["note"]} if strict and strict["note"] else {}),
+            **({"worst_case": True, "worst_case_notes": self.domain.worst_case_notes(instance)}
+               if prompt.worst_case else {}),
             "features": vocabulary.features,
             "any_action": vocabulary.allow_any,
             "general": vocabulary.general,
@@ -53,20 +70,24 @@ class Prompts:
                if prompt.strategy_first else {}),
         }
 
-    @staticmethod
-    def training_context(members: List[Member]) -> Dict[str, Any]:
+    def training_context(self, members: List[Member]) -> Dict[str, Any]:
         """How the prompt describes a training set: every member, and every variable, with each member's range
-        or description where they differ."""
+        or description where they differ (with `rules.strict`, without the names conditions may not use)."""
         def per_member(values: List[str]) -> str:
             return values[0] if len(set(values)) == 1 else "; ".join(
                 f"{v} on {m.label}" for m, v in zip(members, values))
+        strict = self.strict([m.instance for m in members])
+        hide = strict["hide"] if strict else set()
         variables = []
         for i, var in enumerate(members[0].verifier.spec.variables):
+            if var.name in hide:
+                continue
             versions = [m.verifier.spec.variables[i] for m in members]
             variables.append({"name": var.name, "type": per_member([v.describe_type() for v in versions]),
                               "description": per_member([v.description or "" for v in versions])})
         return {"members": [{"label": m.label.capitalize(), "description": m.context["description"],
-                             "visual": m.context["visual"], "constants": m.vocabulary.constants} for m in members],
+                             "visual": m.context["visual"],
+                             "constants": [c for c in m.vocabulary.constants if c.name not in hide]} for m in members],
                 "variables": variables}
 
     @staticmethod
@@ -247,6 +268,82 @@ class Prompts:
                 "features": self._situation(member, st.valuation) if plain else "",
                 "actions": "any action" if len(st.actions) == every else " or ".join(st.actions)} for st in steps]}
         return self._demos[id(member)]
+
+    # ---------------------------------------------------------------- planner.feedback: failures
+
+    def revise(self, ep: Episode, kept: Kept, iterations: List[Dict[str, Any]]) -> str:
+        """The complete list revised from every shown member's exact worst-case result and where it fails
+        (core/failures.py), with the attempt history."""
+        shown = [(m, p, v) for m, p, v in zip(ep.members, kept.check.policies, kept.check.vs) if not m.hidden]
+        report = "\n".join(self._member_report(m, p, v, len(shown) > 1) for m, p, v in shown)
+        holds = all(not failing(m.requirements, v.worst) for m, _, v in shown)
+        return self.render(ep, "revise.md.j2", ep.primary, rules_listing=kept.check.policy.listing(), report=report,
+                           history=self._history(ep, iterations), all_hold=holds,
+                           done_margin=self.config.planner.done_margin)
+
+    def _lost_sets(self, member: Member):
+        if id(member) not in self._lost:
+            self._lost[id(member)] = lost_sets(member.verifier)
+        return self._lost[id(member)]
+
+    def _member_report(self, m: Member, policy: SymbolicPolicy, v: Verification, several: bool, top_reqs: int = 3,
+                       per_req: int = 2) -> str:
+        """One member's part of the revise prompt: certified with its smallest margin, or the failing requirements
+        (the `top_reqs` worst) with the `per_req` states where the worst-case run fails or stalls."""
+        reqs, label = m.requirements, (m.label.capitalize() if several else "This instance")
+        fails = sorted(failing(reqs, v.worst), key=lambda r: r.margin(v.worst[r.name]))
+        if not fails:
+            return f"### {label}: every requirement holds (smallest margin {margin(v.worst, reqs):+.3f})."
+        lines = [f"### {label}: FAILS {', '.join(r.name for r in fails)}"
+                 + (f"; {v.uncovered_situations} reachable situations are uncovered" if v.uncovered_situations else "")]
+        lost, index = self._lost_sets(m)
+        where = np.array([index.get(s, -1) for s in v.result.states])
+        rules, actions = policy.rules, list(m.verifier.spec.actions)
+        names = [f.name for f in m.vocabulary.features if f.is_action_feature]
+        seen = set()
+        for r in fails[:top_reqs]:
+            lines.append(f"- `{r.name}` = {v.worst[r.name]:.3f} (needs {'>=' if r.maximize else '<='} {r.threshold}).")
+            if r.name not in lost:
+                continue
+            here = np.where(where >= 0, lost[r.name][np.maximum(where, 0)], False)
+            for fs in failure_states(v, r, here, m.analyzer.horizon, per_req):
+                state = self._state(m, m.verifier.policy_valuation(v.result, fs.state))
+                if (fs.state, fs.kind) in seen:
+                    lines.append(f"    * the same state as above: {state} ({fs.mass:.3f} of runs)")
+                    continue
+                seen.add((fs.state, fs.kind))
+                j = v.state_rules[fs.state]
+                who = (f"rule {j + 1} `{rules[j].condition} -> {rules[j].action}`" if j is not None and j < len(rules)
+                       else "NO RULE (uncovered: the worst case may take any action)")
+                verb = "fail from here" if fs.kind == "fails" else "are still stuck here at the end"
+                took = choice_label(v, fs.state, fs.choice)
+                lines.append(f"    * {fs.mass:.3f} of runs {verb}: {state}; decided by {who}; allowed "
+                             f"{', '.join(allowed_here(m.verifier, v, fs.state)) or 'none'}; the worst case takes "
+                             f"{took if took in actions else 'a move the policy does not choose'}.")
+                effects: Dict[str, List[str]] = {}
+                for a, text in action_lines(m.verifier, v, fs.state, lost, index, self._values(m), names):
+                    effects.setdefault(text, []).append(a)
+                lines.append("      actions here: " + "; ".join(f"{', '.join(acts)}: {text}"
+                                                                for text, acts in effects.items()))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _history(ep: Episode, iterations: List[Dict[str, Any]]) -> str:
+        """One line per earlier attempt of this loop: how many shown members it passes and its total shortfall, or why
+        it was rejected; '' after a single attempt."""
+        reqs = {m.instance.id: m.requirements for m in ep.members}
+        lines = []
+        for it in iterations:
+            if it["invalid_answers"] and len(it["invalid_answers"]) >= it["llm_calls"]:
+                lines.append(f"- attempt {it['iteration']}: rejected ({it['invalid_answers'][-1].splitlines()[0][:200]})")
+                continue
+            rows = [r for r in it.get("members", []) if not r.get("hidden")] or [
+                {"instance": ep.primary.instance.id, "worst": it["worst"]}]
+            passed = sum(not failing(reqs[r["instance"]], r["worst"]) for r in rows)
+            short = sum(q.shortfall(r["worst"][q.name]) for r in rows for q in reqs[r["instance"]])
+            lines.append(f"- attempt {it['iteration']}: every requirement holds on {passed} of {len(rows)} "
+                         f"instance{'s' if len(rows) != 1 else ''}, total shortfall {short:.3f}")
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     def table(self, ep: Episode, member: Member, results: Dict[str, Any]) -> str:
         """Results table and previous rules only, asking for a complete new list (`planner.feedback: table`)."""

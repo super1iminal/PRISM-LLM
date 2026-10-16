@@ -33,6 +33,24 @@ class Mer(Domain):
         d.update({"resources": RESOURCES, **rule_vocabulary(d["n"], d["x"], self.root)})
         return d
 
+    def strict(self, instance: Instance) -> Dict[str, Any]:
+        """`rules.strict`: number literals may not be added; the named codes say the values."""
+        return {"hide": [], "literal_sums": False,
+                "note": "Number literals may not be added or subtracted (no `1 + 1`): use the named codes."}
+
+    def fast_checker(self, instance: Instance, config, vocabulary):
+        """The explicit model's numpy checker (baselines/explicit_mdp.RuleChecker)."""
+        from baselines.explicit_mdp import RuleChecker
+        return RuleChecker(self, instance, config, vocabulary)
+
+    def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
+        """The default and the arbiter's and users' states by their codes."""
+        return super().repair_literals(instance, vocabulary) + [
+            "shortcuts_left = 0", "shortcuts_left > 0", "s = 0", "s = USER1", "s = USER2", "s = -1", "r = 0",
+            "r != 0", "commUser = 0", "commUser != 0", "driveUser = 0", "driveUser != 0", "e = 0", "e = COMM",
+            "e = DRIVE"] + [f"s{i} = {c}" for i in (1, 2) for c in ("IDLE", "READY", "WAITING", "HOLDING", "MUST_CANCEL")] \
+            + [f"r{i} = {c}" for i in (1, 2) for c in ("0", "COMM", "DRIVE")]
+
     def optimal_strategy(self, instance: Instance, config):
         """The err requirement's optimal actions on the explicit model, what 1-2-3-Go!'s trees learn from."""
         from baselines.explicit_mdp import optimal_strategy

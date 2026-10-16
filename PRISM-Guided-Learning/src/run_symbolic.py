@@ -100,7 +100,11 @@ def run(cfg: Config, run_dir: str) -> str:
     finally:
         backend.close()
 
-    if cfg.planner.chains > 1:
+    if cfg.planner.pick == "candidates":
+        # every round of every chain competes; repaired and checked on the members (core/pick.py)
+        results = {inst.id: planner.pick_candidates(inst, [results[c.id] for c in chains(inst, cfg.planner.chains)],
+                                                    main_logger.info) for inst in instances}
+    elif cfg.planner.chains > 1:
         results = {inst.id: planner.select_chain(inst, [results[c.id] for c in chains(inst, cfg.planner.chains)])
                    for inst in instances}
         for inst in instances:

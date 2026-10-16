@@ -25,6 +25,7 @@ the result. `solve` runs them one at a time with a backend (core/backends) and P
 core/scheduler.py run many instances' tasks and PRISM processes at once from one thread. What the loop
 works with is in core/episode.py; the prompts it sends are built by core/prompts.py.
 """
+import re
 import zlib
 from time import time
 from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple, TypeVar, Union
@@ -46,6 +47,7 @@ from core.training import TrainingSet
 from core.verifier import PolicyVerifier, Verification
 
 T = TypeVar("T")
+LITERAL_SUM = re.compile(r"(?<!\w)\d+\s*[-+]\s*\d+(?!\w)")    # `1 + 1`: rejected with `rules.strict` where the domain says
 # Yields LLM tasks and PRISM calls, is sent their results (an LLMResult, PRISM's output), returns T.
 Steps = Generator[Union[LLMTask, PrismCall], Union[LLMResult, str], T]
 
@@ -165,7 +167,21 @@ class SymbolicPlanner:
         self.prompts = Prompts(domain, config)
 
     def _parse(self, ep: Episode, raw: List[Tuple[str, str]]) -> List[SymbolicPolicy]:
-        """The rules parsed for each member. In a training set, an error names the member it occurred on."""
+        """The rules parsed for each member. In a training set, an error names the member it occurred on. With
+        `rules.strict`, conditions that name what the domain withholds are an error (`Domain.strict`)."""
+        strict = self.prompts.strict([m.instance for m in ep.members])
+        if strict:
+            errors = []
+            for i, (condition, action) in enumerate(raw, start=1):
+                names = sorted(set(re.findall(r"[A-Za-z_]\w*", condition)) & strict["hide"])
+                if names:
+                    errors.append(f"rule {i} ({condition} -> {action}): uses {', '.join(names)}, which conditions may "
+                                  f"not name")
+                if not strict["literal_sums"] and LITERAL_SUM.search(condition):
+                    errors.append(f"rule {i} ({condition} -> {action}): adds or subtracts number literals (such as "
+                                  f"`1 + 1`), which is not allowed")
+            if errors:
+                raise RuleError("\n".join(errors))
         policies = []
         for m in ep.members:
             try:
@@ -241,7 +257,7 @@ class SymbolicPlanner:
             record = _record(attempt, mode, prompt, check, members, improved=improved, gain=gain, answer=answer)
             iterations.append(record)
 
-            done = kept.check.passes(members)
+            done = kept.check.passes(members) and self._robust(kept, members)
             if done and ep.pool:
                 grown = yield from self._counterexample(ep, kept, optima)
                 if grown is not None:
@@ -253,7 +269,7 @@ class SymbolicPlanner:
                 if self.retry.restart(attempt + 1, stall, gain):
                     mode, prompt, stall = "initial", self.prompts.initial(ep), 0
                 else:
-                    mode, prompt = yield from self._feedback(ep, kept, record)
+                    mode, prompt = yield from self._feedback(ep, kept, record, iterations)
             record["iteration_time"] = time() - iter_start
             if done:
                 break
@@ -321,6 +337,95 @@ class SymbolicPlanner:
                     **({"error": r["error"]} if r.get("error") else {})} for k, (r, m) in enumerate(zip(results, margins))]
         return {**results[best], "iterations": rounds, "chain": best, "chains": summary, "instance": target.id,
                 "total_time": sum(r.get("total_time", 0.0) for r in results)}
+
+    def pick_candidates(self, target: TrainingSet, results: List[Dict[str, Any]], log: Callable[[str], None] = print
+                        ) -> Dict[str, Any]:
+        """`planner.pick: candidates` (core/pick.py): the final list of `target` from every round of its chains'
+        `results`, repaired (`planner.repair`) and compared with the domain's fast checker (PRISM where there is none,
+        then without repair or resolved scores), then re-verified exactly on every member. The result is
+        `select_chain`'s with the chosen list and its values, and what the pick did (`pick`)."""
+        from core.pick import candidates, choose, evaluator, repair, resolved, score
+        cfg = self.config
+        base = self.select_chain(target, results)
+        members = list(target.members)
+        specs = [self.domain.spec(i) for i in members]
+        vocabs = [s.vocabulary(cfg.rules) for s in specs]
+        reqs = {i.id: s.requirements for i, s in zip(members, specs)}
+        req_lists = [s.requirements for s in specs]
+        found = candidates(results, reqs, cfg.planner.pick_top)
+        if not found:
+            log(f"{target.id}: no valid candidate; keeping chain {base['chain']}")
+            return base
+        checkers = [self.domain.fast_checker(i, cfg, v) for i, v in zip(members, vocabs)]
+        fast = all(c is not None for c in checkers)
+        verifiers = [PolicyVerifier(self.domain, i, cfg, self.runner) for i in members]
+        if fast:
+            evaluate = evaluator(checkers)
+        else:
+            def evaluate(rules):
+                try:
+                    return [vf.verify(s.policy(rules, v), analysis=False).worst
+                            for vf, s, v in zip(verifiers, specs, vocabs)]
+                except (RuleError, PrismError):
+                    return None
+            log(f"{target.id}: the {self.domain.name} domain has no fast checker: no repair, no resolved scores")
+        strict = self.prompts.strict(members)
+        actions = list(specs[0].actions)
+
+        def valid(rules) -> bool:
+            """`rules.strict`: repair may not bring in what conditions may not name."""
+            if not strict:
+                return True
+            names = set().union(*(re.findall(r"[A-Za-z_]\w*", c) for c, _ in rules))
+            return not (names & strict["hide"]) and (strict["literal_sums"] or
+                                                     not any(LITERAL_SUM.search(c) for c, _ in rules))
+        literals = self.domain.repair_literals(members[0], vocabs[0])
+        finals = []
+        for k, cand in enumerate(found):
+            rules = cand["rules"]
+            if cfg.planner.repair and fast:
+                rules = repair(rules, evaluate, req_lists, literals, actions, cfg.planner.repair,
+                               cfg.planner.repair_tries, seed=k, valid=valid)
+            values = evaluate(rules)
+            if values is None:
+                continue
+            res_score, order = resolved(rules, evaluate, req_lists, actions) if fast else (None, None)
+            finals.append({"rules": [list(r) for r in rules], "from": [cand["chain"], cand["iteration"]],
+                           "loop_score": list(cand["score"]), "final_score": score(values, req_lists),
+                           "resolved_score": res_score, "resolved_order": list(order) if order else None,
+                           "repaired": [tuple(r) for r in rules] != [tuple(r) for r in cand["rules"]]})
+            log(f"{target.id}: candidate {k + 1} from chain {cand['chain']} round {cand['iteration']}: loop "
+                f"{cand['score']}, {'repaired ' if finals[-1]['repaired'] else ''}{finals[-1]['final_score']}, "
+                f"resolved {res_score} {order or ''}")
+        if not finals:
+            return base
+        chosen = choose(finals)
+        rules = [tuple(r) for r in chosen["rules"]]
+        exact, checks = [], []
+        for vf, s, v in zip(verifiers, specs, vocabs):
+            policy = s.policy(rules, v)
+            ex, solver = vf.verify_exact(policy) if cfg.prism.exact_check else (None, None)
+            if ex is None:
+                ex, solver = vf.verify(policy, analysis=False), ("off" if not cfg.prism.exact_check else "failed")
+            exact.append(ex)
+            checks.append(solver)
+        reqs0 = specs[0].requirements
+        result = dict(base)
+        result.update({
+            "success": all(not failing(s.requirements, e.worst) for s, e in zip(specs, exact)),
+            "best_case_success": all(not failing(s.requirements, e.best) for s, e in zip(specs, exact)),
+            "final_best": pessimistic([e.best for e in exact], reqs0),
+            "final_worst": pessimistic([e.worst for e in exact], reqs0),
+            "final_check": ", ".join(dict.fromkeys(checks)),
+            "final_rules": [{"condition": c, "action": a} for c, a in rules],
+            "members": [{**(next((m for m in base.get("members", []) if m["instance"] == i.id), {"instance": i.id})),
+                         "success": not failing(s.requirements, e.worst), "final_best": dict(e.best),
+                         "final_worst": dict(e.worst)} for i, s, e in zip(members, specs, exact)],
+            "pick": {"chosen": finals.index(chosen), "candidates": finals},
+        })
+        log(f"{target.id}: picked candidate {finals.index(chosen) + 1} (from chain {chosen['from'][0]} round "
+            f"{chosen['from'][1]}), exact worst {result['final_worst']}")
+        return result
 
     def _episode(self, target: Union[Instance, TrainingSet], log: Callable[[str], None]) -> Episode:
         cfg = self.config
@@ -501,8 +606,17 @@ class SymbolicPlanner:
 
     # ---------------------------------------------------------------- feedback
 
-    def _feedback(self, ep: Episode, kept: Kept, record: Dict[str, Any]) -> Steps[Tuple[str, str]]:
-        """Mode and prompt of the next round, from the kept rule set's results on the member that fails worst."""
+    def _robust(self, kept: Kept, members: List[Member]) -> bool:
+        """`planner.done_margin`: whether every member passes by more than it (always, at 0)."""
+        target = self.config.planner.done_margin
+        return target <= 0 or min(margin(v.worst, m.requirements) for m, v in zip(members, kept.check.vs)) > target
+
+    def _feedback(self, ep: Episode, kept: Kept, record: Dict[str, Any],
+                  iterations: Optional[List[Dict[str, Any]]] = None) -> Steps[Tuple[str, str]]:
+        """Mode and prompt of the next round, from the kept rule set's results on the member that fails worst (with
+        `planner.feedback: failures`, on every member, and the complete list is revised)."""
+        if self.config.planner.feedback == "failures":
+            return "revise", self.prompts.revise(ep, kept, iterations or [])
         member, policy, v = ep.members[kept.focus], kept.check.policies[kept.focus], kept.check.vs[kept.focus]
         reqs = member.requirements
         results = self.prompts.results(policy, v, reqs)

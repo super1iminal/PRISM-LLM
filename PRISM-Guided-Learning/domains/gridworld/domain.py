@@ -95,6 +95,30 @@ class GridWorld(Domain):
         from baselines.gridworld_mdp import RuleScorer
         return RuleScorer(instance.data, self.spec(instance).variables)
 
+    def strict(self, instance: Instance) -> Dict[str, Any]:
+        """`rules.strict`: no coordinates and no grid or goal constants in conditions, only the features, the goal flags
+        and the obstacle's phase (written with 0, 1 and sums such as `obs_idx = 1 + 1`)."""
+        ks = sorted(instance.data["goals"])
+        return {"hide": ["x", "y", "N"] + [f"G{k}{rc}" for k in ks for rc in "RC"], "literal_sums": True,
+                "note": "The agent's coordinates (`x`, `y`) and the grid size and goal positions (`N`, `G1R`, ...) are "
+                        "not available to the rules: they must work from the features, the goal flags and the "
+                        "obstacle's phase alone, which is what makes them carry over to every instance. Write "
+                        "`obs_idx = 1 + 1` for phase 2."}
+
+    def fast_checker(self, instance: Instance, config, vocabulary):
+        """The exact numpy checker (baselines/gridworld_check.py)."""
+        from baselines.gridworld_check import GridChecker
+        return GridChecker(instance.data, self.spec(instance), vocabulary)
+
+    def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
+        """The default (flags, features and their negations) and, if the obstacle's phase is visible, each phase."""
+        out = super().repair_literals(instance, vocabulary)
+        cycle = expand_cycle(instance.data.get("moving") or [])
+        if cycle and "obs_idx" in self.visible_extra:
+            phases = ["obs_idx = " + (" + ".join(["1"] * i) if i else "0") for i in range(len(cycle))]
+            out += phases + [f"!({p})" for p in phases]
+        return out
+
     def optimal_strategy(self, instance: Instance, config):
         """The optimal strategy the trees learn from (gridworld_mdp.optimal_actions): every goal in order, none
         entered early, no collision, as one objective (each requirement's own optimum would mislead: avoiding the
