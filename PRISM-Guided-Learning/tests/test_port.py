@@ -74,6 +74,16 @@ def test_failures_feedback_reports_every_member_with_locations_and_history(grids
 
 
 @needs_prism
+def test_retry_always_resamples_the_initial_prompt_with_failures_feedback(grids):
+    """`planner.retry: always` (port_*_resample, the control for the feedback): every round sends the initial prompt
+    again, without the failure report, the attempt history or the current list."""
+    result, llm = solve(grids, [RIGHT, RIGHT, RIGHT], 3, "planner.retry=always")
+    assert [it["mode"] for it in result["iterations"]] == ["initial"] * 3
+    assert llm.prompts[0] == llm.prompts[1] == llm.prompts[2]
+    assert "## Your attempts so far" not in llm.prompts[2] and "exact worst-case results" not in llm.prompts[2]
+
+
+@needs_prism
 def test_prompt_caches_go_by_instance_not_by_object_id(tmp_path, monkeypatch):
     """A later chain's member can get the id() of a finished chain's freed member, so the prompts' per-member caches
     (feature values, lost sets, strategies, demonstrations) go by instance: with every object's id() the same, the
