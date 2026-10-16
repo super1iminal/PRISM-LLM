@@ -113,11 +113,13 @@ class Constant:
 class Feature:
     """A condition or value the domain computes for rules, like a sensor. A state feature has one
     expression (`expr`); an action feature has one per action (`per_action`). Expressions are in the
-    rule language over the policy variables and constants."""
+    rule language over the policy variables and constants. An optional feature is left out of the vocabulary unless a
+    run names it (`rules.extra_features`)."""
     name: str
     description: str = ""
     expr: Optional[str] = None
     per_action: Optional[Dict[str, str]] = None
+    optional: bool = False
 
     @property
     def is_action_feature(self) -> bool:

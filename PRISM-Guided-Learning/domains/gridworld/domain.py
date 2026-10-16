@@ -140,6 +140,21 @@ class GridWorld(Domain):
 # ---------------------------------------------------------------- extended rule vocabulary
 
 Cell = Tuple[int, int]
+OPTIONAL_FEATURES = ("collide",)   # left out unless a run names them (`rules.extra_features`), so older prompts stay
+
+
+def end_cell(n: int, static, r: int, c: int, d: str) -> Cell:
+    """Where moving `d` from (r, c) ends: clamped to the grid; a static obstacle leaves the agent in place."""
+    dr, dc = MOVES[d]
+    t = (min(max(r + dr, 0), n - 1), min(max(c + dc, 0), n - 1))
+    return (r, c) if t in static else t
+
+
+def _landing(n: int, static, a: str, target: Cell) -> str:
+    """Condition: some outcome of action `a` (forward or a slip) from (x, y) ends on `target`."""
+    cells = sorted((r, c) for r in range(n) for c in range(n) if (r, c) not in static
+                   and any(end_cell(n, static, r, c, d) == target for d in (a, SLIP_LEFT[a], SLIP_RIGHT[a])))
+    return " | ".join(f"(x = {r} & y = {c})" for r, c in cells) or "false"
 
 
 def _cells(cells, dr: int, dc: int) -> str:
@@ -177,6 +192,7 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
     features = {"wall": {}, "hazard": {}, "risky": {}, "toward": {}, "closer": {}, "patrol": {}, "early": {}}
     if cycle and phase_visible:
         features["obstacle"] = {}
+        features["collide"] = {}
 
     def early(dr: int, dc: int) -> str:
         later = [f"({segment[k]} & ({_cells([where[j] for j in ks[i + 1:]], dr, dc)}))"
@@ -197,6 +213,8 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
         if "obstacle" in features:
             features["obstacle"][a] = " | ".join(
                 f"(obs_idx = {i} & ({_cells([cycle[(i + 1) % len(cycle)]], dr, dc)}))" for i in range(len(cycle)))
+            features["collide"][a] = " | ".join(
+                f"(obs_idx = {i} & ({_landing(n, static, a, cycle[(i + 1) % len(cycle)])}))" for i in range(len(cycle)))
         features["toward"][a] = " | ".join(f"({segment[k]} & {toward[a].format(k=k)})" for k in ks)
         closer = []
         for i, k in enumerate(ks):
@@ -212,6 +230,9 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
         "risky": "true if a slip of this move (to either side) could land on a hazard: the patrol path, or a goal "
                  "that must not be entered yet",
         "obstacle": "true if the moving obstacle will be on the move's target cell right after this move",
+        "collide": "true if the move, or a slip of it to either side, could end on the cell the moving obstacle "
+                   "moves to next (a collision); unlike `obstacle`, it counts slips and moves that leave the agent "
+                   "in place",
         "patrol": "true if the move's target cell is on the moving obstacle's patrol path (safe to enter when the "
                   "obstacle will not be there: see `obstacle`)",
         "early": "true if the move's target cell is a goal that must not be entered yet",
@@ -225,5 +246,6 @@ def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_vi
         constants += [{"name": f"G{k}R", "value": where[k][0], "description": f"goal {k}'s row"},
                       {"name": f"G{k}C", "value": where[k][1], "description": f"goal {k}'s column"}]
     return {"rule_constants": constants,
-            "rule_features": [{"name": name, "description": descriptions[name], "per_action": per_action}
+            "rule_features": [{"name": name, "description": descriptions[name], "per_action": per_action,
+                               **({"optional": True} if name in OPTIONAL_FEATURES else {})}
                               for name, per_action in features.items()]}

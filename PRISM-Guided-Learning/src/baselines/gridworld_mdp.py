@@ -29,6 +29,7 @@ def _domain_module():
 G = _domain_module()
 ACTIONS = list(G.MOVES)                       # up, right, down, left
 FEATURES = ["wall", "hazard", "risky", "toward", "closer", "obstacle", "patrol", "early"]
+OPTIONAL_FEATURES = list(G.OPTIONAL_FEATURES)  # computed too, used only where named (`rules.extra_features`, params)
 OUTCOMES = {a: [(a, G.PROB_FORWARD), (G.SLIP_LEFT[a], G.PROB_SLIP_LEFT), (G.SLIP_RIGHT[a], G.PROB_SLIP_RIGHT)]
             for a in ACTIONS}
 
@@ -89,7 +90,7 @@ class GridMDP:
         for k in range(self.K):
             later = set(self.goals[k + 1:])
             dists.append(G._distances(self.n, self.goals[k], self.static | later, costly=patrol))
-        f = {name: np.zeros((self.S, 4), dtype=bool) for name in FEATURES}
+        f = {name: np.zeros((self.S, 4), dtype=bool) for name in FEATURES + OPTIONAL_FEATURES}
         for i, (r, c, s, o) in enumerate(self.states):
             later = set(self.goals[s + 1:]) if s < self.K else set()
             hazards = patrol | later
@@ -103,6 +104,8 @@ class GridMDP:
                 f["risky"][i, ai] = any((r + G.MOVES[side][0], c + G.MOVES[side][1]) in hazards
                                         for side in (G.SLIP_LEFT[a], G.SLIP_RIGHT[a]))
                 f["obstacle"][i, ai] = bool(self.cycle) and t == self.cycle[(o + 1) % self.L]
+                f["collide"][i, ai] = bool(self.cycle) and any(
+                    G.end_cell(self.n, self.static, r, c, d) == self.cycle[(o + 1) % self.L] for d, _ in OUTCOMES[a])
                 if s < self.K:
                     gr, gc = self.goals[s]
                     f["toward"][i, ai] = {"up": gr < r, "down": gr > r, "left": gc < c, "right": gc > c}[a]

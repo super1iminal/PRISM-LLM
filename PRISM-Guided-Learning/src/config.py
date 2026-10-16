@@ -125,6 +125,7 @@ class RulesConfig:
     extended: bool                  # instance constants, domain features and `any` rules
     general: bool                   # only the numbers 0 and 1 in conditions (with extended)
     hidden_features: List[str]      # domain features left out of the vocabulary
+    extra_features: List[str]       # optional domain features to include (left out otherwise)
     any_order: str                  # none | rotations | all: resolve `any` rules into the order that does best
                                     # on the members each round; declared: always the declared action order;
                                     # report: keep `any`, tell the LLM the best order (none: worst case over them)

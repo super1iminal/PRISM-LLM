@@ -100,10 +100,12 @@ class Spec:
 
     def vocabulary(self, rules) -> Vocabulary:
         """The vocabulary a run's `rules` config allows: with `rules.extended`, this instance's constants and
-        features (minus `rules.hidden_features`) and `any` rules; otherwise the base language."""
+        features (minus `rules.hidden_features`; optional ones only if named in `rules.extra_features`) and `any`
+        rules; otherwise the base language."""
         if not rules.extended:
             return Vocabulary()
-        features = [f for f in self.features if f.name not in rules.hidden_features]
+        features = [f for f in self.features if f.name not in rules.hidden_features
+                    and (not f.optional or f.name in rules.extra_features)]
         return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general)
 
     def policy(self, rules: Iterable[Tuple[str, str]], vocabulary: Optional[Vocabulary] = None) -> SymbolicPolicy:
@@ -219,8 +221,8 @@ class Domain:
         requirements = [Requirement(r["name"], r["formula"], float(r["threshold"]), r.get("bound", ">="),
                                     r.get("description", ""), r.get("reward")) for r in raw["requirements"]]
         constants = [Constant(c["name"], int(c["value"]), c.get("description", "")) for c in raw.get("constants") or []]
-        features = [Feature(f["name"], f.get("description", ""), f.get("expr"), f.get("per_action"))
-                    for f in raw.get("features") or []]
+        features = [Feature(f["name"], f.get("description", ""), f.get("expr"), f.get("per_action"),
+                            bool(f.get("optional", False))) for f in raw.get("features") or []]
         return Spec(variables, dict(raw["actions"]), requirements, constants, features)
 
     def format_state(self, valuation: Dict[str, Value]) -> str:
