@@ -6,7 +6,7 @@ actions are left open for the policy.
 """
 import ast
 import heapq
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
@@ -125,6 +125,37 @@ class GridWorld(Domain):
         obstacle alone is best done by never moving)."""
         from baselines.gridworld_mdp import optimal_strategy
         return optimal_strategy(instance.data)
+
+    def met(self, instance: Instance, requirement) -> Optional[Callable[[Dict[str, Any]], bool]]:
+        """The sequence requirements by the goal flags, which only turn true in order: `seq_a_before_b` is met once `ga`
+        holds, `complete_sequence` once the next-to-last goal's flag does (their formulas over goal cells are checked
+        from every state anew, so a goal entered in its turn reads as lost there)."""
+        name, goals = requirement.name, sorted(instance.data["goals"])
+        if name.startswith("seq_") and "_before_" in name:
+            flag = "g" + name[len("seq_"):name.index("_before_")]
+        elif name == "complete_sequence" and len(goals) > 1:
+            flag = f"g{goals[-2]}"
+        else:
+            return None
+        return lambda state: bool(state.get(flag))
+
+    def state_words(self, instance: Instance, valuation: Dict[str, Any]) -> Optional[str]:
+        """The agent's cell, the goal flags and where the moving obstacle is and goes next (as the fresh-transfer
+        session's feedback)."""
+        flags = ", ".join(f"{k}={str(v).lower()}" for k, v in valuation.items() if k[:1] == "g" and k[1:].isdigit())
+        text = f"agent at ({valuation['x']},{valuation['y']}), {flags}"
+        cycle = expand_cycle(instance.data["moving"])
+        if cycle and "obs_idx" in valuation:
+            k = valuation["obs_idx"]
+            text += f", obs_idx={k} (obstacle at {tuple(cycle[k])}, next at {tuple(cycle[(k + 1) % len(cycle)])})"
+        return text
+
+    def loss_words(self, requirement) -> Optional[str]:
+        if requirement.name.startswith("seq_") or requirement.name == "complete_sequence":
+            return "enters a later goal early"
+        if requirement.name.startswith("avoid_moving"):
+            return "collision"
+        return None
 
     @staticmethod
     def _sequence_formula(before: List[int], exclude: int) -> str:

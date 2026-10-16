@@ -24,7 +24,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import jinja2
 import pandas as pd
@@ -187,6 +187,21 @@ class Domain:
     def worst_case_notes(self, instance: Instance) -> str:
         """The domain's own notes on the worst case for `prompt.worst_case` (worst_case.md.j2), or ''."""
         return self.render("worst_case.md.j2", instance).strip() if self.has_template("worst_case.md.j2") else ""
+
+    def met(self, instance: Instance, requirement: Requirement) -> Optional[Callable[[Dict[str, Any]], bool]]:
+        """Optional test of a state's variables showing `requirement` already met (`feedback.history`): a formula over
+        events (goal cells) is checked from every state anew, so a state after it was met can read as lost there. None
+        where the variables do not record it (the default)."""
+        return None
+
+    def state_words(self, instance: Instance, valuation: Dict[str, Any]) -> Optional[str]:
+        """Optional plain description of a state for the failure feedback (`feedback.words`); None: `format_state`."""
+        return None
+
+    def loss_words(self, requirement: Requirement) -> Optional[str]:
+        """Optional words for losing `requirement` in one step, for the failure feedback's risks (`feedback.words`);
+        None: "loses <name>"."""
+        return None
 
     def optimal_strategy(self, instance: Instance, config) -> Optional[Any]:
         """Optional optimal strategy of `instance` (`feedback.optimal`, `prompt.demonstration`; core/optimal.py): a

@@ -11,9 +11,11 @@ import run_symbolic
 import transfer
 from config import load_config
 from core.domain import Requirement, load_domain
+from core.failures import lost_sets
 from core.pick import choose, repair
 from core.planner import SymbolicPlanner
 from core.training import training_sets
+from core.verifier import PolicyVerifier
 from fakes import TINY_GRID, FakeBackend, ScriptedBackend, answer
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
@@ -71,6 +73,42 @@ def test_failures_feedback_reports_every_member_with_locations_and_history(grids
     assert "* the same state as above: x=2 & y=3" in second and "## Your attempts so far" not in second
     assert ("## Your attempts so far\n\n- attempt 1: every requirement holds on 1 of 2 instances, total shortfall "
             "0.483\n- attempt 2: every requirement holds on 1 of 2 instances, total shortfall 0.483") in third
+
+
+@needs_prism
+def test_history_does_not_count_a_goal_entered_in_turn_as_lost(grids):
+    """The sequence formulas over goal cells are checked from every state anew, so goal 2's cell reads lost for
+    `seq_1_before_2` even after goal 1 (the feedback then calls entering it in turn a failure); with
+    `feedback.history` the goal flags show it met there. Entered early, it stays lost."""
+    domain = load_domain("gridworld", ["obs_idx"])
+    inst = domain.load_instances(str(grids))[1]
+    verifier = PolicyVerifier(domain, inst, load_config(overrides=PORT))
+    names = [v.name for v in verifier.spec.variables]
+    plain, index = lost_sets(verifier)
+    history, _ = lost_sets(verifier, lambda r: domain.met(inst, r))
+
+    def at_goal2(g1):
+        states = [(dict(zip(names, st)), i) for st, i in index.items()]
+        return [i for s, i in states if (s["x"], s["y"]) == (3, 3) and s["g1"] == g1]
+    for req in ("seq_1_before_2", "complete_sequence"):
+        assert plain[req][at_goal2(True)].all() and not history[req][at_goal2(True)].any()
+        assert plain[req][at_goal2(False)].all() and history[req][at_goal2(False)].all()
+    assert domain.met(inst, next(r for r in verifier.spec.requirements if r.name == "goal1")) is None
+
+
+@needs_prism
+def test_words_and_compact_describe_states_risks_and_grids_plainly(grids):
+    """`feedback.words`: failure states by the agent's and the obstacle's cells, risks by what is lost; `prompt.compact`:
+    the gridworld rules once and one line per grid (as the fresh-transfer prompt)."""
+    _, llm = solve(grids, [RIGHT, RIGHT], 2, "feedback.history=true", "feedback.words=true", "prompt.compact=true")
+    first, second = llm.prompts
+    assert first.count("Every instance is a gridworld with these rules:") == 1 and "Static obstacles at" not in first
+    assert ("A 4x4 grid. Goals in order: goal 1 at (0,3), goal 2 at (3,3). Patrol cycle: obs_idx 0 = (2,1), obs_idx 1 = "
+            "(2,2), then 0 again.") in first
+    assert ("0.177 of runs fail from here: agent at (2,3), g1=false, g2=false, obs_idx=1 (obstacle at (2, 2), next at "
+            "(2, 1))") in second
+    assert "down: [hazard, risky, early] risk: enters a later goal early 0.70; collision 0.15" in second
+    assert "loses seq_1_before_2" not in second
 
 
 @needs_prism
