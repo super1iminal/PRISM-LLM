@@ -4,7 +4,7 @@
 set -e
 PY=C:/Users/asher/Documents/Coding/llmtrust/PRISM-LLM/.venv/Scripts/python
 set -a && . C:/Users/asher/Documents/Coding/llmtrust/PRISM-LLM/.env && set +a
-export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 step=${1:?usage: next_runs.sh inloop|grids K|grids_noclose K|mer K|mer_n K|onechain|nolines}
 
 case $step in
