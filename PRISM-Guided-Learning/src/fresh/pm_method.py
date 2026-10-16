@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.rules import RuleError, fixed_order  # noqa: E402
 from fresh import llm  # noqa: E402
+from fresh.cpu import LOCK  # noqa: E402
 from fresh.pm import (ACTIONS, CROSSINGS, DIRECTIONS, GHOST_START, ROWS, START, TRAIN, PacInstance,  # noqa: E402
                       load, uniform_regret)
 
@@ -64,9 +65,8 @@ games, so the rules must choose (nearly) the best direction in every situation t
 ## Rule language
 An ordered list of rules {{"condition": ..., "action": ...}}; at a crossing the FIRST rule whose condition holds
 decides. Actions: right, up, left, down, or `any` (allows every direction for which the condition holds, with the
-per-direction sensors evaluated for that direction). Conditions use ! & | => ( ), = != < <= > >=, + -, and only
-the numbers 0 and 1, which may not be added together (no `1+1`): rules cannot name particular cells, so compare
-positions with each other instead (e.g. `xG0 < xP`, `yG1 = yP`, `xP = xG0 + 1`) and use the sensors.
+per-direction sensors evaluated for that direction). Conditions use ! & | => ( ), = != < <= > >=, + -.
+{{NUMBERS}}
 Names:
 - `xP`, `yP`, `dP`: Pac-Man's column, row and heading (0 = right, 1 = up, 2 = left, 3 = down; e.g. `dP > 1` is
   left or down).
@@ -79,8 +79,24 @@ Names:
 End the list with a catch-all rule (condition `true`)."""
 
 
+LITERALS_ON_POSITIONS = False   # v3: numbers allowed in comparisons over positions and headings
+NUMBERS = {
+    False: """Only the numbers 0 and 1, which may not be added together (no `1+1`): rules cannot name particular cells, so
+compare positions with each other instead (e.g. `xG0 < xP`, `yG1 = yP`, `xP = xG0 + 1`) and use the sensors.""",
+    True: """Positions and headings (`xP`, `yP`, `dP`, `xG0`, `yG0`, `dG0`, `xG1`, `yG1`, `dG1`) may be compared with any number,
+e.g. `xP = 3 & yP = 4` for the crossing (3,4) or `dG0 = 2` (the maze is the same in every game). `steps`,
+`moves_left` and `MAXSTEPS` may only be compared with 0, 1 or each other: the rules must not depend on the game's
+length.""",
+}
+POSITIONS = {"xP", "yP", "dP", "xG0", "yG0", "dG0", "xG1", "yG1", "dG1"}
+
+
+def problem() -> str:
+    return PROBLEM.replace("{NUMBERS}", NUMBERS[LITERALS_ON_POSITIONS])
+
+
 def initial_prompt() -> str:
-    return PROBLEM + """
+    return problem() + """
 
 ## Answer
 Think about where the danger is (the ghosts start next to Pac-Man and turn towards him), how to keep away from both
@@ -91,7 +107,7 @@ as JSON: {"rules": [{"condition": "...", "action": "..."}, ...]}"""
 def revise_prompt(rules, report: str, history: str) -> str:
     listing = "\n".join(f'{i}. {{"condition": {json.dumps(c)}, "action": {json.dumps(a)}}}'
                         for i, (c, a) in enumerate(rules, start=1))
-    return PROBLEM + f"""
+    return problem() + f"""
 
 ## Your current list
 {listing}
@@ -109,7 +125,7 @@ def uniform_prompt(rules, insts, history: str) -> str:
     listing = "\n".join(f'{i}. {{"condition": {json.dumps(c)}, "action": {json.dumps(a)}}}'
                         for i, (c, a) in enumerate(rules, start=1))
     reports = "\n".join(regret_report(p, rules) for p in insts)
-    return PROBLEM + f"""
+    return problem() + f"""
 
 ## Your current list
 {listing}
@@ -246,10 +262,70 @@ def mean_regret(rules, insts) -> float:
 LITERAL_SUM = re.compile(r"(?<!\w)\d+\s*[-+]\s*\d+(?!\w)")
 
 
+def big_numbers_outside_positions(cond: str, p: PacInstance) -> bool:
+    """Whether a comparison with a number above 1 (or a sum of numbers) involves anything but positions/headings."""
+    from core.rules import _Parser, _Scope, Binary, Const, Unary, Var, FeatureCall, ActionRef
+    sc = p.scope
+    scope = _Scope(sc.variables, {}, sc.state_features, sc.action_features, general=False)   # MAXSTEPS stays a name
+    expr = _Parser(cond, scope).parse()
+
+    def const_value(e):
+        if isinstance(e, Const) and not isinstance(e.value, bool):
+            return e.value
+        if isinstance(e, Unary) and e.op == "-":
+            v = const_value(e.arg)
+            return None if v is None else -v
+        if isinstance(e, Binary) and e.op in "+-":
+            a, b = const_value(e.left), const_value(e.right)
+            return None if a is None or b is None else (a + b if e.op == "+" else a - b)
+        return None
+
+    def names(e):
+        if isinstance(e, Var):
+            return {e.name}
+        if isinstance(e, (FeatureCall, ActionRef)):
+            return {e.name}
+        if isinstance(e, Unary):
+            return names(e.arg)
+        if isinstance(e, Binary):
+            return names(e.left) | names(e.right)
+        return set()
+
+    def big(e):
+        v = const_value(e)
+        if v is not None:
+            return abs(v) > 1
+        if isinstance(e, Unary):
+            return big(e.arg)
+        if isinstance(e, Binary):
+            return big(e.left) or big(e.right)
+        return False
+
+    def bad(e):
+        if isinstance(e, Unary):
+            return bad(e.arg)
+        if isinstance(e, Binary):
+            if e.op in ("=", "!=", "<", "<=", ">", ">="):
+                return big(e) and not names(e) <= POSITIONS
+            if e.op in ("&", "|", "=>"):
+                return bad(e.left) or bad(e.right)
+        return False
+
+    return bad(expr)
+
+
 def validate(rules, insts) -> Optional[str]:
     if not rules:
         return "no rules found in the answer"
-    bad = [f"rule {i} ({c} -> {a})" for i, (c, a) in enumerate(rules, start=1) if LITERAL_SUM.search(c)]
+    if LITERALS_ON_POSITIONS:
+        bad = [f"rule {i} ({c} -> {a})" for i, (c, a) in enumerate(rules, start=1)
+               if big_numbers_outside_positions(c, insts[0])]
+        if bad:
+            return ("numbers other than 0 and 1 may only be compared with positions and headings (xP, yP, dP, xG0, yG0, "
+                    "dG0, xG1, yG1, dG1), not with steps, moves_left or MAXSTEPS: " + "; ".join(bad))
+        bad = []
+    else:
+        bad = [f"rule {i} ({c} -> {a})" for i, (c, a) in enumerate(rules, start=1) if LITERAL_SUM.search(c)]
     if bad:
         return ("adding or subtracting number literals (e.g. `1+1`) is not allowed; compare positions, headings and "
                 "steps with each other, with 0 or 1, or use the sensors: " + "; ".join(bad))
@@ -272,10 +348,12 @@ def chain(insts, rounds: int, log: Path, tag: str) -> List[Dict]:
         err = validate(rules, insts)
         entry = {"chain": tag, "round": rnd, "rules": rules, "error": err, "usage": usage}
         if err is None:
-            crash = evaluate(rules, insts)
+            with LOCK:
+                crash = evaluate(rules, insts)
             entry["score"], entry["crash"] = score(crash), crash
             if UNIFORM and entry["score"][0] == len(insts):
-                entry["regret"] = mean_regret(rules, insts)
+                with LOCK:
+                    entry["regret"] = mean_regret(rules, insts)
                 entry["score"] = entry["score"] + (-round(entry["regret"], 6),)
             else:
                 entry["score"] = entry["score"] + (-1.0,)
@@ -294,10 +372,11 @@ def chain(insts, rounds: int, log: Path, tag: str) -> List[Dict]:
             prompt = initial_prompt() + (f"\n\nYour previous answer was rejected:\n{err}\nFix this." if err else "")
             continue
         history = "\n## Your attempts so far\n" + "\n".join(history_lines) + "\n" if len(history_lines) > 1 else ""
-        if UNIFORM and best["score"][0] == len(insts):
-            prompt = uniform_prompt(best["rules"], insts, history)
-        else:
-            prompt = revise_prompt(best["rules"], report(best["rules"], insts, best["crash"]), history)
+        with LOCK:
+            if UNIFORM and best["score"][0] == len(insts):
+                prompt = uniform_prompt(best["rules"], insts, history)
+            else:
+                prompt = revise_prompt(best["rules"], report(best["rules"], insts, best["crash"]), history)
     return attempts
 
 
@@ -387,7 +466,7 @@ def determinize(rules, insts):
 
 def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 25):
     out.mkdir(parents=True, exist_ok=True)
-    insts = load(TRAIN)
+    insts = load(TRAIN, general=not LITERALS_ON_POSITIONS)
     start = time.time()
     with ThreadPoolExecutor(max_workers=chains) as pool:
         futures = [pool.submit(chain, insts, rounds, out, f"pacman_c{i}") for i in range(chains)]
@@ -402,6 +481,7 @@ def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 2
             seen.add(key)
             cands.append(a)
     finals = []
+    LOCK.acquire()   # repair and action orders: one numpy-heavy step at a time per process
     for i, a in enumerate(cands[:top]):
         rules = [tuple(r) for r in a["rules"]]
         if repair_steps:
@@ -413,8 +493,9 @@ def run(chains: int, rounds: int, out: Path, top: int = 6, repair_steps: int = 2
                        "det_score": det_score})
         if UNIFORM and det_score[0] == len(insts):
             finals[-1]["det_regret"] = mean_regret(det, insts)
+    LOCK.release()
     finals.sort(key=selection_key, reverse=True)
-    summary = {"chains": chains, "rounds": rounds, "uniform": UNIFORM, "llm_seconds": round(llm_seconds, 1),
+    summary = {"chains": chains, "rounds": rounds, "uniform": UNIFORM, "literals_on_positions": LITERALS_ON_POSITIONS, "llm_seconds": round(llm_seconds, 1),
                "seconds": round(time.time() - start, 1), "usage": usage, "process_usage": dict(llm.USAGE), "attempts": len(attempts),
                "valid": len(valid), "best": finals[0] if finals else None, "finals": finals}
     (out / "pacman_summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")

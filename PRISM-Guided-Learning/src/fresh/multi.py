@@ -23,6 +23,7 @@ ap.add_argument("--data", default="families_v0.csv")
 ap.add_argument("--hide", default="hazard")
 ap.add_argument("--resolve-in-loop", action="store_true")
 ap.add_argument("--no-action-lines", action="store_true")
+ap.add_argument("--position", action="store_true", help="allow x, y and the grid constants in conditions")
 ap.add_argument("--out", required=True)
 args = ap.parse_args()
 M.CFG.kind, M.CFG.data, M.CFG.hidden = args.kind, args.data, tuple(h for h in args.hide.split(",") if h)
@@ -31,7 +32,7 @@ runs = [(label, [int(i) for i in ids.split(",")]) for label, ids in (r.split("="
 
 
 def one(label, ids):
-    s = M.run(label, args.chains, args.rounds, Path(args.out), False, ids)
+    s = M.run(label, args.chains, args.rounds, Path(args.out), args.position, ids)
     b = s["best"]
     return f"{label}: kept {b['from']} score {b['score']} det {b['det_score']} cost ${s['usage']['cost']:.3f}"
 

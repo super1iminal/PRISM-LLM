@@ -56,7 +56,7 @@ def export(max_steps: int) -> Path:
 
 
 class PacInstance(VecEval):
-    def __init__(self, idx: int, max_steps: int, threshold: float):
+    def __init__(self, idx: int, max_steps: int, threshold: float, general: bool = True):
         self.id, self.H, self.threshold = idx, max_steps, threshold
         d = export(max_steps)
         with open(d / "s.sta") as f:
@@ -94,7 +94,7 @@ class PacInstance(VecEval):
         consts = [Constant(c["name"], c["value"], c["description"]) for c in voc["rule_constants"]]
         feats = [Feature(f["name"], f["description"], expr=f.get("expr"), per_action=f.get("per_action"))
                  for f in voc["rule_features"]]
-        self.vocabulary = Vocabulary(consts, feats, allow_any=True, general=True)
+        self.vocabulary = Vocabulary(consts, feats, allow_any=True, general=general)
         ranges = {"xP": (1, 11), "yP": (1, 7), "dP": (0, 3), "xG0": (0, 11), "yG0": (0, 7), "dG0": (0, 3),
                   "xG1": (0, 11), "yG1": (0, 7), "dG1": (0, 3), "steps": (0, max_steps)}
         self.variables = [Variable(n, "int", *ranges[n]) for n in VISIBLE]
@@ -158,9 +158,9 @@ class PacInstance(VecEval):
         return float(self.values(np.ones(len(self.ch_state), bool), maximize=False)[self.init])
 
 
-def load(ids: Sequence[int]) -> List[PacInstance]:
+def load(ids: Sequence[int], general: bool = True) -> List[PacInstance]:
     df = pd.read_csv(DATA)
-    return [PacInstance(i, int(df.loc[i, "max_steps"]), float(df.loc[i, "crash_threshold"])) for i in ids]
+    return [PacInstance(i, int(df.loc[i, "max_steps"]), float(df.loc[i, "crash_threshold"]), general) for i in ids]
 
 
 TRAIN = [3, 4, 5]

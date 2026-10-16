@@ -26,6 +26,7 @@ ap.add_argument("dir")
 ap.add_argument("--prefix", default="")
 ap.add_argument("--hide", default="hazard")
 ap.add_argument("--dataset", default="mer_transfer.csv")
+ap.add_argument("--not-general", action="store_true", help="certify with rules.general = false (Pac-Man v3)")
 args = ap.parse_args()
 d = Path(args.dir)
 items = []
@@ -48,7 +49,7 @@ elif args.benchmark == "mer":
                   "samples": [{"rules": kept(d / "mer_summary.json"), "members": ["0", "1", "2"]}]})
 else:
     config = {"approach": "symbolic", "domain": {"name": "pacman", "dataset": "pacman_transfer.csv"},
-              "rules": {"extended": True, "general": True}}
+              "rules": {"extended": True, "general": not args.not_general}}
     items.append({"dir": str(d / "cert"), "config": config, "targets": "0-7,9",
                   "samples": [{"rules": kept(d / "pacman_summary.json"), "members": ["3", "4", "5"]}]})
 out = Path(args.out)

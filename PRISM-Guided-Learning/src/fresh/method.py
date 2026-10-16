@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.rules import RuleError  # noqa: E402
 from fresh import llm  # noqa: E402
+from fresh.cpu import LOCK  # noqa: E402
 from fresh.explain import describe  # noqa: E402
 from fresh.gw import ACTIONS, FAMILIES, REQS, THRESH, Member, Result, load  # noqa: E402
 
@@ -258,10 +259,11 @@ def chain(fam: str, members: List[Member], position: bool, rounds: int, log: Pat
         err = validate(rules, members, position)
         entry = {"chain": tag, "round": rnd, "rules": rules, "error": err, "usage": usage}
         if err is None:
-            if CFG.resolve_in_loop:
-                entry["order"], results = best_order(rules, members)
-            else:
-                results = evaluate(rules, members)
+            with LOCK:
+                if CFG.resolve_in_loop:
+                    entry["order"], results = best_order(rules, members)
+                else:
+                    results = evaluate(rules, members)
             entry["score"] = score(results)
             entry["worst"] = [r.worst for r in results]
             entry["certified"] = [r.certified for r in results]
@@ -285,8 +287,9 @@ def chain(fam: str, members: List[Member], position: bool, rounds: int, log: Pat
             history = "\n## Your attempts so far\n" + "\n".join(history_lines) + "\n"
             if err is not None:
                 history += f"Your last answer was rejected: {err}\n"
-        prompt = revise_prompt(fam, members, position, best["rules"],
-                               report(best["rules"], members, best["results"], best.get("order")), history)
+        with LOCK:
+            feedback = report(best["rules"], members, best["results"], best.get("order"))
+        prompt = revise_prompt(fam, members, position, best["rules"], feedback, history)
     return attempts
 
 
@@ -360,7 +363,8 @@ def run(fam: str, chains: int, rounds: int, out: Path, position: bool, ids: Opti
         attempts = [a for f in futures for a in f.result()]
     llm_seconds = time.time() - start
     usage = {k: sum(a["usage"].get(k, 0) for a in attempts) for k in ("calls", "prompt_tokens", "output_tokens", "cost")}
-    final, finals = finalize(members, attempts, repair_top, repair_steps)
+    with LOCK:
+        final, finals = finalize(members, attempts, repair_top, repair_steps)
     valid = [a for a in attempts if a.get("score")]
     summary = {"family": fam, "chains": chains, "rounds": rounds, "position": position, "phases": phases,
                "settings": asdict(CFG),

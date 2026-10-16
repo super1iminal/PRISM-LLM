@@ -14,6 +14,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("method", choices=["mer", "pacman"])
 ap.add_argument("--dataset", nargs="+", default=["mer_transfer.csv"])
 ap.add_argument("--uniform", action="store_true")
+ap.add_argument("--literals", action="store_true", help="Pac-Man v3: numbers allowed on positions and headings")
+ap.add_argument("--optimal", action="store_true", help="MER v2: feedback from the best scheduler's visited states")
 ap.add_argument("--repeats", nargs="+", type=int, default=[1, 2, 3])
 ap.add_argument("--chains", type=int, default=8)
 ap.add_argument("--rounds", type=int, default=6)
@@ -22,6 +24,7 @@ args = ap.parse_args()
 
 if args.method == "mer":
     import fresh.mer_method as M
+    M.OPTIMAL_FEEDBACK = args.optimal
 
     def one(job):
         ds, k = job
@@ -34,6 +37,7 @@ if args.method == "mer":
 else:
     import fresh.pm_method as M
     M.UNIFORM = args.uniform
+    M.LITERALS_ON_POSITIONS = args.literals
 
     def one(k):
         s = M.run(args.chains, args.rounds, Path(args.out) / f"run{k}")

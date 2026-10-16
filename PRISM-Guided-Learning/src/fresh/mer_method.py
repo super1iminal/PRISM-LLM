@@ -20,6 +20,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.rules import RuleError, fixed_order  # noqa: E402
 from fresh import llm  # noqa: E402
+from fresh.cpu import LOCK  # noqa: E402
 from fresh.mer import ACTIONS, CODES, ROOT, MerInstance, load  # noqa: E402
 
 TRAIN = [0, 1, 2]
@@ -188,13 +189,88 @@ def blame(p: MerInstance, rules, top: int = 4) -> str:
     return chr(10).join(lines)
 
 
+_REPORTS: Dict = {}   # (instance, rules, mode) -> feedback text: chains often revise the same best list
+OPTIMAL_FEEDBACK = False   # v2: show where the rules depart from the best scheduler on the states it visits
+
+
+def optimal_blame(p: MerInstance, rules, top: int = 5) -> str:
+    """The states the best scheduler visits most often where the rules allow an action that is not optimal there
+    (judged with the best scheduler's continuation), with the optimal actions."""
+    if p.name not in OPT:
+        OPT[p.name] = p.values(np.ones(len(p.ch_state), bool), maximize=True)
+    opt = OPT[p.name]
+    allowed, decider = p.allowed(rules)
+    qo = np.zeros(len(p.ch_state))
+    np.add.at(qo, p.tr_choice, p.tr_prob * opt[p.tr_target])
+    pol = p.ch_action >= 0
+    qoa = np.full((p.S, len(ACTIONS)), -1.0)
+    qoa[p.ch_state[pol], p.ch_action[pol]] = qo[pol]
+    best_a = qoa.argmax(axis=1)                                   # one optimal action per state (first in order)
+    choice = np.full((p.S, len(ACTIONS)), -1)
+    choice[p.ch_state[pol], p.ch_action[pol]] = np.nonzero(pol)[0]
+    pick = choice[np.arange(p.S), best_a]
+    sel = pick[p.ch_state[p.tr_choice]] == p.tr_choice
+    visit, dist = np.zeros(p.S), np.zeros(p.S)
+    dist[p.init] = 1.0
+    for _ in range(300):
+        live = dist * ~p.err
+        visit += live
+        nd = np.zeros(p.S)
+        np.add.at(nd, p.tr_target[sel], live[p.ch_state[p.tr_choice[sel]]] * p.tr_prob[sel])
+        dist = nd
+    worst_allowed = np.where(allowed, qoa, 2.0).min(axis=1)
+    loss_opt = np.minimum(visit, 1.0) * np.maximum(opt - worst_allowed, 0.0)
+    # the rules' own worst-case play: where the action it takes there loses against the best one (optimal continuation)
+    v = p.values(p.choice_mask(allowed))
+    q = np.zeros(len(p.ch_state))
+    np.add.at(q, p.tr_choice, p.tr_prob * v[p.tr_target])
+    qla = np.full((p.S, len(ACTIONS)), 2.0)
+    qla[p.ch_state[pol], p.ch_action[pol]] = q[pol]
+    adv = np.where(allowed, qla, 2.0).argmin(axis=1)
+    pick2 = choice[np.arange(p.S), adv]
+    sel2 = pick2[p.ch_state[p.tr_choice]] == p.tr_choice
+    visit2, dist = np.zeros(p.S), np.zeros(p.S)
+    dist[p.init] = 1.0
+    for _ in range(300):
+        live = dist * ~p.err
+        visit2 += live
+        nd = np.zeros(p.S)
+        np.add.at(nd, p.tr_target[sel2], live[p.ch_state[p.tr_choice[sel2]]] * p.tr_prob[sel2])
+        dist = nd
+    loss_list = np.minimum(visit2, 1.0) * np.maximum(opt - qoa[np.arange(p.S), adv], 0.0)
+    loss = np.maximum(loss_opt, loss_list)
+    visit = np.maximum(visit, visit2)
+    en = enabled_matrix(p)
+    names = [var.name for var in p.variables]
+    lines, seen = [], set()
+    for s in np.argsort(-loss):
+        if len(lines) >= top or loss[s] < 1e-5:
+            break
+        rule = int(decider[s])
+        worst = int(adv[s]) if loss_list[s] >= loss_opt[s] else int(np.where(allowed[s], qoa[s], 2.0).argmin())
+        if (rule, worst) in seen:
+            continue
+        seen.add((rule, worst))
+        state = ", ".join(f"{nm}={int(p.state_vars[nm][s])}" for nm in names)
+        who = f"rule {rule + 1} `{rules[rule][0]} -> {rules[rule][1]}`" if rule >= 0 else "NO RULE (uncovered)"
+        best = [i for i in range(len(ACTIONS)) if en[s, i] and qoa[s, i] >= opt[s] - 1e-9]
+        took = ACTIONS[worst] + ("" if en[s, worst] else " (not possible here)")
+        lines.append(f"    * reached with probability {min(visit[s], 1.0):.3f} (by your rules' worst case or the best scheduler): {state}; "
+                     f"decided by {who}; the worst case takes {took} (then at best {qoa[s, worst]:.4f}); optimal: "
+                     + ", ".join(f"{ACTIONS[i]} ({qoa[s, i]:.4f})" for i in best))
+    return "\n".join(lines) or "    (the rules agree with the best scheduler on every state it visits)"
+
+
 def report(rules, insts, values) -> str:
     out = []
     for p, v in zip(insts, values):
         ok = v >= p.threshold - 1e-12
         out.append(f"### {p.name}: error probability {v:.4f} ({'OK' if ok else 'TOO LOW'}; needs >= {p.threshold})")
         if not ok:
-            out.append(blame(p, rules))
+            key = (p.name, tuple(map(tuple, rules)), OPTIMAL_FEEDBACK)
+            if key not in _REPORTS:
+                _REPORTS[key] = optimal_blame(p, rules) if OPTIMAL_FEEDBACK else blame(p, rules)
+            out.append(_REPORTS[key])
     return "\n".join(out)
 
 
@@ -220,7 +296,8 @@ def chain(insts, head: str, rounds: int, log: Path, tag: str) -> List[Dict]:
         err = validate(rules, insts)
         entry = {"chain": tag, "round": rnd, "rules": rules, "error": err, "usage": usage}
         if err is None:
-            values = evaluate(rules, insts)
+            with LOCK:
+                values = evaluate(rules, insts)
             entry["score"], entry["values"] = score(values, insts), values
             if best is None or entry["score"] > best["score"]:
                 best = entry
@@ -236,7 +313,9 @@ def chain(insts, head: str, rounds: int, log: Path, tag: str) -> List[Dict]:
             prompt = initial_prompt(head) + (f"\n\nYour previous answer was rejected:\n{err}\nFix this." if err else "")
             continue
         history = "\n## Your attempts so far\n" + "\n".join(history_lines) + "\n" if len(history_lines) > 1 else ""
-        prompt = revise_prompt(head, best["rules"], report(best["rules"], insts, best["values"]), history)
+        with LOCK:
+            feedback = report(best["rules"], insts, best["values"])
+        prompt = revise_prompt(head, best["rules"], feedback, history)
     return attempts
 
 
@@ -326,6 +405,7 @@ def run(dataset: str, chains: int, rounds: int, out: Path, top: int = 6, repair_
             seen.add(key)
             cands.append(a)
     finals = []
+    LOCK.acquire()   # repair and action orders: one numpy-heavy step at a time per process
     for i, a in enumerate(cands[:top]):
         rules = [tuple(r) for r in a["rules"]]
         if repair_steps:
@@ -335,9 +415,10 @@ def run(dataset: str, chains: int, rounds: int, out: Path, top: int = 6, repair_
         finals.append({"from": [a["chain"], a["round"]], "llm_score": a["score"], "rules": rules,
                        "score": score(values, insts), "values": values, "det_rules": det, "det_order": order,
                        "det_score": det_score})
+    LOCK.release()
     finals.sort(key=lambda f: (f["det_score"][0], f["score"][0], round(f["score"][2], 9),
                                round(f["det_score"][2], 9), -size(f["rules"])), reverse=True)
-    summary = {"dataset": dataset, "chains": chains, "rounds": rounds, "llm_seconds": round(llm_seconds, 1),
+    summary = {"dataset": dataset, "chains": chains, "rounds": rounds, "optimal_feedback": OPTIMAL_FEEDBACK, "llm_seconds": round(llm_seconds, 1),
                "seconds": round(time.time() - start, 1), "usage": usage, "process_usage": dict(llm.USAGE), "attempts": len(attempts),
                "valid": len(valid), "best": finals[0] if finals else None, "finals": finals}
     (out / "mer_summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
