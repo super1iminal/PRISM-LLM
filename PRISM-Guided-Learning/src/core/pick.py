@@ -7,7 +7,8 @@ fresh-transfer session's method:
    rule, add or drop a conjunct, change an action, swap neighbours, specialize a rule with a conjunct), scored by the
    members' margins summed, each capped at 0.05 (so fixing failures counts first), with the domain's fast checker;
 3. the list whose `any` rules resolved by the best action order on the members passes on most members, then the most
-   members with `any` open, then the largest smallest margin (open, then resolved), then the shortest list.
+   members with `any` open, then the largest smallest margin (open, then resolved), then (with `feedback.early_rank`)
+   the smallest loss early in the games (core/early.py), then the shortest list.
 The chosen list is frozen with `any` open; src/determinize.py resolves it for the other transfer variant.
 """
 import random
@@ -148,7 +149,8 @@ def choose(finals: List[Dict]) -> Dict:
     """The final list among the repaired candidates (module docstring, step 3)."""
     def key(f):
         det = f["resolved_score"] or (-1, float("-inf"), float("-inf"))
-        return det[0], f["final_score"][0], round(f["final_score"][2], 9), round(det[2], 9), -size(f["rules"])
+        return (det[0], f["final_score"][0], round(f["final_score"][2], 9), round(det[2], 9),
+                -round(f.get("early_loss") or 0.0, 9), -size(f["rules"]))
     return max(finals, key=key)
 
 
