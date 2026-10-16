@@ -124,7 +124,10 @@ Give the complete revised list as JSON: {{"rules": [{{"condition": "...", "actio
 def uniform_prompt(rules, insts, history: str) -> str:
     listing = "\n".join(f'{i}. {{"condition": {json.dumps(c)}, "action": {json.dumps(a)}}}'
                         for i, (c, a) in enumerate(rules, start=1))
-    reports = "\n".join(regret_report(p, rules) for p in insts)
+    reports = "\n".join(regret_report(p, rules) for p in (insts if EARLY_STEPS is None else insts[-1:]))
+    where = ("from any configuration of Pac-Man and the ghosts" if EARLY_STEPS is None else
+             f"from any configuration of Pac-Man and the ghosts in the first {EARLY_STEPS + 1} moves of the longest "
+             f"training game, where many moves are left and no ghost has been removed yet, as in most of a long game")
     return problem() + f"""
 
 ## Your current list
@@ -132,12 +135,13 @@ def uniform_prompt(rules, insts, history: str) -> str:
 
 It meets the requirement in every training game (crash probability 0.551 from the start, the best possible).
 Longer games give the ghosts more time, so the list must also evade well from every situation, not only from the
-start. Below, for each training game, are the situations where the rules crash most often compared with the best
-possible controller (from any configuration of Pac-Man and the ghosts):
+start. Below are the situations where the rules crash most often compared with the best possible controller
+({where}):
 {reports}
 {history}
 Revise the list so that it evades well in these situations too, without losing the result from the start (keep
-the rules general: no particular cells). Give the complete revised list as JSON:
+the rules general: {"independent of the game's length" if LITERALS_ON_POSITIONS else "no particular cells"}). Give the
+complete revised list as JSON:
 {{"rules": [{{"condition": "...", "action": "..."}}, ...]}}"""
 
 
@@ -232,9 +236,11 @@ def regret_report(p: PacInstance, rules, top: int = 5) -> str:
     pol = p.ch_action >= 0
     qa = np.full((p.S, 4), np.nan)
     qa[p.ch_state[pol], p.ch_action[pol]] = q[pol]
-    regret = np.where(p.decision, v - opt, 0.0)
-    lines, seen = [f"### {p.H}-move game: average excess crash probability over all decision situations "
-                   f"{regret[p.decision].mean():.4f}"], set()
+    states = p.decision if EARLY_STEPS is None else p.decision & (p.state_vars["steps"] <= EARLY_STEPS)
+    regret = np.where(states, v - opt, 0.0)
+    lines, seen = [f"### {p.H}-move game: average excess crash probability over "
+                   f"{'all decision situations' if EARLY_STEPS is None else 'the situations of its first ' + str(EARLY_STEPS + 1) + ' moves'} "
+                   f"{regret[states].mean():.4f}"], set()
     for s in np.argsort(-regret):
         if len(seen) >= top or regret[s] < 1e-3:
             break
@@ -255,7 +261,12 @@ def regret_report(p: PacInstance, rules, top: int = 5) -> str:
     return "\n".join(lines)
 
 
+EARLY_STEPS = None   # v4: regret only over states with at most this many moves made, in the longest training game
+
+
 def mean_regret(rules, insts) -> float:
+    if EARLY_STEPS is not None:
+        return uniform_regret(insts[-1], rules, optimum_values(insts[-1]), EARLY_STEPS)
     return float(np.mean([uniform_regret(p, rules, optimum_values(p)) for p in insts]))
 
 
@@ -458,7 +469,7 @@ def determinize(rules, insts):
         sc = score(evaluate(det, insts))
         key = (sc[0], sc[2])
         if UNIFORM and sc[0] == len(insts):
-            key += (-uniform_regret(insts[-1], det, optimum_values(insts[-1])),)
+            key += (-uniform_regret(insts[-1], det, optimum_values(insts[-1]), EARLY_STEPS),)
         if best is None or key > best[3]:
             best = (det, list(order), sc, key)
     return best[:3]

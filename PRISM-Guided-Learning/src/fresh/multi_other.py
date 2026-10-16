@@ -16,6 +16,7 @@ ap.add_argument("--dataset", nargs="+", default=["mer_transfer.csv"])
 ap.add_argument("--uniform", action="store_true")
 ap.add_argument("--literals", action="store_true", help="Pac-Man v3: numbers allowed on positions and headings")
 ap.add_argument("--optimal", action="store_true", help="MER v2: feedback from the best scheduler's visited states")
+ap.add_argument("--early", type=int, default=None, help="Pac-Man v4: uniform mode over the first moves only")
 ap.add_argument("--repeats", nargs="+", type=int, default=[1, 2, 3])
 ap.add_argument("--chains", type=int, default=8)
 ap.add_argument("--rounds", type=int, default=6)
@@ -38,6 +39,7 @@ else:
     import fresh.pm_method as M
     M.UNIFORM = args.uniform
     M.LITERALS_ON_POSITIONS = args.literals
+    M.EARLY_STEPS = args.early
 
     def one(k):
         s = M.run(args.chains, args.rounds, Path(args.out) / f"run{k}")
