@@ -25,7 +25,7 @@ from core.backends import make_backend
 from core.domain import Instance, load_domain
 from core.planner import SymbolicPlanner
 from core.scheduler import SCHEDULERS, failed_result
-from core.training import training_sets
+from core.training import chains, training_sets
 from logging_utils import close_logger, setup_logger
 from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
@@ -71,6 +71,8 @@ def run(cfg: Config, run_dir: str) -> str:
     if cfg.run.train_sets:
         instances = training_sets(instances, cfg.run.train_sets, cfg.run.hidden_sets, cfg.run.pool_sets)
     instances = instances[:cfg.run.limit]
+    # `planner.chains`: independent loops per training set, run side by side, then one is chosen per set
+    units = [c for inst in instances for c in chains(inst, cfg.planner.chains)] if cfg.planner.chains > 1 else instances
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
     backend = make_backend(cfg.llm)
@@ -91,13 +93,19 @@ def run(cfg: Config, run_dir: str) -> str:
             with open(os.path.join(run_dir, "llm_tasks.jsonl"), "w", encoding="utf-8") as task_log:
                 scheduler = SCHEDULERS[cfg.run.scheduler](planner.solve_steps, backend, cfg.run.workers, worker_logger,
                                                           task_log=task_log, on_finish=finish)
-                results = scheduler.run(instances)
+                results = scheduler.run(units)
             main_logger.info(scheduler.summary())
         else:
-            results = solve_threaded(planner, instances, cfg.run.workers, worker_logger, finish)
+            results = solve_threaded(planner, units, cfg.run.workers, worker_logger, finish)
     finally:
         backend.close()
 
+    if cfg.planner.chains > 1:
+        results = {inst.id: planner.select_chain(inst, [results[c.id] for c in chains(inst, cfg.planner.chains)])
+                   for inst in instances}
+        for inst in instances:
+            main_logger.info(f"Instance {inst.id}: chain {results[inst.id]['chain']} chosen, margins "
+                             f"{[c['margin'] for c in results[inst.id]['chains']]}")
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")

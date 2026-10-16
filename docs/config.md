@@ -48,7 +48,8 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `planner.branch` | `joint` | REFINE vs EXTEND: one completion must pass every requirement (`joint`), or each on its own (`per_requirement`) | `pre_phase_a` |
 | `planner.feedback` | `blame` | `blame`: REFINE/EXTEND prompts with blame; `table`: results table and previous rules only, no branch | S1 |
 | `planner.max_rules` / `max_condition_chars` | 64 / 200 | schema caps (stop repetition loops) | — |
-| `planner.ties` | `keep` | keep-best when a candidate scores exactly as the kept list: `keep` the earlier list, or `newest` (the newer one, so the next feedback is about it; on flat plateaus such as MER's 0.2 every candidate ties and `keep` resends the same prompt) | `haiku_*_optfb_ties` |
+| `planner.keep_ties` | `older` | keep-best on equal scores: `older` keeps the kept list, `newer` keeps the new candidate (so the next feedback is about it; on plateaus such as MER's the prompt otherwise repeats) | — |
+| `planner.chains` | 1 | independent loops per training set (each from the initial prompt, with its own rounds and keep-best), run side by side; the final list is the chain whose rules have the largest worst-case margin on the members (the smallest margin over members and requirements, exact values; first chain on ties). Needs `run.train_sets`, not `run.pool_sets`. Tokens add up over the chains | `haiku_*_chains5` |
 | `feedback.blame` | `mass` | blame signal: `mass`, `regret` (one-step regret, no occupancy), `random` (placebo), `none` (no blame section) | S5, V1, V2 |
 | `feedback.horizon` | 100 | mass-analysis occupancy horizon in steps, or `domain` for the domain's own (UUV: the mission deadline, 30 / 70; U1 sets it) | — |
 | `feedback.top_k` / `states_per_rule` | 10 / 3 | how much blame / how many hotspots the prompt shows | — |

@@ -66,7 +66,9 @@ class PlannerConfig:
     feedback: str                             # blame (REFINE/EXTEND with blame) | table (S1: results table only)
     max_rules: int
     max_condition_chars: int
-    ties: str                                 # keep (the earlier list on equal scores) | newest (the newer one)
+    chains: int                               # independent loops per training set; the final list is the chain's
+                                              # with the largest worst-case margin on the members (1: one loop)
+    keep_ties: str                            # keep-best on equal scores: older (the kept list stays) | newer
 
 
 @dataclass
@@ -282,7 +284,7 @@ def validate(cfg: Config) -> None:
         "approach": (cfg.approach, {"symbolic", "legacy"}),
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
-        "planner.ties": (cfg.planner.ties, {"keep", "newest"}),
+        "planner.keep_ties": (cfg.planner.keep_ties, {"older", "newer"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),
@@ -305,5 +307,10 @@ def validate(cfg: Config) -> None:
         raise ValueError(f"prism.max_concurrent={limit!r} must be a number of processes (>= 1) or null")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
+    chains = cfg.planner.chains
+    if not (isinstance(chains, int) and not isinstance(chains, bool) and chains >= 1):
+        raise ValueError(f"planner.chains={chains!r} must be a number of chains (>= 1)")
+    if chains > 1 and (cfg.approach != "symbolic" or not cfg.run.train_sets or cfg.run.pool_sets):
+        raise ValueError("planner.chains > 1 needs symbolic training sets (run.train_sets) without run.pool_sets")
     if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
         raise ValueError(f"run.scheduler={cfg.run.scheduler} drives the symbolic planner only; legacy runs use threads")

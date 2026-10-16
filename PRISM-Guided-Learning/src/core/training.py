@@ -5,7 +5,7 @@ member, its rules are parsed for each member (instance constants differ) and ver
 is solved only when every member meets every requirement in the worst case. The frozen result is then
 certified on held-out instances with src/transfer.py. Semantics: docs/semantics.md ("Training sets").
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Sequence, Tuple
 
 from core.domain import Instance
@@ -17,6 +17,13 @@ class TrainingSet:
     members: Tuple[Instance, ...]
     hidden: Tuple[Instance, ...] = ()     # checked and scored with the members, never shown to the LLM
     pool: Tuple[Instance, ...] = ()       # once the members pass, the first of these that fails joins them
+    chain: int = 0                        # which of `planner.chains` independent loops on this set
+
+
+def chains(ts: TrainingSet, k: int) -> List[TrainingSet]:
+    """One copy of `ts` per independent loop (`planner.chains`), each solved as a set of its own; `ts` itself when
+    `k` is 1."""
+    return [ts] if k == 1 else [replace(ts, id=f"{ts.id}.chain{c}", chain=c) for c in range(k)]
 
 
 def training_sets(instances: Sequence[Instance], groups: Sequence[Sequence[int]],
