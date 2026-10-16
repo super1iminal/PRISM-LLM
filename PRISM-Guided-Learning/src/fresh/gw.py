@@ -12,6 +12,7 @@ probability, computed by value iteration on the reach / avoid form of each requi
     avoid_moving_segk    G (in_segk => !at_moving_obs)            1 - reach {in_segk & at_moving_obs}
 """
 import ast
+import warnings
 import sys
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -260,7 +261,14 @@ class Member(VecEval):
             b = np.zeros(len(idx))
             np.add.at(b, rows[~inside], pr[~inside] * target[nxt.ravel()[~inside]])
             v = target.astype(float)
-            v[idx] = spsolve(A.tocsc(), b)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                try:
+                    v[idx] = spsolve(A.tocsc(), b)
+                except Exception:      # singular (numerical ties in the improvement step): value iteration instead
+                    return self._vi(allowed, target, stop, maximize, act, return_policy)
+            if not np.isfinite(v).all():
+                return self._vi(allowed, target, stop, maximize, act, return_policy)
             q = (v[succ] * p).sum(axis=2)
             q = np.where(allowed, q, -np.inf if maximize else np.inf)
             cur = q[np.arange(S), act]
@@ -270,6 +278,25 @@ class Member(VecEval):
                 break
             act = np.where(better, q.argmax(axis=1) if maximize else q.argmin(axis=1), act)
         return (v, act) if return_policy else v
+
+    def _vi(self, allowed, target, stop, maximize, act, return_policy, tol: float = 1e-13, max_iter: int = 200000):
+        """Value iteration from below (the fallback when a policy's linear system is singular)."""
+        succ, p = self.succ, self.probs
+        v = target.astype(float)
+        neg = -np.inf if maximize else np.inf
+        live = ~stop
+        for _ in range(max_iter):
+            q = (v[succ] * p).sum(axis=2)
+            q = np.where(allowed, q, neg)
+            nv = np.where(live, q.max(axis=1) if maximize else q.min(axis=1), v)
+            if np.abs(nv - v).max() < tol:
+                v = nv
+                break
+            v = nv
+        if return_policy:
+            q = np.where(allowed, (v[succ] * p).sum(axis=2), neg)
+            return v, (q.argmax(axis=1) if maximize else q.argmin(axis=1))
+        return v
 
     def check(self, rules: Sequence[Tuple[str, str]], best: bool = True,
               allowed: Optional[np.ndarray] = None, order: Optional[Sequence[str]] = None) -> Result:

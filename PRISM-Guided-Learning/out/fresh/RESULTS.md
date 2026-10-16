@@ -78,3 +78,9 @@ was also slow (PRISM's Gauss-Seidel fallback on looping policies: up to 33 min p
 | verifier picks the action order each round | 9 | 20 | 19 | 16.00 | $0.82 |
 | feedback without the per-action sensor and risk lines | 19 | 9 | 19 | 15.67 | $1.16 |
 | one chain instead of 8 (same stop rule: ended after 16, 6, 2 answers, not 56) | 19 | 18 | 18 | 18.33 | $0.21 |
+
+## Pac-Man v3 (`pm_v3/`): v1 plus numbers on positions and headings (not on steps/moves_left/MAXSTEPS)
+Certified with `rules.general = false` (numbers allowed by the parser); my validator rejects any number above 1 in a
+comparison that involves anything but xP, yP, dP, xG0, yG0, dG0, xG1, yG1, dG1. Certified of 6 validation horizons:
+4, 3, 4 (mean 3.67; horizons 8, 10, 12 always, 20 in repeats 1 and 3 (0.5585, 0.5511); 25 and 30 never).
+To beat: 4. Cost per repeat $0.21-0.27.
