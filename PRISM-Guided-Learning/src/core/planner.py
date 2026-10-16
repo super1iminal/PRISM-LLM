@@ -42,7 +42,7 @@ from core.episode import Answer, Check, Episode, Kept, Member, margin, pessimist
 from core.prism import PrismCall, PrismError, PrismRunner
 from core.prompts import Prompts
 from core.retry import RetryPolicy
-from core.rules import ANY, OpenChoices, RuleError, SymbolicPolicy, action_orders, fixed_order
+from core.rules import ANY, OpenChoices, RuleError, SymbolicPolicy, Vocabulary, action_orders, fixed_order
 from core.scheduler import drive
 from core.tasks import LLMError, LLMResult, LLMTask, TaskFactory
 from core.training import TrainingSet
@@ -367,6 +367,8 @@ class SymbolicPlanner:
         members = list(target.members)
         specs = [self.domain.spec(i) for i in members]
         vocabs = [s.vocabulary(cfg.rules) for s in specs]
+        if cfg.rules.early_narrow and cfg.feedback.early:     # the narrowing below names places with numbers
+            vocabs = [self._places(v) for v in vocabs]
         reqs = {i.id: s.requirements for i, s in zip(members, specs)}
         req_lists = [s.requirements for s in specs]
         found = candidates(results, reqs, cfg.planner.pick_top)
@@ -398,6 +400,7 @@ class SymbolicPlanner:
                                                      not any(LITERAL_SUM.search(c) for c, _ in rules))
         literals = self.domain.repair_literals(members[0], vocabs[0])
         repairing = bool(cfg.planner.repair and fast)
+        early_loss = self._early_scorer(verifiers, specs, vocabs) if cfg.feedback.early else None
 
         def final(cand: Dict[str, Any], rules) -> Optional[Dict[str, Any]]:
             values = evaluate(rules)
@@ -407,7 +410,8 @@ class SymbolicPlanner:
             return {"rules": [list(r) for r in rules], "from": [cand["chain"], cand["iteration"]],
                     "loop_score": list(cand["score"]), "final_score": score(values, req_lists),
                     "resolved_score": res_score, "resolved_order": list(order) if order else None,
-                    "repaired": [tuple(r) for r in rules] != [tuple(r) for r in cand["rules"]]}
+                    "repaired": [tuple(r) for r in rules] != [tuple(r) for r in cand["rules"]],
+                    **({"early_loss": early_loss(rules).mean} if early_loss and cfg.feedback.early_rank else {})}
 
         finals, plain = [], []        # plain: with repair, the same candidates as the loops wrote them
         for k, cand in enumerate(found):
@@ -450,6 +454,11 @@ class SymbolicPlanner:
 
         chosen = choose(finals)
         rules = [tuple(r) for r in chosen["rules"]]
+        narrowed = None
+        if cfg.rules.early_narrow and early_loss:
+            if chosen["resolved_order"]:
+                rules = fixed_order(rules, chosen["resolved_order"])
+            rules, narrowed = self._narrow_rules(rules, evaluate, req_lists, early_loss, log)
         values = verified(rules)
         result = dict(base)
         result.update({k: v for k, v in values.items() if k != "members"})
@@ -457,7 +466,8 @@ class SymbolicPlanner:
             "final_rules": [{"condition": c, "action": a} for c, a in rules],
             "members": [{**next((m for m in base.get("members", []) if m["instance"] == row["instance"]), {}), **row}
                         for row in values["members"]],
-            "pick": {"chosen": finals.index(chosen), "candidates": finals},
+            "pick": {"chosen": finals.index(chosen), "candidates": finals,
+                     **({"narrowed": narrowed} if narrowed is not None else {})},
         })
         log(f"{target.id}: picked candidate {finals.index(chosen) + 1} (from chain {chosen['from'][0]} round "
             f"{chosen['from'][1]}), exact worst {result['final_worst']}")
@@ -469,6 +479,43 @@ class SymbolicPlanner:
             log(f"{target.id}: without repair, candidate {plain.index(alt) + 1} (from chain {alt['from'][0]} round "
                 f"{alt['from'][1]}), exact worst {result['pick']['norepair']['final_worst']}")
         return result
+
+    def _early_scorer(self, verifiers: List[PolicyVerifier], specs, vocabs) -> Callable:
+        """The pick's early check (`feedback.early`, core/early.py) of a rule list on the members; the verifier's
+        narrowings may name places with numbers."""
+        cfg = self.config
+        checks = [early.EarlyCheck(vf, cfg.feedback.early, f"instance {vf.instance.id}") for vf in verifiers]
+        places = [self._places(v) for v in vocabs]
+        return lambda rules: early.check([(c, s.policy(rules, v)) for c, s, v in zip(checks, specs, places)],
+                                         cfg.feedback.states_per_rule, cfg.feedback.early_group)
+
+    def _places(self, vocabulary: Vocabulary) -> Vocabulary:
+        """`vocabulary` with numbers allowed in comparisons with `feedback.early_group`, as the narrowings write."""
+        group = tuple(self.config.feedback.early_group)
+        return replace(vocabulary, literal_vars=tuple(dict.fromkeys(vocabulary.literal_vars + group)))
+
+    def _narrow_rules(self, rules, evaluate, req_lists, early_loss, log) -> Tuple[List[Tuple[str, str]], List[str]]:
+        """`rules.early_narrow` on the picked list (`any` already resolved): as `_narrow` in the loop, with the members
+        checked by `evaluate` (the domain's fast checker, or PRISM)."""
+        from core.pick import score
+        k, result, done = self.config.rules.early_narrow, early_loss(rules), []
+        for _ in range(k):
+            best = None
+            for group in [g for g in result.rules if g.move and g.place and g.losing >= NARROW_SHARE * g.decided][:k]:
+                place = " & ".join(f"{name} = {value}" for name, value in group.place)
+                variant = [(f"({c}) & !({place})" if a == group.move else c, a) for c, a in rules]
+                values = evaluate(variant)
+                if values is None or score(values, req_lists)[0] < len(req_lists):
+                    continue
+                r = early_loss(variant)
+                if r.mean < (best[1].mean if best else result.mean) - 1e-12:
+                    best = (variant, r, f"{group.move} kept away from {place}")
+            if best is None:
+                break
+            log(f"Narrowed {best[2]}: early loss {result.mean:.4f} -> {best[1].mean:.4f}")
+            rules, result = best[0], best[1]
+            done.append(best[2])
+        return rules, done
 
     def _episode(self, target: Union[Instance, TrainingSet], log: Callable[[str], None]) -> Episode:
         cfg = self.config
@@ -682,8 +729,7 @@ class SymbolicPlanner:
                           and g.losing >= NARROW_SHARE * g.decided][:k]:
                 place = " & ".join(f"{name} = {value}" for name, value in group.place)
                 variant = [(f"({c}) & !({place})" if a == group.move else c, a) for c, a in raw]
-                policies = [m.verifier.spec.policy(variant, replace(m.vocabulary, literal_vars=tuple(dict.fromkeys(
-                    m.vocabulary.literal_vars + tuple(self.config.feedback.early_group))))) for m in ep.members]
+                policies = [m.verifier.spec.policy(variant, self._places(m.vocabulary)) for m in ep.members]
                 candidate = self._with_early(ep, (yield from self._check(ep, policies)))
                 if candidate.passes(ep.members) and candidate.early.mean < (best or check).early.mean - 1e-12:
                     best = candidate

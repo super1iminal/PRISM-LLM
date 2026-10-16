@@ -55,7 +55,7 @@ class Prompts:
             "actions": spec.actions,
             "requirements": spec.requirements,
             "constants": [c for c in vocabulary.constants if c.name not in hide],
-            **({"strict_note": strict["note"]} if strict and strict["note"] else {}),
+            **({"strict_note": strict["note"]} if strict and strict["note"] and not vocabulary.literal_vars else {}),
             **({"worst_case": True, "worst_case_notes": self.domain.worst_case_notes(instance)}
                if prompt.worst_case else {}),
             "features": vocabulary.features,
@@ -282,9 +282,11 @@ class Prompts:
         shown = [(m, p, v) for m, p, v in zip(ep.members, kept.check.policies, kept.check.vs) if not m.hidden]
         report = "\n".join(self._member_report(m, p, v, len(shown) > 1) for m, p, v in shown)
         holds = all(not failing(m.requirements, v.worst) for m, _, v in shown)
+        early = kept.check.early is not None and holds
         return self.render(ep, "revise.md.j2", ep.primary, rules_listing=kept.check.policy.listing(), report=report,
                            history=self._history(ep, iterations), all_hold=holds,
-                           done_margin=self.config.planner.done_margin)
+                           done_margin=self.config.planner.done_margin,
+                           **({"early": self._early(ep.primary, kept.check)} if early else {}))
 
     def _lost_sets(self, member: Member):
         if member.instance.id not in self._lost:
@@ -431,6 +433,7 @@ class Prompts:
             "place": " & ".join(f"{k} = {v}" for k, v in r.place), "move": r.move,
             "best": ", ".join(f"{a} (in {n})" for a, n in sorted(r.best.items(), key=lambda t: -t[1])),
             "examples": [{"member": e.member, "state": self._state(member, e.valuation), "moves": list(e.moves),
+                          "worst": e.worst,
                           "best": list(e.best_moves), "loss": e.loss,
                           "reqs": [{"name": n, "after": a, "optimum": o} for n, (a, o) in e.values.items()]}
                          for e in r.examples],

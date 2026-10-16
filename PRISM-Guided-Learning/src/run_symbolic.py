@@ -134,6 +134,9 @@ def write_determinized(results: List[Dict[str, Any]], run_dir: str) -> None:
         rules, order = [tuple(r) for r in chosen["rules"]], chosen["resolved_order"]
         out[str(sid)] = {"order": order, "rules": [list(r) for r in (fixed_order(rules, order) if order else rules)],
                          "source": "planner.pick"}
+        if pick.get("narrowed"):        # rules.early_narrow: the final rules are the resolved, narrowed list
+            out[str(sid)] = {"order": order, "rules": [[r["condition"], r["action"]] for r in result["final_rules"]],
+                             "source": "planner.pick, narrowed"}
         if pick.get("norepair"):
             plain[str(sid)] = norepair_entry(pick["norepair"])
     with open(os.path.join(run_dir, "determinized.json"), "w", encoding="utf-8") as f:

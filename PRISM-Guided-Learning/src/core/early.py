@@ -56,6 +56,7 @@ class Example:
     member: str                     # the member's label
     valuation: Dict                 # policy variables
     moves: Tuple[str, ...]          # what the rules allow
+    worst: str                      # the allowed move that loses most (the one the loss is about)
     best_moves: Tuple[str, ...]     # the optimal actions
     loss: float
     values: Dict[str, Tuple[float, float]]   # requirement -> (value after the rules' worst move, optimal value)
@@ -171,7 +172,7 @@ def check(members: Sequence[Tuple[EarlyCheck, SymbolicPolicy]], examples: int = 
             continue
         best = tuple(a for a, l in zip(early.actions, early.loss[s]) if l <= TOL)
         r.examples.append(Example(early.label, early.valuations[s],
-                                  tuple(a for a, ok in zip(early.actions, allowed) if ok), best, loss,
+                                  tuple(a for a, ok in zip(early.actions, allowed) if ok), early.actions[move], best, loss,
                                   {q.name: (float(early.after[s, k, move]), float(early.optimal[s, k]))
                                    for k, q in enumerate(early.reqs)}))
     ranked = sorted((r for r in rules.values() if r.total > TOL), key=lambda r: -r.total)
