@@ -1,0 +1,53 @@
+// Randomised consensus: the shared-coin protocol of Aspnes and Herlihy (J. Algorithms 1990), PRISM case study of
+// Kwiatkowska, Norman and Segala (CAV 2001), the Quantitative Verification Benchmark Set's `consensus` (version 1,
+// benchmarks/mdp/consensus at qcomp commit 7403d26). Rewritten from consensus.N.prism with three changes that leave
+// every published value unchanged:
+// - all variables live in one module (the original's global counter could not be updated by labelled commands);
+// - every step of process i is labelled p{i}, so the policy is the scheduler: it picks which process moves next;
+// - a label whose process has finished moves the next unfinished process after it (cyclically), so every policy
+//   action is enabled until all have finished and each state keeps exactly the original scheduler's choices.
+
+mdp
+
+const int N = {{ n }};                    // processes
+const int K = {{ k }};                    // bound on the random walk
+const int range = 2*(K+1)*N;
+const int counter_init = (K+1)*N;
+const int left = N;                       // a check at counter <= left decides tails
+const int right = 2*(K+1)*N - N;          // a check at counter >= right decides heads
+
+formula finished = {% for i in procs %}pc{{ i }}=3{{ " & " if not loop.last }}{% endfor %};
+
+module protocol
+  // the shared coin: a counter every write moves by one
+  counter : [0..range] init counter_init;
+{% for i in procs %}
+  pc{{ i }} : [0..3] init 0;               // process {{ i }}: 0 flip, 1 write, 2 check, 3 finished
+  coin{{ i }} : [0..1] init 0;             // process {{ i }}: its coin (after deciding: the decision, 0 tails, 1 heads)
+{% endfor %}
+{% for i in procs %}
+
+  // p{{ i }}: process {{ i }} moves{% if procs | length > 1 %}, or once it has finished the next unfinished process after it{% endif %}
+
+{% for j, g in movers[i] %}
+  [p{{ i }}] {{ g }}pc{{ j }}=0 -> 0.5 : (coin{{ j }}'=0) & (pc{{ j }}'=1) + 0.5 : (coin{{ j }}'=1) & (pc{{ j }}'=1);
+  [p{{ i }}] {{ g }}pc{{ j }}=1 & coin{{ j }}=0 & counter>0 -> (counter'=counter-1) & (pc{{ j }}'=2) & (coin{{ j }}'=0);
+  [p{{ i }}] {{ g }}pc{{ j }}=1 & coin{{ j }}=1 & counter<range -> (counter'=counter+1) & (pc{{ j }}'=2) & (coin{{ j }}'=0);
+  [p{{ i }}] {{ g }}pc{{ j }}=2 & counter<=left -> (pc{{ j }}'=3) & (coin{{ j }}'=0);
+  [p{{ i }}] {{ g }}pc{{ j }}=2 & counter>=right -> (pc{{ j }}'=3) & (coin{{ j }}'=1);
+  [p{{ i }}] {{ g }}pc{{ j }}=2 & counter>left & counter<right -> (pc{{ j }}'=0);
+{% endfor %}
+{% endfor %}
+
+  // all finished: they loop together
+  [done] finished -> true;
+endmodule
+
+label "finished" = finished;
+label "all_coins_equal_0" = {% for i in procs %}coin{{ i }}=0{{ " & " if not loop.last }}{% endfor %};
+label "all_coins_equal_1" = {% for i in procs %}coin{{ i }}=1{{ " & " if not loop.last }}{% endfor %};
+label "agree" = {% for i in procs[:-1] %}coin{{ i }}=coin{{ i + 1 }}{{ " & " if not loop.last }}{% endfor %};
+
+rewards "steps"
+  true : 1;
+endrewards
