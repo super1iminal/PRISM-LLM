@@ -3,6 +3,7 @@
 ## Current results (validation; the test set is sealed)
 
 - **Which cells have runs, which are missing:** [`experiments/README.md`](experiments/README.md) (`python src/run_experiment.py --index`).
+- **The clean-slate implementation's own results** (the first version of the core loop, before it was ported; Haiku 5.5): [`../fresh/RESULTS.md`](../fresh/RESULTS.md): families 19.44 per list, random grids 7.92, its ablations. Runnable code: branch `fresh-transfer` (tag `fresh-transfer-oct16`).
 - **RQ1, our best configuration against the baselines:** [`experiments/rq1_comparison/REPORT.md`](experiments/rq1_comparison/REPORT.md). Every baseline number is PRISM-certified. Figures, best configuration of each method: `rq1_grids.png`, `rq1_grids_noclose.png`, `rq1_families.png`, `rq1_pacman.png`; Pac-Man's headline, worst-case crash probability against the horizon: [`rq1_pacman_horizon.png`](experiments/rq1_comparison/rq1_pacman_horizon.png). `chosen.csv`: the configuration chosen per method, which the test pass uses.
 - **RQ2, ablations against the core configuration:** at a glance in [`experiments/rq2_overview.png`](experiments/rq2_overview.png); one report each:
   - [feedback, restarts, or both](experiments/rq2_feedback/REPORT.md) (`rq2_feedback`)
