@@ -53,10 +53,11 @@ class TaskFactory:
     retry, return the identical answer).
     """
 
-    def __init__(self, config: LLMConfig, instance_id: Any):
+    def __init__(self, config: LLMConfig, instance_id: Any, first_call: int = 0):
+        """`first_call` offsets n, so independent loops on one instance (`planner.chains`) get other seeds."""
         self.config = config
         self.instance_id = instance_id
-        self.calls = 0
+        self.calls = first_call
 
     def make(self, prompt: str, schema: Optional[Dict[str, Any]], **meta: Any) -> LLMTask:
         cfg = self.config

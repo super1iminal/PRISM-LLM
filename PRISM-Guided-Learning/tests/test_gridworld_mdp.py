@@ -4,14 +4,14 @@ import shutil
 
 import pytest
 
-from baselines.gridworld_mdp import ACTIONS, FEATURES, GridMDP, RuleScorer, first_allowed
+from baselines.gridworld_mdp import ACTIONS, FEATURES, OPTIONAL_FEATURES, GridMDP, RuleScorer, first_allowed
 from config import load_config
 from core.domain import load_domain
 from core.rules import fixed_order
 from core.verifier import PolicyVerifier
 
 needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on PATH")
-CFG = load_config("haiku_mi_grid_large_closer", ["rules.hidden_features=[]"])
+CFG = load_config("haiku_mi_grid_large_closer", ["rules.hidden_features=[]", "rules.extra_features=[collide]"])
 RULES = [({"closer": True, "hazard": False, "risky": False}, [2, 1, 0, 3]),
          ({"closer": True, "hazard": False}, [1, 2, 3, 0]),
          ({"wall": False, "hazard": False}, None),
@@ -28,7 +28,7 @@ def test_features_match_the_core_rule_evaluator(dataset, i):
     domain, inst = _instance(dataset, i)
     mdp, spec = GridMDP(inst.data), domain.spec(inst)
     vocab = spec.vocabulary(CFG.rules)
-    for f in FEATURES:
+    for f in FEATURES + OPTIONAL_FEATURES:
         policies = {a: spec.policy([(f, a)], vocab) for a in ACTIONS}
         for idx in random.Random(0).sample(range(mdp.S), 100):
             r, c, s, o = mdp.states[idx]

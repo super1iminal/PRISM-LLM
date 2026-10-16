@@ -72,6 +72,8 @@ def kept_lists(record: dict, requirements_of: Optional[Callable[[int], list]] = 
     """Per round of one sample record: the round whose rules keep-best holds after it, those rules, the prompt and
     output tokens spent so far, and whether the kept rules pass every member in the worst case. With
     `requirements_of` (instance id -> its requirements), also the kept rules' training score (`training_met`)."""
+    if "chains" in record:
+        raise ValueError("budget curves follow one loop per training set; this run has planner.chains > 1")
     out, kept, prompt, output = [], None, 0, 0
     for it in record.get("iterations", []):
         prompt += it.get("llm_prompt_tokens") or 0

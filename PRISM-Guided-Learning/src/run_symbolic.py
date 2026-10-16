@@ -25,7 +25,8 @@ from core.backends import make_backend
 from core.domain import Instance, load_domain
 from core.planner import SymbolicPlanner
 from core.scheduler import SCHEDULERS, failed_result
-from core.training import training_sets
+from core.rules import fixed_order
+from core.training import chains, training_sets
 from logging_utils import close_logger, setup_logger
 from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
@@ -71,6 +72,8 @@ def run(cfg: Config, run_dir: str) -> str:
     if cfg.run.train_sets:
         instances = training_sets(instances, cfg.run.train_sets, cfg.run.hidden_sets, cfg.run.pool_sets)
     instances = instances[:cfg.run.limit]
+    # `planner.chains`: independent loops per training set, run side by side, then one is chosen per set
+    units = [c for inst in instances for c in chains(inst, cfg.planner.chains)] if cfg.planner.chains > 1 else instances
     main_logger = setup_logger("main", run_dir=run_dir, include_timestamp=False)
 
     backend = make_backend(cfg.llm)
@@ -91,18 +94,47 @@ def run(cfg: Config, run_dir: str) -> str:
             with open(os.path.join(run_dir, "llm_tasks.jsonl"), "w", encoding="utf-8") as task_log:
                 scheduler = SCHEDULERS[cfg.run.scheduler](planner.solve_steps, backend, cfg.run.workers, worker_logger,
                                                           task_log=task_log, on_finish=finish)
-                results = scheduler.run(instances)
+                results = scheduler.run(units)
             main_logger.info(scheduler.summary())
         else:
-            results = solve_threaded(planner, instances, cfg.run.workers, worker_logger, finish)
+            results = solve_threaded(planner, units, cfg.run.workers, worker_logger, finish)
     finally:
         backend.close()
 
+    if cfg.planner.pick == "candidates":
+        # every round of every chain competes; repaired and checked on the members (core/pick.py)
+        results = {inst.id: planner.pick_candidates(inst, [results[c.id] for c in chains(inst, cfg.planner.chains)],
+                                                    main_logger.info) for inst in instances}
+    elif cfg.planner.chains > 1:
+        results = {inst.id: planner.select_chain(inst, [results[c.id] for c in chains(inst, cfg.planner.chains)])
+                   for inst in instances}
+        for inst in instances:
+            main_logger.info(f"Instance {inst.id}: chain {results[inst.id]['chain']} chosen, margins "
+                             f"{[c['margin'] for c in results[inst.id]['chains']]}")
     ordered = [results[inst.id] for inst in instances]
     save_results(ordered, instances, run_dir)
+    if cfg.planner.pick == "candidates":
+        write_determinized(ordered, run_dir)
     main_logger.info(f"Results saved to: {run_dir}")
     close_logger(main_logger)
     return run_dir
+
+
+def write_determinized(results: List[Dict[str, Any]], run_dir: str) -> None:
+    """`planner.pick: candidates`: <run>/determinized.json (src/determinize.py's format) with each chosen list's `any`
+    rules resolved by the order the pick found best on the training members, so that `transfer.py --rules
+    determinized` certifies that variant without determinize.py's PRISM search."""
+    out = {}
+    for sid, result in enumerate(results):
+        pick = result.get("pick")
+        if not pick:
+            continue
+        chosen = pick["candidates"][pick["chosen"]]
+        rules, order = [tuple(r) for r in chosen["rules"]], chosen["resolved_order"]
+        out[str(sid)] = {"order": order, "rules": [list(r) for r in (fixed_order(rules, order) if order else rules)],
+                         "source": "planner.pick"}
+    with open(os.path.join(run_dir, "determinized.json"), "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=1)
 
 
 def solve_threaded(planner: SymbolicPlanner, instances: List[Instance], workers: int,
