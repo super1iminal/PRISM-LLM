@@ -85,7 +85,7 @@ Plan 01 copies these into `DECISIONS.md`, deleting the **[REVIEW]** items they s
 4. **Thresholds for the new benchmark models** (plan 08): the optimum plus 5% of it per instance (minus 5% when maximizing).
 5. **Sonnet: none for now.** Haiku only until we truly think we have found an improvement or the final method. Then ask Asher.
 6. **`closer` stays in the configuration we claim, for now.** Removing it may be tried again later, so the no-`closer` benchmark and ablation cells stay.
-7. **Feedback should be in feature space, not coordinates.** Plan 04 makes it complete and tests it. It enters the core unless clearly worse.
+7. **Feedback in feature space: tested and dropped from the core** (Asher, later on Oct 15). Plan 04 found it worse than coordinates (grids −0.50, families −2.13, Pac-Man level), so the core keeps coordinate feedback (`feedback.space: states`). Feature space stays an ablation cell.
 
 ## Still open
 
