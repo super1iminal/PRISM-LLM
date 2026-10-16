@@ -58,3 +58,74 @@ the two runs' chosen lists per set (= 10 chains): 12 / 8 / 19, 13.0.
 Not run: the third families run, families with 10 chains, grids with and without `closer`: the OpenRouter workspace
 budget ran out on Oct 16 at ~02:20 (403 until Oct 19). A partial grids-without-`closer` run (3 of 4 sets: 4, 3, 5
 certified, numpy) was removed from the store.
+
+## 4. Ties left open (post hoc; `open_table.py`, `open_eval.py`)
+
+Each list with its ties open (core.rules.open_ties: the worst case over every action an `any` rule allows): training
+values on the numpy model, held-out certification from the runs' PRISM `transfer_*_open.csv` (for runs that keep
+`any`, `any_order: none`/`report`, the final CSV). Best of 6 (the fresh method's chain count), three-member
+conditions.
+
+The loop's lists (orders resolved in the loop; 47 per family with an open CSV) depend on their order: with ties open
+they certify 2.87 / 0.66 / 0.72 (adjacent / crossing / rooms) instead of 13.96 / 2.19 / 7.72.
+
+| families, best of 6 | adjacent | crossing | rooms |
+|---|---|---|---|
+| one list, resolved | 13.96 | 2.19 | 7.72 |
+| ties open: members passing > shortfall > margin | 9.74 | 2.92 | 3.24 |
+| ties open: margin | 9.66 | 2.27 | 3.08 |
+| resolved: keep-best score | 13.57 | 5.29 | 8.66 |
+| resolved: margin | 16.79 | 7.27 | 8.95 |
+| resolved: largest-member margin | 17.02 | 4.40 | 11.24 |
+
+Lists written with ties open (`any_order: none`/`report`): grids 111 lists, one list 5.71, best of 6 by members
+passing > shortfall > margin 6.40 (10-90%: 6-7), by margin 6.36; families only 9 per family (no crossing list
+certifies anything), grids without `closer` 12 lists, all certify 0.
+
+Spearman correlation with held-out certification:
+- ties open (families, 47 per family): members passing +0.87 / +0.53 / +0.79, shortfall -0.64 / -0.78 / -0.51,
+  margin +0.69 / +0.45 / +0.52, largest-member margin +0.90 / +0.78 / +0.51 (adjacent / crossing / rooms); grids
+  (lists written with ties open, 111): members passing +0.55, margin +0.36, largest-member margin +0.43.
+- resolved (same lists): members passing -0.16 / +0.88 / +0.40, margin +0.47 / +0.43 / +0.55, largest-member margin
+  +0.73 / +0.48 / +0.89.
+
+## 5. Summary (`final_table.py lists.csv open_table.csv`)
+
+Post hoc rows: mean and 10-90% range of the chosen list over random K-subsets of the pool (PRISM-certified lists). The chain runs are in section 3.
+
+| benchmark | rule | lists | certified per list | core (current) | best baseline |
+|---|---|---|---|---|---|
+| families/rooms | one list (resolved) | 53 | 7.79 | 8.4 | 19 PPO |
+| families/rooms | best of 5, keep-best score | 53 | 9.05 (1.0-12.0) | | |
+| families/rooms | best of 5, margin | 53 | 9.08 (1.0-12.0) | | |
+| families/rooms | best of 5, largest-member margin | 53 | 11.16 (10.0-12.0) | | |
+| families/rooms | best of 10, margin | 53 | 8.29 (1.0-12.0) | | |
+| families/crossing | one list (resolved) | 53 | 2.21 | 4.6 | 19 trees |
+| families/crossing | best of 5, keep-best score | 53 | 4.20 (0.0-13.0) | | |
+| families/crossing | best of 5, margin | 53 | 6.31 (0.0-13.0) | | |
+| families/crossing | best of 5, largest-member margin | 53 | 3.70 (0.0-3.0) | | |
+| families/crossing | best of 10, margin | 53 | 9.78 (0.0-18.0) | | |
+| families/adjacent | one list (resolved) | 53 | 14.13 | 16.0 | 19 PPO |
+| families/adjacent | best of 5, keep-best score | 53 | 13.71 (11.0-16.2) | | |
+| families/adjacent | best of 5, margin | 53 | 16.66 (13.0-19.0) | | |
+| families/adjacent | best of 5, largest-member margin | 53 | 16.82 (14.0-19.0) | | |
+| families/adjacent | best of 10, margin | 53 | 17.24 (16.0-19.0) | | |
+| grids | one list (resolved) | 216 | 5.96 | 6.25 (5.50-7.00) | 6.00 template |
+| grids | best of 5, keep-best score | 216 | 6.35 (5.0-8.0) | | |
+| grids | best of 5, margin | 216 | 6.51 (5.0-8.0) | | |
+| grids | best of 5, largest-member margin | 216 | 6.69 (6.0-8.0) | | |
+| grids | best of 10, margin | 216 | 6.79 (5.0-8.0) | | |
+| grids | ties open: best of 6, members passing > shortfall > margin | 111 | 6.40 (6.0-7.0) | | |
+| grids_noclose | one list (resolved) | 20 | 3.40 | 3.40 (3.00-3.75) | 6.00 template |
+| grids_noclose | best of 5, keep-best score | 20 | 4.10 (3.0-5.0) | | |
+| grids_noclose | best of 5, margin | 20 | 4.09 (3.0-5.0) | | |
+| grids_noclose | best of 5, largest-member margin | 20 | 3.76 (2.0-5.0) | | |
+| grids_noclose | best of 10, margin | 20 | 4.24 (3.0-5.0) | | |
+| grids_noclose | ties open: best of 6, members passing > shortfall > margin | 12 | 0.00 (0.0-0.0) | | |
+| pacman | one list (resolved) | 19 | 2.53 | 2.40 (1-3) | 4 trees |
+| pacman | best of 5, keep-best score | 19 | 2.99 (3.0-3.0) | | |
+| pacman | best of 5, margin | 19 | 2.99 (3.0-3.0) | | |
+| pacman | best of 5, largest-member margin | 19 | 2.99 (3.0-3.0) | | |
+| pacman | best of 10, margin | 19 | 3.00 (3.0-3.0) | | |
+| mer | one list (resolved) | 5 | 2.40 | 2.40 (0-3) | 6 trees |
+| mer_n | one list (resolved) | 5 | 2.40 | 2.40 (0-6) | 6 trees |
