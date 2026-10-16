@@ -9,7 +9,7 @@ import numpy as np
 from config import Config
 from core.analysis import failing_trace
 from core.domain import Domain, Instance, Requirement, Spec, failing
-from core.episode import Episode, Kept, Member, margin
+from core.episode import Check, Episode, Kept, Member, margin
 from core.failures import action_lines, allowed_here, choice_label, failure_states, lost_sets
 from core.optimal import Strategy, at, demonstration, deviations
 from core.rules import SymbolicPolicy, Vocabulary, feature_values
@@ -60,6 +60,7 @@ class Prompts:
             "features": vocabulary.features,
             "any_action": vocabulary.allow_any,
             "general": vocabulary.general,
+            **({"literal_vars": list(vocabulary.literal_vars)} if vocabulary.literal_vars else {}),
             **({"generality": True} if prompt.generality else {}),
             **({"tie_break": True} if prompt.tie_break else {}),
             **({"any_order": self.config.rules.any_order, "action_list": ", ".join(spec.actions)}
@@ -350,7 +351,8 @@ class Prompts:
         return self.render(ep, "table.md.j2", member, **results)
 
     def refine(self, ep: Episode, member: Member, policy: SymbolicPolicy, v: Verification,
-               blamed: List[Requirement], joint_conflict: bool, results: Dict[str, Any]) -> str:
+               blamed: List[Requirement], joint_conflict: bool, results: Dict[str, Any],
+               early: Optional[Check] = None) -> str:
         """Rewrite the rules, shown how much of the lost probability each rule's states carry."""
         kind = self.config.feedback.blame
         rules = policy.rules
@@ -365,10 +367,12 @@ class Prompts:
         return self.render(ep, "refine.md.j2", member, **results, failing=[r.name for r in blamed], blame=blame,
                            with_cost=any(r.reward is not None for r in blamed), joint_conflict=joint_conflict,
                            show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, blamed, policy),
-                           **self._deviations(member, v, policy), **self._legend(member))
+                           **self._deviations(member, v, policy), **self._legend(member),
+                           **({"early": self._early(member, early)} if early else {}))
 
     def extend(self, ep: Episode, member: Member, v: Verification, failing_worst: List[Requirement],
-               results: Dict[str, Any], policy: Optional[SymbolicPolicy] = None) -> str:
+               results: Dict[str, Any], policy: Optional[SymbolicPolicy] = None,
+               early: Optional[Check] = None) -> str:
         """Add rules, shown the uncovered states where the worst case loses the most probability."""
         kind = self.config.feedback.blame
         hotspots = member.analyzer.uncovered_hotspots(v, failing_worst) if kind != "none" else []
@@ -376,7 +380,8 @@ class Prompts:
                            hotspots=self._merged(member, hotspots, v),
                            with_cost=any(r.reward is not None for r in failing_worst),
                            show_blame=kind != "none", blame_kind=kind, **self._trace(member, v, failing_worst),
-                           **(self._deviations(member, v, policy) if policy is not None else {}), **self._legend(member))
+                           **(self._deviations(member, v, policy) if policy is not None else {}), **self._legend(member),
+                           **({"early": self._early(member, early)} if early else {}))
 
     def _deviations(self, member: Member, v: Verification, policy: SymbolicPolicy) -> Dict[str, Any]:
         """With `feedback.deviations`, the states the rules decide where they leave the optimal strategy most
@@ -408,6 +413,26 @@ class Prompts:
             return {}
         features = any(f.is_action_feature for f in member.vocabulary.features)
         return {"optimal_legend": OPTIMAL_LEGEND.format(features=OPTIMAL_FEATURES if features else "")}
+
+    def early(self, ep: Episode, member: Member, check: Check, results: Dict[str, Any]) -> str:
+        """The rules pass every member: show where their moves lose early in the games (`feedback.early`)."""
+        return self.render(ep, "early.md.j2", member, **results, early=self._early(member, check))
+
+    def _early(self, member: Member, check: Check) -> Dict[str, Any]:
+        """Where the checked rules' moves lose early in the games (core/early.py), as the templates show it."""
+        result, rules = check.early, check.policy.rules
+        top = [{
+            "rule": r.rule, "losing": r.losing, "decided": r.decided, "mean": r.total / max(r.losing, 1),
+            "text": f"{rules[r.rule].condition} (action {rules[r.rule].action})" if r.rule is not None else "",
+            "place": " & ".join(f"{k} = {v}" for k, v in r.place), "move": r.move,
+            "best": ", ".join(f"{a} (in {n})" for a, n in sorted(r.best.items(), key=lambda t: -t[1])),
+            "examples": [{"member": e.member, "state": self._state(member, e.valuation), "moves": list(e.moves),
+                          "best": list(e.best_moves), "loss": e.loss,
+                          "reqs": [{"name": n, "after": a, "optimum": o} for n, (a, o) in e.values.items()]}
+                         for e in r.examples],
+        } for r in result.rules[:self.config.feedback.top_k]]
+        return {"mean": result.mean, "losing": result.losing, "states": result.states,
+                "clock": self.config.feedback.early, "rules": top}
 
     def _trace(self, member: Member, v: Verification, failing_reqs: List[Requirement],
                policy: Optional[SymbolicPolicy] = None) -> Dict[str, Any]:

@@ -18,7 +18,7 @@ import argparse
 import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -86,8 +86,15 @@ def norepair_rules(run_dir: Path, key: str = "rules") -> Dict[int, List[Tuple[st
     return {int(sid): [tuple(r) for r in entry[key]] for sid, entry in data.items()}
 
 
+def narrowed_rules(run_dir: Path) -> Dict[int, List[Tuple[str, str]]]:
+    """Source sample id -> its rules after src/narrow.py's narrowings (<run dir>/narrowed.json)."""
+    data = json.loads((run_dir / "narrowed.json").read_text(encoding="utf-8"))
+    return {int(sid): [tuple(r) for r in entry["rules"]] for sid, entry in data.items()}
+
+
 RULES = {"final": (final_rules, ""), "determinized": (determinized_rules, "_determinized"),
-         "polished": (polished_rules, "_polished"), "open": (final_rules, "_open"),
+         "polished": (polished_rules, "_polished"), "narrowed": (narrowed_rules, "_narrowed"),
+         "open": (final_rules, "_open"),
          "norepair": (norepair_rules, "_norepair"),
          "norepair_determinized": (lambda run_dir: norepair_rules(run_dir, "determinized"), "_norepair_determinized")}
 
@@ -156,10 +163,11 @@ def main(argv=None):
     parser.add_argument("--set", action="append", default=[], help="Override key=value (repeatable)")
     parser.add_argument("--workers", type=int, default=None, help="Shortcut for --set workers=N")
     parser.add_argument("--rules", choices=list(RULES), default="final",
-                        help="The run's final rules; those of src/determinize.py or src/polish.py (written to "
-                             "*_determinized.csv, *_polished.csv); or the final rules with their action orders left "
-                             "open (core.rules.open_ties, *_open.csv: certified however ties are broken); or the pick "
-                             "without repair, as chosen or resolved (norepair.json, *_norepair*.csv)")
+                        help="The run's final rules; those of src/determinize.py, src/polish.py or src/narrow.py "
+                             "(written to *_determinized.csv, *_polished.csv, *_narrowed.csv); or the final rules with "
+                             "their action orders left open (core.rules.open_ties, *_open.csv: certified however ties "
+                             "are broken); or the pick without repair, as chosen or resolved (norepair.json, "
+                             "*_norepair*.csv)")
     parser.add_argument("--targets", default=None,
                         help='Only these target ids, e.g. "12-19" (rows for other targets in an existing CSV are kept)')
     parser.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
@@ -168,6 +176,8 @@ def main(argv=None):
                          args.set + ([f"workers={args.workers}"] if args.workers is not None else []))
 
     cfg = load_run_config(args.run_dir)
+    if args.rules == "narrowed" or cfg.rules.early_narrow:   # narrowings name places with numbers
+        cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     dataset = args.data or cfg.domain.dataset
     targets = domain.load_instances(dataset)

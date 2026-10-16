@@ -104,15 +104,19 @@ class Spec:
     constants: List[Constant] = field(default_factory=list)   # named instance values rules may use
     features: List[Feature] = field(default_factory=list)     # conditions the domain computes for rules
 
-    def vocabulary(self, rules) -> Vocabulary:
+    def vocabulary(self, rules, literal_vars: Optional[Sequence[str]] = None) -> Vocabulary:
         """The vocabulary a run's `rules` config allows: with `rules.extended`, this instance's constants and
         features (minus `rules.hidden_features`; optional ones only if named in `rules.extra_features`) and `any`
-        rules; otherwise the base language."""
+        rules; otherwise the base language. With `rules.shared_literals`, numbers may also be compared with
+        `literal_vars` (the planner passes the variables whose range is the same on every training member; by
+        default every variable, for checking frozen rules)."""
         if not rules.extended:
             return Vocabulary()
         features = [f for f in self.features if f.name not in rules.hidden_features
                     and (not f.optional or f.name in rules.extra_features)]
-        return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general)
+        shared = (tuple(literal_vars if literal_vars is not None else [v.name for v in self.variables])
+                  if rules.general and getattr(rules, "shared_literals", False) else ())
+        return Vocabulary(list(self.constants), features, allow_any=True, general=rules.general, literal_vars=shared)
 
     def policy(self, rules: Iterable[Tuple[str, str]], vocabulary: Optional[Vocabulary] = None) -> SymbolicPolicy:
         """`(condition, action)` pairs parsed into a policy over these variables and actions, with `vocabulary`'s

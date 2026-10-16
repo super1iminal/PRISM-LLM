@@ -43,6 +43,7 @@ class Member:
     context: Dict[str, Any]           # prompt context of this instance
     hidden: bool = False              # checked and scored, but never shown to the LLM (`run.hidden_sets`)
     scorer: Optional[Any] = None      # the domain's fast model, scoring `any` orders (`rules.any_scorer`, `any_prune`)
+    early: Optional[Any] = None       # its states early in the game (`feedback.early`, core/early.py)
 
     @property
     def requirements(self) -> List[Requirement]:
@@ -78,6 +79,7 @@ class Answer:
     seconds: float = 0.0              # wall time, including queueing and, in lockstep, waiting for the batch
     any_order: Optional[List[str]] = None   # the order `any` rules were resolved in (`rules.any_order`)
     any_report: Optional[Dict[str, Any]] = None   # `rules.any_order: report`: the order that would do best
+    narrowed: List[str] = field(default_factory=list)   # `rules.early_narrow`: the narrowings the verifier made
 
 
 @dataclass
@@ -86,6 +88,8 @@ class Check:
     policies: List[SymbolicPolicy]
     vs: List[Verification]
     any_report: Optional[Dict[str, Any]] = None   # `rules.any_order: report`: the best order, reported as feedback
+    early: Optional[Any] = None       # `feedback.early`: the rules' loss early in the games (core/early.py)
+    early_ranked: bool = True         # `feedback.early_rank`: the early loss counts in the score
 
     @property
     def policy(self) -> SymbolicPolicy:
@@ -93,8 +97,9 @@ class Check:
         return self.policies[0]
 
     def score(self, members: List[Member]) -> Tuple:
-        """The members' scores, summed."""
-        return tuple(map(sum, zip(*(score(v, m.requirements) for m, v in zip(members, self.vs)))))
+        """The members' scores, summed; with `feedback.early`, the mean early loss comes after the worst shortfall."""
+        total = tuple(map(sum, zip(*(score(v, m.requirements) for m, v in zip(members, self.vs)))))
+        return total if self.early is None or not self.early_ranked else total[:3] + (self.early.mean,) + total[3:]
 
     def passes(self, members: List[Member], case: str = "worst") -> bool:
         return all(not failing(m.requirements, getattr(v, case)) for m, v in zip(members, self.vs))

@@ -57,6 +57,27 @@ def test_general_mode_rejects_instance_numbers():
         policy([("x = 2", "up")], general)
 
 
+def test_shared_literals_only_with_the_shared_variables():
+    """`rules.shared_literals`: numbers may be compared with the listed variables, never with constants or features."""
+    features = VOCAB.features + [Feature("rows_left", "rows to the goal", expr="GR - x")]
+    shared = Vocabulary(VOCAB.constants, features, allow_any=True, general=True, literal_vars=("x", "y"))
+    policy([("x = 3", "up"), ("x + 2 = y & !g1", "down"), ("!(x = 3 & at_goal_row)", "up")], shared)
+    for condition in ("x = GR + 2", "x + 2 > GR", "rows_left > 2"):
+        with pytest.raises(RuleError, match="number 2 is not allowed here.*compared with x, y"):
+            policy([(condition, "up")], shared)
+    with pytest.raises(RuleError, match="number 2 is not allowed here.*compared with x "):
+        policy([("2 < x - y", "up")], Vocabulary(VOCAB.constants, features, allow_any=True, general=True,
+                                                 literal_vars=("x",)))
+
+
+def test_spec_vocabulary_shares_literals_with_the_given_variables():
+    spec = Spec(VARS, {a: a for a in ACTIONS}, [], VOCAB.constants, VOCAB.features)
+    rules = SimpleNamespace(extended=True, general=True, hidden_features=[], shared_literals=True)
+    assert spec.vocabulary(rules).literal_vars == ("x", "y", "g1")         # frozen rules: every variable
+    assert spec.vocabulary(rules, ["x"]).literal_vars == ("x",)
+    assert spec.vocabulary(SimpleNamespace(**{**vars(rules), "shared_literals": False})).literal_vars == ()
+
+
 def test_base_language_unchanged():
     with pytest.raises(RuleError, match="unknown action 'any'"):
         policy([("true", ANY)], Vocabulary())
