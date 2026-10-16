@@ -50,3 +50,9 @@ Across x every kept list holds the error probability at 0.2, enough only where t
 ids 3, 7, 8); none exploits the x-dependent part (training: x = 0.13 fails in all three repeats). Across n, repeat
 1's list is optimal on every training instance and stays optimal on n = 4..15 (6/6); repeats 2 and 3 miss n = 3 in
 training and certify nothing.
+
+## Pac-Man v2 (`pm_v2/`): uniform-regret feedback and selection, 3 repeats
+After a list reaches the training optimum, the loop keeps revising it with the states (of every training model)
+where it crashes most often compared with the best controller; finals selected by lowest mean regret.
+Certified of 6 validation horizons: 3, 3, 3 (mean 3.00; horizons 8, 10, 12; 20 fails at 0.5768 each time);
+v1 (`pm/`) 3, 4, 3 (3.33); to beat: 4. Cost per repeat $0.22-0.25.
