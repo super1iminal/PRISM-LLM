@@ -66,6 +66,7 @@ class PlannerConfig:
     feedback: str                             # blame (REFINE/EXTEND with blame) | table (S1: results table only)
     max_rules: int
     max_condition_chars: int
+    ties: str                                 # keep (the earlier list on equal scores) | newest (the newer one)
 
 
 @dataclass
@@ -280,6 +281,7 @@ def validate(cfg: Config) -> None:
         "approach": (cfg.approach, {"symbolic", "legacy"}),
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table"}),
+        "planner.ties": (cfg.planner.ties, {"keep", "newest"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
         "rules.any_order": (cfg.rules.any_order, {"none", "rotations", "all", "declared", "report"}),

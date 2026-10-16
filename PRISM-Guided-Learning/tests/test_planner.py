@@ -311,3 +311,14 @@ def test_deviations_list_where_the_rules_leave_the_optimal_strategy(tiny_grid):
     assert "changes nothing" not in prompt
     shares = [int(m) for m in re.findall(r"^- (\d+)%", section, re.M)]
     assert shares == sorted(shares, reverse=True) and 95 <= sum(shares) <= 105
+
+
+def test_ties_go_to_the_newer_list_when_asked(tiny_grid):
+    """`planner.ties: newest`: a candidate that scores exactly as the kept list replaces it (the next feedback is about
+    it); by default the earlier list stays."""
+    same = answer(("x >= 0", "left"))                     # the same policy as LEFT, so the same score
+    kept, _ = solve(tiny_grid, [LEFT, same], 2)
+    newest, _ = solve(tiny_grid, [LEFT, same], 2, "planner.ties=newest")
+    assert kept["final_rules"] == [{"condition": "true", "action": "left"}]
+    assert newest["final_rules"] == [{"condition": "x >= 0", "action": "left"}]
+    assert not newest["iterations"][1]["improved"]

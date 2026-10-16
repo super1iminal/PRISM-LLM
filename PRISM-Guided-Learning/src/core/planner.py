@@ -227,7 +227,7 @@ class SymbolicPlanner:
             score = check.score(members)
             previous_shortfall = kept.score[2] if kept else None
             improved = kept is None or score < kept.score
-            if improved:
+            if improved or (self.config.planner.ties == "newest" and score == kept.score):
                 kept = Kept(check, score, check.focus(members))
             gain = previous_shortfall - kept.score[2] if previous_shortfall is not None else float("inf")
             for m, v in zip(members, check.vs):
