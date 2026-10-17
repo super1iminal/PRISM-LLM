@@ -100,6 +100,15 @@ RQ2 at a glance: [rq2_overview.png](rq2_overview.png) (every ablation cell again
 | Tie-breaking explained | 3/3 ✓ | 3/3 ✓ | 0/3, **3 missing** |
 | No worked examples | 3/3 ✓ | 3/3 ✓ | 0/3, **3 missing** |
 
+## [RQ2: the verifier's feedback against pure restarts](rq2_restarts/REPORT.md)
+
+`configs/experiments/rq2_restarts.yaml`
+
+| cell | families | mer |
+|---|---|---|
+| Feedback (new loop) | 3/3 ✓ | 3/3 ✓ |
+| Pure restarts | 3/3 ✓ | 3/3 ✓ |
+
 ## [RQ2e: training sets and rounds](rq2_training/REPORT.md)
 
 `configs/experiments/rq2_training.yaml`
