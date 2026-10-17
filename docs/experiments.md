@@ -4,6 +4,7 @@ The paper asks two kinds of question, and the code has one harness for each, sha
 
 - **RQ1, comparison** (`src/experiments/comparison.py`, `configs/experiments/rq1_comparison.yaml`): our best configuration per benchmark against each baseline's best. Its cells are the **core** runs (`out/results/core/`).
 - **RQ2, ablations** (`src/experiments/ablation.py`, `configs/experiments/rq2_*.yaml`): one factor at a time against a reference cell, on random grids, the gridworld families and Pac-Man (the `rq2` set in `configs/experiments/benchmarks.yaml`; cells that only make sense on gridworld say `only: [grids, families]`). Runs go to `out/results/ablations/`. Since Oct 16 the core is the rebuilt loop (the `port_*` conditions): `rq2_previous_loop` compares it with the previous loop, and the older `rq2_*` pages ablate the previous loop (their reference cell).
+  - `rq2_restarts`: the new loop's feedback against pure restarts (`port_fam_resample`, `port_mer_resample`: `planner.retry: always`) on the families and MER across x; `src/equal_spend.py` re-picks the feedback runs at the restarts' spend (`out/results/equal_spend/`, outside `core/` and `ablations/`).
 
 RQ1 covers transfer with and without gridworld's shortest-path feature `closer` (the `grids_noclose` benchmark). Two further questions come from the same runs: cost (tokens and dollars per training set, in every report) and larger instances (grids up to 20x20 and Pac-Man horizon 30, below). Readability (rules against tree nodes and network weights) has no metric in the harness.
 
