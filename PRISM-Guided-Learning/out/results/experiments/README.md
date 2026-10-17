@@ -84,6 +84,7 @@ RQ2 at a glance: [rq2_overview.png](rq2_overview.png) (every ablation cell again
 | cell | grids | grids_noclose | families | pacman | mer | mer_n |
 |---|---|---|---|---|---|---|
 | New loop (core) | 3/3 ✓ | 1/3 (launch: false) | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
+| New loop before the feedback fix | 3/3 ✓ |  | 3/3 ✓ |  |  |  |
 | Previous loop, Haiku 5.5 | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ | 5/5 ✓ |
 | Previous loop, Sonnet 5.5 | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ | 3/3 ✓ |
 

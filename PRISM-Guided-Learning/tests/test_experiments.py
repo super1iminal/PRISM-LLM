@@ -127,8 +127,8 @@ def test_shared_configuration_launches_once(tmp_path):
 
 def test_core_names_are_the_comparison_cells():
     names = base.core_names()
-    assert {"port_ts", "port_fam", "port_pacman_narrow_core"} <= set(names)
-    assert "haiku_ts_order" not in names               # the previous loop is an ablation now (rq2_previous_loop)
+    assert {"port_ts_history", "port_fam_history", "port_pacman_narrow_core"} <= set(names)
+    assert not {"haiku_ts_order", "port_ts"} & set(names)  # the previous loop and the unfixed port: rq2_previous_loop
     assert not any("+" in n for n in names)
 
 

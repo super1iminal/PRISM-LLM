@@ -1,6 +1,6 @@
 # RQ1: LLM-written rule lists against the baselines (validation)
 
-How many held-out instances does one frozen rule list certify, per method, and how many does a library of a run's lists cover? Ours is the core configuration, the loop rebuilt on Oct 16 (the `port_*` conditions): features and goal flags only in conditions, the worst case spelled out, feedback on every training member's failures, eight independent chains, a final pick by members passed and margin, `any` left open in the loop and resolved once by the pick (Pac-Man: then narrowed by the verifier). The previous loop is compared in rq2_previous_loop.
+How many held-out instances does one frozen rule list certify, per method, and how many does a library of a run's lists cover? Ours is the core configuration, the loop rebuilt on Oct 16 (the `port_*` conditions): features and goal flags only in conditions, the worst case spelled out, feedback on every training member's failures, six to eight independent chains, a final pick by members passed and margin, `any` left open in the loop and resolved once by the pick (Pac-Man: then narrowed by the verifier). On random grids and families (`port_ts_history`, `port_fam_history`; Oct 17) the failures count a sequence requirement met once the goal flags show it, states are described in words and the prompt gives a strategy hint; grids without `closer` still runs without these. The previous loop, and the new one before that fix, are compared in rq2_previous_loop.
 
 Certified: held-out targets certified per rule list (on its own group's targets where there are groups). Every target: the same over all targets, whatever the group. Library: targets certified by at least one of a run's (or baseline's) lists. Ties open: certified with the action orders left open, i.e. however ties are broken. Ours: mean over runs, range in parentheses.
 
@@ -12,7 +12,7 @@ Targets 12-19: 8 held out (each list's own training instances are left out).
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 3 | 6.75 (6.00–7.25) | 6.75 (6.00–7.25) | 8 (7–8) | 8.0 | 6.50 (6.00–6.75) | 75% | 0.102 (0.100–0.105) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 3 | 7.42 (7.00–7.75) | 7.42 (7.00–7.75) | 8 | 8.0 | 7.33 (7.00–7.75) | 75% | 0.097 (0.092–0.101) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 3.75 | 3.75 | 7 | 7.0 | 3.75 | – | – |
 | Rule-list search | Rule-list search | ✓ | – | 4.50 | 4.50 | 7 | 7.0 | 2.75 | – | – |
@@ -41,7 +41,7 @@ Targets 16-35,76-95,136-155: 60 held out (each list's own training instances are
 
 | method | configuration | figure | runs | certified | every target | best list | library | ties open | sets solved | $ / set |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 3 | 17.44 (14.67–19.00) | 31.00 (29.33–32.00) | 19 (18–20) | 58.3 (56.0–60.0) | 16.33 (13.33–18.33) | 100% | 0.074 (0.072–0.077) |
+| Ours (Haiku 5.5) | **Ours, Haiku 5.5** | ✓ | 3 | 17.44 (16.67–18.00) | 37.00 (30.00–44.00) | 20 (19–20) | 58.7 (57.0–60.0) | 16.00 (15.33–16.33) | 100% | 0.061 (0.058–0.064) |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! (reimplemented: trees over raw variables) |  | – | 0.00 | 0.00 | 0 | 0.0 | 0.00 | – | – |
 | 1-2-3-Go! (reimplemented) | 1-2-3-Go! with our features | ✓ | – | 12.33 | 20.33 | 19 | 43.0 | 12.33 | – | – |
 | Rule-list search | Rule-list search | ✓ | – | 6.00 | 11.00 | 10 | 21.0 | 3.00 | – | – |
@@ -53,7 +53,7 @@ Per group (certified per rule list on its own group):
 
 | configuration | rooms (of 20) | crossing (of 20) | adjacent (of 20) |
 |---|---|---|---|
-| Ours, Haiku 5.5 | 16.0 | 18.3 | 18.0 |
+| Ours, Haiku 5.5 | 19.7 | 17.3 | 15.3 |
 | 1-2-3-Go! (reimplemented: trees over raw variables) | 0.0 | 0.0 | 0.0 |
 | 1-2-3-Go! with our features | 2.0 | 19.0 | 16.0 |
 | Rule-list search | 10.0 | 7.0 | 1.0 |
