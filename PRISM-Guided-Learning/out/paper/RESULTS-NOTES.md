@@ -1,6 +1,6 @@
 # Results notes for the SEAMS evaluation section
 
-Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `python viz/paper_results.py`). It only reads existing runs: no LLM or PRISM calls were made for these items. Tables are in `out/paper/tables/`, figures in `out/paper/figures/`. File names use `_` where the LaTeX labels use `:` (`tab_rq1-coverage.tex` is `tab:rq1-coverage`).
+Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `python viz/paper_results.py`). The script only reads existing runs and makes no LLM or PRISM calls. Two items needed new PRISM checks of existing lists, made beforehand (no LLM calls): F3's budget curves and T4's Pac-Man NoRepair row. Their entries say how. Tables are in `out/paper/tables/`, figures in `out/paper/figures/`. File names use `_` where the LaTeX labels use `:` (`tab_rq1-coverage.tex` is `tab:rq1-coverage`).
 
 `sections/evaluation.tex` is not in this repository, so each `.tex` file follows the columns the brief lists. Each file is a tabular body: header row and booktabs rules, with no `\begin{tabular}`.
 
@@ -88,7 +88,12 @@ Every table holds only core-loop runs except where a line says otherwise.
 - **T4 `tab:rq3-ablation`** (`tables/tab_rq3-ablation.{tex,csv}`). Validation, core loop.
   - Coverage: frozen lists, as in T1.
   - Training pass rate: the share of training members the final list passes in the worst case as the loop ends (`outputs/sample_*.json`, `members[].success`; NoRepair: `pick.norepair.members`, or the back-filled set-level flag on MER).
-  - Blocks: random grids (Full, NoRepair, NoSP-Hand), families (Full, NoRepair), MER across x (Full, Restart, NoRepair), MER across n (Full, NoRepair). n = 12 / 9 / 3 / 3 lists.
+  - Blocks: random grids (Full, NoRepair, NoSP-Hand), families (Full, NoRepair), Pac-Man (Full, NoRepair), MER across x (Full, Restart, NoRepair), MER across n (Full, NoRepair). n = 12 / 9 / 3 / 3 / 3 lists.
+  - **Pac-Man NoRepair** (added 2026-10-19, PRISM only): `src/transfer.py <run> --rules norepair_determinized --targets 0-7,9` on the 3 `port_pacman_narrow_core` runs, i.e. the pick before repair with `any` resolved by its order (`transfer_pacman_transfer_norepair_determinized.csv`).
+    - It is **not narrowed**. Narrowing comes after repair in the pick, so the unrepaired list has no narrowed form. Full's Pac-Man row is the narrowed list, as in T1.
+    - Result: 3 of 6 held-out horizons in every run, against Full's 4 of 6. Both pass every training member.
+    - The difference is horizon 20, where the worst-case crash probability is 0.662 without repair against 0.5585 with it (threshold 0.56). Both fail at 25 and 30.
+    - The three runs' lists differ in text (they were picked from different chains) but give identical values on every target, in both arms.
   - LLM calls per training set are in the CSV. NoRepair equals Full by construction: same runs, and repair uses no LLM.
   - **Restart on MER**: 59.0 calls per set against Full's 63.7. Both have the same cap (8 chains × 7 rounds); restarts stop earlier when a chain reaches the margin. It is kept in the table because the budget (the cap) is the same and the gap goes against Restart. **Asher: drop the row if "same number of calls" must mean calls actually spent.**
 - **T4b** (`tables/tab_rq3-selection.csv`). Held-out targets certified per frozen Full list, split by whether the list passed every training member, core loop.
@@ -97,6 +102,17 @@ Every table holds only core-loop runs except where a line says otherwise.
 - **T4c** (`tables/tab_rq3-nosp.csv`). The "6.00 vs 3.25" on random grids without `closer` (`grids_noclose`: grid_20_large targets 12-19, 8 held out):
   - Hand (template; n = 1 list): 6 of 8.
   - Full: `port_ts_noclose`, 1 run × 4 training sets, n = 4 lists: 3.25 ± 0.96 of 8. That run is the core loop **before** the Oct 17 gridworld feedback fix, without the strategy hint, so it is not comparable with T4's Full rows.
+- **F3 `fig:rq3-budget`** (`figures/fig_rq3-budget.{pdf,csv}`; added 2026-10-19, PRISM only, no LLM calls). MER across x, validation targets 0-8 (6 held out), core loop. 3 runs each of Full (`core/port_mer`) and Restart (`ablations/port_mer_resample`), one training set per run.
+  - **How each point is made.** For round budget R = 1-7, every one of the run's 8 chains is cut to its first R rounds. The run's own pick with repair is rerun on what is left (as `src/equal_spend.py` does at one budget). `any` is resolved by the pick's order, as in T4's frozen lists. The list is then certified by `transfer.py`'s check.
+  - x is the LLM calls of those rounds summed over chains, re-asks included. Each point is the runs' mean calls and mean coverage at one R; the band is the range over runs.
+  - **Tool change.** `src/budget_transfer.py` refused multi-chain runs; it now has a chain mode (`chain_picks`, `chain_budget_table`), which writes `<run>/budget_transfer_chains.csv`.
+  - **Check.** At R = 7 the re-pick reproduces every run's stored `determinized.json` list, so its rows are the run's own transfer CSV. No check timed out or errored.
+  - **Restart's spend** is 59.0 calls (its 3 runs' totals: 64, 53, 60), the same as T4.
+    - At 59 calls (each run's last R within 59), Full certifies 6, 6 and 3 of 6, a mean of 0.83. Restart certifies 6 of 6 in every run.
+    - Full needs its full 63.7 calls to reach 6 of 6 in all runs.
+  - **The result goes against Full.** Restart's mean is at or above Full's at every R (R = 1: 0.50 vs 0.33; R = 7: 1.00 each). Every first answer certifies 3 of 6, except Full seed 3's at 0. Restart first reaches 6 of 6 at 18-57 calls, Full at 18-59.
+  - **Not monotone.** Full seed 3 certifies 6 of 6 at R = 2-4, 3 at R = 5-6 and 6 again at R = 7. The pick ranks lists by their training score, not by held-out coverage, so a later list that scores better on training can certify fewer held-out targets. Say so in the caption.
+  - With 3 runs per arm and one training set each, no difference here is significant. The planned feedback-vs-restart test (`rq2_restarts`) is on families, on the pre-fix loop.
 
 ## Missing
 
@@ -116,8 +132,7 @@ Every table holds only core-loop runs except where a line says otherwise.
 - **T4, Restart on families, random grids, Pac-Man and MER across n (core loop).** Only MER across x has a core-loop restart arm. Families has `port_fam_resample`, but that is the restart arm of the pre-fix loop (below). Smallest experiment: `port_fam_history` with `planner.retry=always`, 3 Haiku runs; likewise `port_ts_history`.
 - **T4, PassFail and Margins.** Not run on the core loop. Smallest experiment: two feedback-content switches on `port_fam_history` and `port_mer` (3 runs each). The previous loop's "results table only" arm is the closest to Margins (below). Nothing like PassFail was ever run.
 - **T4, NoSP (Full) on the core loop.** `port_ts_noclose` predates the fix. Smallest experiment: `port_ts_history` with `closer` hidden, 3 runs. Families: none.
-- **T4, NoRepair on Pac-Man.** `norepair.json` exists but was never certified on held-out horizons. Smallest experiment: `transfer.py <run> --rules norepair` on the 3 `port_pacman_narrow_core` runs (PRISM only).
-- **F3 `fig:rq3-budget`.** There are no per-round held-out certifications (budget curves) for any core-loop run. Smallest experiment: `src/budget_transfer.py` on `core/port_mer` and `ablations/port_mer_resample` (PRISM only, no LLM calls), and on the families pair once it exists.
+- **F3, families and other benchmarks.** Budget curves exist only for MER across x, the only benchmark with a core-loop restart arm (see Produced). Smallest experiment: the families restart arm above, then `src/budget_transfer.py` on both arms (PRISM only).
 
 ## Previous loop only
 

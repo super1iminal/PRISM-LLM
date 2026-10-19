@@ -17,6 +17,13 @@ Per training set (a source: one sample of the run) and round k:
 Round 1 is the LLM's first answer, before any feedback (`first_answer`): an "LLM alone" point. A set the loop
 stopped early (solved) has no rows after its last round and keeps its last list at any larger budget.
 
+A run with `planner.chains` > 1 and `planner.pick: candidates` (the core loop) has no single kept list per round: its
+final list is the pick over every round of every chain. Its curve (`chain_budget_table`) is, per round budget R, that
+pick (with repair, as src/equal_spend.py does at one budget) over every chain cut to its first R rounds, with `any`
+resolved by the pick's order (determinized.json's list), the LLM calls and tokens of those rounds, and its
+certification on each target by src/transfer.py's own check. Round R = the last round is the run's own final list.
+Writes <run dir>/budget_transfer_chains.csv.
+
 Usage (from PRISM-Guided-Learning/):
     python src/budget_transfer.py configs/experiments/rq2_feedback.yaml [--cells "F,R 18"] [--max-parallel 2]
         [--workers 2]
@@ -45,6 +52,7 @@ from results_io import sample_records
 from transfer import DEFAULT_CONFIG, TransferConfig, certify, csv_path, guard_sealed, parse_ids, training_instances
 
 BUDGET_CSV = "budget_transfer.csv"
+BUDGET_CHAINS_CSV = "budget_transfer_chains.csv"
 CHECK_COLUMNS = ["parsed", "certified", "met", "requirements", "error"]
 COSTS = {"dollars": "dollars per training set", "output_tokens": "output tokens per training set",
          "prompt_tokens": "prompt tokens per training set"}
@@ -173,6 +181,97 @@ def budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional
                          "trained": t in trained.get(r["source"], []), **cache[(h, t)]})
     df = pd.DataFrame(rows)
     df.to_csv(run_dir / BUDGET_CSV, index=False)
+    return df
+
+
+def chain_picks(run_dir: Path, log: Callable[[str], None] = print) -> List[dict]:
+    """Per training set of a `planner.chains` run and round budget R: the pick over its chains cut to their first R
+    rounds (src/equal_spend.py's re-pick), its list with `any` resolved by the pick's order, the LLM calls and tokens
+    of those rounds, and whether the list passes every member (the pick's exact check). No LLM calls."""
+    from core.planner import SymbolicPlanner
+    from core.rules import fixed_order
+    from core.training import training_sets
+    cfg = load_run_config(run_dir)
+    domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
+    sets = training_sets(domain.load_instances(cfg.domain.dataset), cfg.run.train_sets, cfg.run.hidden_sets,
+                         cfg.run.pool_sets)[:cfg.run.limit]
+    planner = SymbolicPlanner(domain, None, cfg)
+    planner.select_chain = lambda target, results: {"chain": None, "members": []}   # the pick replaces it
+    out = []
+    for sid, target in enumerate(sets):
+        rec = json.loads((run_dir / "outputs" / f"sample_{sid:03d}.json").read_text(encoding="utf-8"))
+        its = rec["iterations"]
+        for rounds in range(1, max(it["chain_iteration"] for it in its) + 1):
+            kept = [it for it in its if it["chain_iteration"] <= rounds]
+            results = [{"iterations": [dict(it, iteration=it["chain_iteration"]) for it in kept if it["chain"] == c]}
+                       for c in range(cfg.planner.chains)]
+            res = planner.pick_candidates(target, results, log=lambda line: None)
+            if "pick" not in res:
+                continue
+            chosen = res["pick"]["candidates"][res["pick"]["chosen"]]
+            rules, order = [tuple(r) for r in chosen["rules"]], chosen["resolved_order"]
+            frozen = fixed_order(rules, order) if order else rules
+            out.append({"source": sid, "round": rounds, "rules": [tuple(r) for r in frozen],
+                        "picked_from": f"{chosen['from'][0]}/{chosen['from'][1]}", "repaired": chosen["repaired"],
+                        "llm_calls": sum(it.get("llm_calls") or 0 for it in kept),
+                        "prompt_tokens": sum(it.get("llm_prompt_tokens") or 0 for it in kept),
+                        "output_tokens": sum(it.get("llm_output_tokens") or 0 for it in kept),
+                        "chains_running": len({it["chain"] for it in kept if it["chain_iteration"] == rounds}),
+                        "solved": bool(res.get("success"))})
+            log(f"[{run_dir.parent.name}/{run_dir.name}] set {sid}, rounds 1-{rounds}: "
+                f"{out[-1]['llm_calls']} calls, picked {out[-1]['picked_from']}, "
+                f"training {'passes' if out[-1]['solved'] else 'fails'}")
+    return out
+
+
+def chain_budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional[str] = None,
+                       price: Optional[Sequence[float]] = None, workers: int = 2) -> pd.DataFrame:
+    """`chain_picks` of the run in `run_dir`, each list certified on `targets` of `dataset` (default: the run's own)
+    by src/transfer.py's check (exact re-check near a threshold). The final round's list is read from the run's
+    determinized transfer CSV when it matches determinized.json. Writes <run dir>/budget_transfer_chains.csv."""
+    run_dir = Path(run_dir)
+    cfg = load_run_config(run_dir)
+    domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
+    dataset = dataset or cfg.domain.dataset
+    instances = {int(t.id): t for t in domain.load_instances(dataset)}
+    wanted = [i for i in parse_ids(targets) if i in instances] if targets else sorted(instances)
+    guard_sealed(dataset, wanted)
+    picks = chain_picks(run_dir)
+    cache: Dict[tuple, dict] = {}
+    frozen_csv = csv_path(run_dir, dataset, "determinized")
+    if frozen_csv.exists() and (run_dir / "determinized.json").exists():
+        stored = json.loads((run_dir / "determinized.json").read_text(encoding="utf-8"))
+        hashes = {int(s): rules_hash([tuple(r) for r in e["rules"]]) for s, e in stored.items()}
+        for row in pd.read_csv(frozen_csv).to_dict("records"):
+            if int(row["source"]) in hashes:
+                cache[(hashes[int(row["source"])], int(row["target"]))] = {**_check_row(row), "from_run": True}
+    lists = {rules_hash(p["rules"]): p["rules"] for p in picks}
+    todo: Dict[int, Dict[str, list]] = {}
+    for h, rules in lists.items():
+        for t in wanted:
+            if (h, t) not in cache:
+                todo.setdefault(t, {})[h] = rules
+    if todo:
+        settings = load_file(DEFAULT_CONFIG, TransferConfig)
+        runner = PrismRunner(cfg.prism)
+        with ThreadPoolExecutor(workers) as pool:
+            futures = [pool.submit(certify, domain, cfg, runner, instances[t], sources, settings.exact_near)
+                       for t, sources in todo.items()]
+            for future in as_completed(futures):
+                for row in future.result():
+                    cache[(row["source"], int(row["target"]))] = {**_check_row(row), "from_run": False}
+    trained = training_instances(run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
+    price_in, price_out = price if price else (float("nan"), float("nan"))
+    rows = []
+    for p in picks:
+        h = rules_hash(p["rules"])
+        dollars = (p["prompt_tokens"] * price_in + p["output_tokens"] * price_out) / 1e6
+        for t in wanted:
+            rows.append({**{k: v for k, v in p.items() if k != "rules"}, "rules_hash": h, "num_rules": len(p["rules"]),
+                         "dollars": dollars, "target": t, "trained": t in trained.get(p["source"], []),
+                         **cache[(h, t)]})
+    df = pd.DataFrame(rows)
+    df.to_csv(run_dir / BUDGET_CHAINS_CSV, index=False)
     return df
 
 
@@ -509,6 +608,12 @@ def main(argv=None):
     print(f"{len(jobs)} runs", flush=True)
 
     def one(run: Path, job: dict) -> str:
+        if load_run_config(run).planner.chains > 1:
+            df = chain_budget_table(run, job["targets"], job["dataset"], job["price"], args.workers)
+            held = df[~df.trained]
+            per = held.groupby(["source", "round"]).agg(calls=("llm_calls", "first"), certified=("certified", "sum"))
+            return f"[{run.parent.name}/{run.name}] chains: " + "; ".join(
+                f"set {s} R{r}: {c.calls} calls, {int(c.certified)} certified" for (s, r), c in per.iterrows())
         df = budget_table(run, workers=args.workers, **job)
         table = rounds_table(df)
         last = table.sort_values("round").groupby("source").tail(1)

@@ -407,8 +407,8 @@ def rq2_tables(seq: Dict[str, pd.DataFrame], expected: int) -> None:
 
 # ---------------------------------------------------------------- RQ3: ingredients of generation
 
-RQ3_BENCHES = {"grids": "Random grids", "families": "Grid-world families", "mer": "MER across $x$",
-               "mer_n": "MER across $n$"}
+RQ3_BENCHES = {"grids": "Random grids", "families": "Grid-world families", "pacman": "Pac-Man",
+               "mer": "MER across $x$", "mer_n": "MER across $n$"}
 RESTARTS = {"mer": "port_mer_resample"}          # pure restarts of the core loop (planner.retry: always)
 
 
@@ -438,13 +438,13 @@ def rq3_tables() -> None:
         b = EXP.spec["benchmarks"][bench]
         cfg = load_config(b.base)
         dataset = b.dataset or cfg.domain.dataset
-        configs = {"Full": (runs_of(b.base), "determinized", False),
-                   "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], "determinized",
-                               False),
+        frozen = "final" if bench == "pacman" else "determinized"     # Pac-Man: the narrowed lists, as in T1
+        configs = {"Full": (runs_of(b.base), frozen, False),
+                   "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], frozen, False),
                    "NoRepair": (runs_of(b.base), "norepair_determinized", True)}
         block = []
         for name, (runs, rules, norepair) in configs.items():
-            if not runs:
+            if not runs or not all(csv_path(r, dataset, rules).exists() for r in runs):
                 continue
             cov = pd.concat([outcomes(csv_path(r, dataset, rules), b, name, r.name) for r in runs])
             cov = per_list(cov)
@@ -510,6 +510,78 @@ def rq3_tables() -> None:
     print("wrote tables/tab_rq3-nosp.csv")
 
 
+def rq3_budget_figure(bench: str = "mer") -> None:
+    """F3: certified coverage of the held-out targets against LLM calls spent per training set, for Full and Restart
+    (src/budget_transfer.py's chain curves: per round budget R, the pick over every chain cut to its first R rounds,
+    `any` resolved). One point per R: the runs' mean calls and mean coverage, the band their range. The dotted line
+    is Restart's mean total spend; the star, Full's value there (each run's last R within that many calls)."""
+    b = EXP.spec["benchmarks"][bench]
+    arms = {"Full": runs_of(b.base), "Restart": runs_of(RESTARTS[bench], "ablations")}
+    tables = {}
+    for name, runs in arms.items():
+        per_run = []
+        for r in runs:
+            path = r / "budget_transfer_chains.csv"
+            if not path.exists():
+                return print(f"skipped fig_rq3-budget: no {path.relative_to(ROOT)}")
+            df = pd.read_csv(path)
+            df = df[df.target.isin(held_out(b)) & ~df.trained.astype(bool)]
+            df["certified"] = df.certified.fillna(False).astype(bool)
+            per_run.append(df.groupby(["source", "round"]).agg(
+                calls=("llm_calls", "first"), certified=("certified", "sum"), targets=("target", "size"),
+                solved=("solved", "first"), picked_from=("picked_from", "first")).reset_index().assign(run=r.name))
+        tables[name] = pd.concat(per_run, ignore_index=True)
+    rows = []
+    for name, t in tables.items():
+        rows += [{"arm": name, "run": r.run, "source": r.source, "round": r.round, "llm_calls": r.calls,
+                  "certified": r.certified, "targets": r.targets, "coverage": r.certified / r.targets,
+                  "solved_training": r.solved, "picked_from": r.picked_from, "bench": bench, "split": "validation"}
+                 for r in t.itertuples(index=False)]
+
+    def at(t: pd.DataFrame, budget: float) -> pd.Series:
+        """Per run: the coverage of its last round within `budget` calls (mean over its training sets)."""
+        out = {}
+        for run, g in t.groupby("run"):
+            within = g[g.calls <= budget + 1e-9].sort_values("round").groupby("source").tail(1)
+            out[run] = (within.certified / within.targets).mean() if len(within) == g.source.nunique() else np.nan
+        return pd.Series(out)
+
+    restart_spend = tables["Restart"].sort_values("round").groupby(["run", "source"]).calls.last().mean()
+    top = max(t.calls.max() for t in tables.values())
+    fig, ax = plt.subplots(figsize=(3.5, 2.3))
+    for name, t in tables.items():        # one point per round budget R: mean calls and coverage over runs
+        r = t.assign(coverage=t.certified / t.targets).groupby("round").agg(
+            calls=("calls", "mean"), mean=("coverage", "mean"), lo=("coverage", "min"), hi=("coverage", "max"))
+        st = STYLE[name]
+        ax.plot(r.calls, r["mean"], color=st["color"], marker=st["marker"], ls=st["ls"], lw=1.2, ms=4,
+                mfc="none" if name != "Full" else st["color"], label=name)
+        ax.fill_between(r.calls, r.lo, r.hi, color=st["color"], alpha=0.12, lw=0)
+    full_there = at(tables["Full"], restart_spend)
+    ax.axvline(restart_spend, color="#444444", ls=":", lw=0.8)
+    ax.plot([restart_spend], [full_there.mean()], marker="*", color=STYLE["Full"]["color"], ms=9, ls="none")
+    ax.annotate(f"Full at Restart's\nspend: {full_there.mean():.2f}", (restart_spend, full_there.mean()),
+                xytext=(restart_spend - 4, 0.12), ha="right", fontsize=7,
+                arrowprops=dict(arrowstyle="-", color="#444444", lw=0.6))
+    rows.append({"arm": "Full at Restart's spend", "llm_calls": restart_spend, "coverage": full_there.mean(),
+                 "coverage_min": full_there.min(), "coverage_max": full_there.max(), "runs": len(full_there),
+                 "bench": bench, "split": "validation"})
+    restart_end = at(tables["Restart"], top)
+    rows.append({"arm": "Restart at its spend", "llm_calls": restart_spend, "coverage": restart_end.mean(),
+                 "coverage_min": restart_end.min(), "coverage_max": restart_end.max(), "runs": len(restart_end),
+                 "bench": bench, "split": "validation"})
+    ax.set_xlabel("LLM calls spent (per training set)")
+    ax.set_ylabel("certified coverage (fraction)")
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_xlim(left=0)
+    ax.grid(axis="y", color="#e4e3df", lw=0.6)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.legend(frameon=False, loc="upper left")
+    fig.tight_layout()
+    save_figure(fig, "fig_rq3-budget")
+    pd.DataFrame(rows).to_csv(OUT / "figures" / "fig_rq3-budget.csv", index=False)
+
+
 EXP = None
 
 
@@ -526,6 +598,7 @@ def main(argv=None):
     rq1_misses(data)
     rq2_tables(sequential(args.study), args.episodes)
     rq3_tables()
+    rq3_budget_figure()
 
 
 if __name__ == "__main__":
