@@ -8,7 +8,7 @@ import pytest
 
 from config import load_config
 from core.backends import make_backend
-from core.backends.openrouter import OpenRouterBackend
+from core.backends.openrouter import OpenRouterBackend, adapt_schema
 from core.planner import rule_schema
 from core.tasks import TaskFactory
 from fakes import FakeChatClient, answer
@@ -160,3 +160,49 @@ def test_live_request_honours_the_schema_without_thinking():
     parsed = schema.model_validate_json(result.text)
     assert 1 <= len(parsed.rules) <= 4
     assert 0 < result.output_tokens < 400, f"{result.output_tokens} output tokens: is thinking still on?"
+
+
+def test_the_schema_adapter_rewrites_a_copy_for_strict_providers():
+    schema = rule_schema(["up", "any"], max_rules=64, max_condition_chars=200).model_json_schema()
+    sent = adapt_schema(schema, ["no_additional_properties"])
+    assert sent["additionalProperties"] is False and sent["$defs"]["Rule"]["additionalProperties"] is False
+    assert "additionalProperties" not in schema and "additionalProperties" not in schema["$defs"]["Rule"]
+    inlined = adapt_schema(schema, ["inline_refs", "no_additional_properties", "drop:title"])
+    rule = inlined["properties"]["rules"]["items"]
+    assert "$defs" not in inlined and rule["properties"]["action"]["enum"] == ["up", "any"]
+    assert rule["additionalProperties"] is False and "title" not in rule and "title" not in inlined
+    assert rule["properties"]["condition"]["maxLength"] == 200 and inlined["properties"]["rules"]["maxItems"] == 64
+    with pytest.raises(ValueError):
+        adapt_schema(schema, ["loosen"])
+
+
+def test_the_adapter_changes_only_the_schema_sent():
+    plain, adapted = FakeChatClient(), FakeChatClient()
+    OpenRouterBackend(llm_config(), client=plain).execute(make_tasks(1)[0])
+    OpenRouterBackend(llm_config("llm.openrouter.schema_adapter=[no_additional_properties]"),
+                      client=adapted).execute(make_tasks(1)[0])
+    a, b = plain.requests[0], adapted.requests[0]
+    assert a["response_format"]["json_schema"]["schema"] == SCHEMA
+    assert b["response_format"]["json_schema"]["schema"] == {**SCHEMA, "additionalProperties": False}
+    assert {k: v for k, v in a.items() if k != "response_format"} == {k: v for k, v in b.items() if k != "response_format"}
+
+
+def test_the_planner_still_enforces_the_limits_whatever_schema_was_sent():
+    """Rule 1(b) of the SEAMS checklist: actions as an enum, at most 64 rules, conditions of at most 200 characters
+    hold for every model, since the planner validates each answer against its own schema (core.planner._ask)."""
+    schema = rule_schema(["up", "any"], max_rules=64, max_condition_chars=200)
+    ok = {"rules": [{"condition": "x < 3", "action": "up"}]}
+    schema.model_validate_json(json.dumps(ok))
+    for bad in ({"rules": [{"condition": "x < 3", "action": "left"}]},
+                {"rules": [{"condition": "x" * 201, "action": "up"}]},
+                {"rules": [{"condition": "x < 3", "action": "up"}] * 65},
+                {"rules": "none"}):
+        with pytest.raises(Exception):
+            schema.model_validate_json(json.dumps(bad))
+
+
+def test_results_keep_the_response_metadata():
+    client = FakeChatClient()
+    result = OpenRouterBackend(llm_config(), client=client).execute(make_tasks(1)[0])
+    assert result.meta["finish_reason"] == "stop" and result.meta["provider"] == "FakeProvider"
+    assert result.meta["id"] == "gen-1" and result.meta["usage"]["completion_tokens"] == 7

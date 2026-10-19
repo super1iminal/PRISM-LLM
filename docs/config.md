@@ -41,6 +41,7 @@ python src/run_ablation.py B2 R1 R2 R3 R4 R5
 | `llm.openrouter.quantizations` | `[]` | accepted weight precisions (e.g. `[fp8, bf16]`); `[]` = any | — |
 | `llm.openrouter.timeout_s` / `max_retries` | 600 / 2 | per-request timeout; the client's retries on rate limits and server errors | — |
 | `llm.openrouter.structured` | `true` | send the answer schema as `response_format`; `false` (models without structured outputs) appends it to the prompt and cuts the reply's JSON object out of surrounding text | `smoke_free` (cluster smoke test only) |
+| `llm.openrouter.schema_adapter` | `[]` | rewrites of the answer schema sent, for strict JSON-schema providers (`openrouter.adapt_schema`): `no_additional_properties` (OpenAI's strict mode), `inline_refs`, `drop:<keyword>`; `[]` sends it as built. The planner validates every answer against its own schema either way | `*_luna` (Rajan's checklist, item 3) |
 | `planner.max_rounds` | 5 | generate → verify rounds per instance | F1 (budget curves, free), D7 (7 rounds) |
 | `planner.max_fixups` | 2 | re-asks per round for invalid answers | — |
 | `planner.retry` | `gain:0.05` | when to start over from the initial prompt: `stall:k`, `never`, `every:k`, `gain:ε`, `always`. The default is R4's, which won the retry sweep; B2 and its comparisons use `stall:2` | R1–R5 |

@@ -40,6 +40,8 @@ class LLMResult:
     output_tokens: int = 0
     seconds: float = 0.0                       # time spent on this task inside the backend
     server_seconds: float = 0.0                # the server's own processing time, if it reports one
+    meta: Optional[Dict[str, Any]] = None      # what the backend's response says about itself (OpenRouter: provider,
+                                               # finish reason, generation id, usage details); logged, never read
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

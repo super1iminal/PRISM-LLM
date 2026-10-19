@@ -83,7 +83,8 @@ class FakeChatClient:
             self.requests.append(kwargs)
         time.sleep(random.uniform(0, self.delay))
         text = self.reply(kwargs)
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+        return SimpleNamespace(id="gen-1", provider="FakeProvider", model=kwargs.get("model"),
+                               choices=[SimpleNamespace(message=SimpleNamespace(content=text), finish_reason="stop")],
                                usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7))
 
     def close(self) -> None:
