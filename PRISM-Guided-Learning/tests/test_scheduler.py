@@ -10,14 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from config import load_config, load_run_config
+from config import load_config
 from core.domain import load_domain
 from core.planner import SymbolicPlanner
 import core.prism
-from core.prism import run_now
-from core.rules import action_orders
 import core.scheduler
-from core.training import training_sets
 from core.scheduler import EventScheduler, LockstepScheduler, drive, failed_result
 from core.verifier import PolicyVerifier
 from core.tasks import LLMError, LLMResult, TaskFactory
@@ -177,32 +174,6 @@ def test_replay_event(run, instances, monkeypatch):
     assert [line["seq"] for line in lines] == list(range(len(lines)))
     assert len(lines) == sum(it["llm_calls"] for k in instances for it in samples[k]["iterations"])
     assert threads == {threading.get_ident()}
-
-
-@needs_prism
-def test_replay_any_order_pruned_on_a_recorded_round():
-    """Pruning with the numpy gridworld (`rules.any_prune`) and verifying each induced model once choose the order a
-    saved core run chose by verifying all 24 with PRISM, here where numpy alone would break a tie otherwise."""
-    run = ABLATIONS.parent / "core" / "haiku_fam_order" / "seed_none_1"
-    if not (run / "config.json").exists():
-        pytest.skip("saved core run not available")
-    sample = json.loads((run / "outputs" / "sample_001.json").read_text())
-    record = sample["iterations"][0]
-    cfg = load_run_config(run)
-    domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
-    target = {t.id: t for t in training_sets(domain.load_instances(cfg.domain.dataset), cfg.run.train_sets)}["set1"]
-    raw = [(r["condition"], r["action"]) for r in json.loads(record["raw_outputs"][-1])["rules"]]
-    picks = {}
-    for scorer, prune in (("prism", True), ("domain", False)):
-        cfg.rules.any_scorer, cfg.rules.any_prune = scorer, prune
-        planner = SymbolicPlanner(domain, None, cfg)
-        ep = planner._episode(target, LOG.info)
-        orders = action_orders(list(ep.primary.verifier.spec.actions), "all")
-        scored = run_now(planner._score_orders(ep, planner._parse(ep, raw), raw, orders))
-        k = min(scored, key=lambda k: (scored[k][0], k))
-        picks[scorer] = (list(orders[k]), scored[k][1][0].to_dicts(), len(scored))
-    assert picks["prism"][:2] == (record["any_order"], record["rules"]) and picks["prism"][2] < 24
-    assert picks["domain"][0] != record["any_order"]
 
 
 # ---------------------------------------------------------------- 2. scheduler behaviour

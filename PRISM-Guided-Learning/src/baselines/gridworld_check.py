@@ -1,6 +1,6 @@
 """Exact worst-case values of rule lists on one gridworld instance in numpy: the fast checker the loop uses where it
 scores many candidate lists without PRISM (`planner.repair`, `planner.pick: candidates`). Ported from the
-fresh-transfer session's checker (src/fresh/gw.py there), on gridworld_mdp.GridMDP's states and for any number of goals.
+fresh-transfer session's checker (src/fresh/gw.py on branch fresh-transfer), on gridworld_mdp.GridMDP's states and for any number of goals.
 
 The rules give each state the actions their deciding rule allows (core.vector, the PRISM encoding's semantics), and
 each requirement's worst case over those actions is computed exactly on its reach / avoid form (goals k_1 < k_2 < ...,

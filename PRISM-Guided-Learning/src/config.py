@@ -7,8 +7,8 @@ A condition file is a partial override of the default; CLI overrides (`section.k
 as YAML) apply last. Unknown or missing keys are errors, so a typo cannot silently fall back to
 a default. `docs/config.md` documents every key.
 
-The other tools keep their settings in their own folders (configs/regression/, configs/ablation/,
-configs/plot/) with their own schemas, loaded the same way by `load_file`.
+The other tools keep their settings in their own folders (configs/ablation/, configs/transfer/, configs/sequential/,
+configs/baselines/) with their own schemas, loaded the same way by `load_file`.
 """
 import argparse
 import json

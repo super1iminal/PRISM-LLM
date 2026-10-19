@@ -1,20 +1,8 @@
-"""Tool config folders (configs/regression/, configs/ablation/): they load, and they are what the tools use."""
+"""Tool config folders (configs/ablation/): they load, and they are what the tools use."""
 import sys
-
-import pytest
 
 import run_ablation
 from config import load_file
-from regression import DEFAULT_CONFIG as REGRESSION_CONFIG, RegressionConfig
-
-
-def test_regression_config_loads_and_overrides():
-    reg = load_file(REGRESSION_CONFIG, RegressionConfig)
-    assert reg.epsilon == "1e-9" and reg.fallback_epsilon == "1e-12"   # passed to PRISM as written
-    assert isinstance(reg.tol_stored, float) and isinstance(reg.tol_exact, float) and reg.workers >= 1
-    assert load_file(REGRESSION_CONFIG, RegressionConfig, ["workers=1"]).workers == 1
-    with pytest.raises(ValueError, match="unknown config key"):
-        load_file(REGRESSION_CONFIG, RegressionConfig, ["tolerance=1"])
 
 
 def test_ablation_seeds_come_from_its_config(tmp_path, monkeypatch, capsys):

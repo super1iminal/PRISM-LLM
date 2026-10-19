@@ -15,9 +15,8 @@ SYMBOLIC_RESULTS = "SYMBOLIC_results.parquet"
 LEGACY_RESULTS = "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet"
 RESULT_FILES = {"symbolic": SYMBOLIC_RESULTS, "legacy": LEGACY_RESULTS}
 
-# What every run made before runs recorded config.json used (out/results/archive/legacy_grid20 and
-# symbolic_grid20_*). A historical record, not a setting. out/results/archive/symbolic_uuv also predates
-# config.json but is a UUV run; readers that need its domain must not rely on this.
+# What every run made before runs recorded config.json used (legacy_grid20 and symbolic_grid20_*, removed from the
+# tree on Oct 19; git history). A historical record, not a setting.
 PRE_CONFIG_RUNS = {"domain": "gridworld", "dataset": "grid_20_balanced.csv", "model": "qwen3:14b-q4_K_M",
                    "max_rounds": 5}
 

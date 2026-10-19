@@ -1,7 +1,8 @@
 """Budget curves from finished runs (no LLM calls): after each round, the rule list keep-best holds, what the run had
 spent by then, and how many held-out targets that list certifies, by PRISM through src/transfer.py's `certify`.
-Feedback and restarts are compared on these curves at equal cost (configs/experiments/rq2_feedback.yaml): keep-best
-makes every curve rise with the budget, so only the comparison at equal cost is evidence.
+Feedback and restarts are compared on these curves at equal cost (an ablation experiment with a `budget:` block, or
+the chain mode on runs): keep-best makes every curve rise with the budget, so only the comparison at equal cost is
+evidence.
 
 Per training set (a source: one sample of the run) and round k:
   * the kept list: the rules of the last improved iteration up to k. Iterations store their rules with `any`
@@ -25,7 +26,7 @@ certification on each target by src/transfer.py's own check. Round R = the last 
 Writes <run dir>/budget_transfer_chains.csv.
 
 Usage (from PRISM-Guided-Learning/):
-    python src/budget_transfer.py configs/experiments/rq2_feedback.yaml [--cells "F,R 18"] [--max-parallel 2]
+    python src/budget_transfer.py configs/experiments/<ablation>.yaml [--cells "F,R 18"] [--max-parallel 2]
         [--workers 2]
     python src/budget_transfer.py <run dir> ... [--data <dataset>] [--targets 12-19] [--source-targets JSON]
         [--price 0.10 0.50] [--workers 2]

@@ -1,6 +1,6 @@
 # Baseline configs
 
-One file per baseline run of `src/run_baseline.py` (methods in `src/baselines/`). Results go to `out/results/baselines/<file stem>/transfer_<dataset stem>.csv`, in `src/transfer.py`'s format plus `method`, so `viz/transfer_summary.py` lists baselines next to LLM conditions, and `fit.json` for methods that report what their fit produced (e.g. a tree's size and rules).
+One file per baseline run of `src/run_baseline.py` (methods in `src/baselines/`). Results go to `out/results/baselines/<file stem>/transfer_<dataset stem>.csv`, in `src/transfer.py`'s format plus `method`, and `fit.json` for methods that report what their fit produced (e.g. a tree's size and rules).
 
 | Key | What it does |
 |---|---|

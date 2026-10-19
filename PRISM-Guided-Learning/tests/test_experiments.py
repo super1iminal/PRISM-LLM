@@ -128,7 +128,7 @@ def test_shared_configuration_launches_once(tmp_path):
 def test_core_names_are_the_comparison_cells():
     names = base.core_names()
     assert {"port_ts_history", "port_fam_history", "port_pacman_narrow_core"} <= set(names)
-    assert not {"haiku_ts_order", "port_ts"} & set(names)  # the previous loop and the unfixed port: rq2_previous_loop
+    assert not {"haiku_ts_order", "port_ts"} & set(names)  # the previous loop and the unfixed port are not core
     assert not any("+" in n for n in names)
 
 
@@ -186,6 +186,6 @@ def test_index_lists_every_cell_and_baseline():
 
 
 def test_held_out_leaves_out_training_targets():
-    shared = base.benchmark_specs({"benchmarks": "rq2"})
+    shared = base.benchmark_specs(yaml.safe_load((base.EXPERIMENTS_DIR / "rq1_comparison.yaml").read_text(encoding="utf-8")))
     bench = {name: base.Benchmark(name=name, **spec) for name, spec in shared.items()}
     assert base.held_out(bench["pacman"]) == [0, 1, 2, 6, 7, 9] and len(base.held_out(bench["grids"])) == 8

@@ -94,10 +94,9 @@ def main():
             continue
         if run_dir.exists():
             shutil.rmtree(run_dir)   # a previous attempt that did not finish
-        if cfg.approach == "legacy":
-            from run_legacy import run
-        else:
-            from run_symbolic import run
+        if cfg.approach == "legacy":     # the predecessor's planner left the tree on Oct 19 (git history)
+            raise SystemExit(f"{condition}: the legacy planner (src/run_legacy.py) was removed; see git history")
+        from run_symbolic import run
         run(cfg, str(run_dir))
 
 

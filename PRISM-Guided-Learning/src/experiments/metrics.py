@@ -1,6 +1,6 @@
 """What a run (or a baseline) achieved: training sets solved, cost, and how its frozen rules do on held-out targets,
 from its outputs and the transfer CSVs of src/transfer.py (or src/run_baseline.py). Shared by the experiment
-harnesses (RQ1 comparison, RQ2 ablations) and viz/transfer_summary.py.
+harnesses (RQ1 comparison, RQ2 ablations).
 
 Transfer numbers, over held-out targets only (a source's own training instances are left out):
   * certified: targets certified per rule list, on its own group's targets when there are groups (e.g. a family's

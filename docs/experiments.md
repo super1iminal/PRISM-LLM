@@ -3,15 +3,16 @@
 The paper asks two kinds of question, and the code has one harness for each, sharing the runs.
 
 - **RQ1, comparison** (`src/experiments/comparison.py`, `configs/experiments/rq1_comparison.yaml`): our best configuration per benchmark against each baseline's best. Its cells are the **core** runs (`out/results/core/`).
-- **RQ2, ablations** (`src/experiments/ablation.py`, `configs/experiments/rq2_*.yaml`): one factor at a time against a reference cell, on random grids, the gridworld families and Pac-Man (the `rq2` set in `configs/experiments/benchmarks.yaml`; cells that only make sense on gridworld say `only: [grids, families]`). Runs go to `out/results/ablations/`. Since Oct 16 the core is the rebuilt loop (the `port_*` conditions): `rq2_previous_loop` compares it with the previous loop, and the older `rq2_*` pages ablate the previous loop (their reference cell).
+- **RQ2, ablations** (`src/experiments/ablation.py`, `configs/experiments/rq2_*.yaml`): one factor at a time against a reference cell (cells that only make sense on some benchmarks say `only:` or give their settings per benchmark). Runs go to `out/results/ablations/`. The core is the rebuilt loop of Oct 16 (the `port_*` conditions); the pages of the previous loop's ablations were removed on Oct 19 (git history). The paper's ablation tables (restarts, no repair, no `closer`) come from `viz/paper_results.py`.
+  - `rq2_feedback_fix`: the core loop against the same loop before the gridworld feedback fix (`port_ts`, `port_fam`).
   - `rq2_restarts`: the new loop's feedback against pure restarts (`port_fam_resample`, `port_mer_resample`: `planner.retry: always`) on the families and MER across x; `src/equal_spend.py` re-picks the feedback runs at the restarts' spend (`out/results/equal_spend/`, outside `core/` and `ablations/`).
 
-- **Sequential adaptation study** (`src/sequential.py`, `configs/sequential/<study>.yaml`; Marsha's review, Oct 18): the paper's adaptation manager meets fixed sequences of instances. Before each episode it retains the current rule list if certified, else switches to the certified library list with the largest smallest margin, else (mode `growing`) generates on the instance plus the closest list's training instances, else defers. Certification is exact (interval iteration; within `prism.exact_epsilon` or from the Gauss-Seidel fallback is inconclusive). `shift_v0` seeds the library with core run `port_fam_history` 1 and mixes family validation members with the 20 random grids on `sequential_v0.csv` (families_v0 ids unchanged, then grid_20_large as 180-199; `domains/gridworld/data/sequential.py`). Report: `src/sequential_report.py` -> `out/results/sequential/<study>/REPORT.md`.
+- **Sequential adaptation study** (`src/sequential.py`, `configs/sequential/<study>.yaml`; Marsha's review, Oct 18): the paper's adaptation manager meets fixed sequences of instances. Before each episode it retains the current rule list if certified, else switches to the certified library list with the largest smallest margin, else (mode `growing`) generates on the instance plus the closest list's training instances, else defers. Certification is exact (`prism.exact_methods`: interval iteration, then linear programming where it stalls; within the solver's band of a threshold, or from the Gauss-Seidel fallback, is inconclusive). `shift_v0` seeds the library with core run `port_fam_history` 1 and mixes family validation members with the 20 random grids on `sequential_v0.csv` (families_v0 ids unchanged, then grid_20_large as 180-199; `domains/gridworld/data/sequential.py`). Report: `src/sequential_report.py` -> `out/results/sequential/<study>/REPORT.md`.
 
 RQ1 covers transfer with and without gridworld's shortest-path feature `closer` (the `grids_noclose` benchmark). Two further questions come from the same runs: cost (tokens and dollars per training set, in every report) and larger instances (grids up to 20x20 and Pac-Man horizon 30, below). Readability (rules against tree nodes and network weights) has no metric in the harness.
 
 ```bash
-python src/run_experiment.py configs/experiments/rq2_feedback.yaml                 # plan + report from what exists
+python src/run_experiment.py configs/experiments/rq2_feedback_fix.yaml             # plan + report from what exists
 python src/run_experiment.py configs/experiments/rq2_*.yaml --run --check          # launch missing repeats, certify
 python src/run_experiment.py configs/experiments/rq1_comparison.yaml --check --baselines
 python src/run_experiment.py --index                                                # which cells miss runs
@@ -76,7 +77,7 @@ Started but unfinished runs are listed as pending and never launched over. Delet
 |---|---|
 | `kind` | `comparison` (RQ1) or `ablation` (RQ2) |
 | `title`, `question` | for the report |
-| `benchmarks` | name -> {`base` condition, `targets`, optional `dataset` (targets from another dataset), `groups` and `source_groups` when each rule list belongs to one group (families), `label`}; or the name of a set in `benchmarks.yaml` |
+| `benchmarks` | name -> {`base` condition, `targets`, optional `dataset` (targets from another dataset), `groups` and `source_groups` when each rule list belongs to one group (families), `label`} |
 | `repeats` | runs per cell (a cell may set its own) |
 | `cells` | {`name` (descriptive, used in tables), `code` (short, figures), `set` (overrides: a list for every benchmark, or benchmark -> list), `condition` (benchmark -> a condition other than the base, e.g. the Sonnet one), `only` (benchmarks), `repeats`, `launch` (false: only existing runs; Sonnet needs Asher's go-ahead)}. A cell whose `set` or `condition` is given per benchmark runs only on the benchmarks it names, never as the base configuration on the others |
 | `reference` | ablations: the reference cell's name (default: the first) |
@@ -84,7 +85,7 @@ Started but unfinished runs are listed as pending and never launched over. Delet
 | `method` (cells and baselines) | comparisons: the method a configuration belongs to (default: its name); figures show each method's best configuration |
 | `horizon_figure` | comparisons: a value against the horizon, one line per method: {`benchmark`, `methods` (optional: only these lines), `value` (the transfer CSVs' `worst_<value>`), `horizon` (the target dataset's column), `optimum`, `threshold`, `max_horizon` (and `why_max`), `published` ({`label`, `points`: horizon -> value})}. Sealed targets are always left out |
 | `prices` | model -> [$ per M prompt tokens, $ per M output tokens] |
-| `budget` | ablations: comparisons at equal cost, fixed before the runs (`rq2_feedback.yaml`): {`plot` (a `configs/plot/` file for `viz/plot_budget_transfer.py`), `reference`, `cost` (dollars), `level`, `note`, `planned`: list of {`name`, `metric` (certified or solved), `cell`, `at` (fraction of the reference's mean spend)}}. The report then opens with the planned comparisons and the budget figure |
+| `budget` | ablations: comparisons at equal cost, fixed before the runs: {`plot` (a plot config for `viz/plot_budget_transfer.py`), `reference`, `cost` (dollars), `level`, `note`, `planned`: list of {`name`, `metric` (certified or solved), `cell`, `at` (fraction of the reference's mean spend)}}. The report then opens with the planned comparisons and the budget figure |
 
 ## Metrics (`src/experiments/metrics.py`)
 
@@ -102,7 +103,3 @@ Ablation reports add the difference to the reference, with a 90% bootstrap inter
 
 **Budget curves** (`src/budget_transfer.py`, PRISM only): per training set and round, the list keep-best holds after that round (the last improved iteration's rules, `any` already resolved), the tokens and dollars spent so far, whether the set is solved, and the list's certification on the benchmark's targets, cached by a hash of the list (`<run>/budget_transfer.csv`). Final lists reuse the transfer CSV; other lists get the exact re-check only when the values near a threshold decide the verdict. It also records the kept list's training score (requirements met in the worst case, summed over the training members), so a training score that rises while held-out certification stays flat shows the loop patching the training instances. Round 1 is the LLM's first answer, before any feedback. Read at a budget per training set, a run's value is that of the list held after its last round within the budget. Keep-best makes every curve rise, so the curves only compare cells at equal spend (`budget` in an experiment file).
 
-`src/tie_analysis.py` (gridworld, numpy model) reports how much the orders decide:
-- how many actions the deciding rule allows per reachable state;
-- whether the list passes with ties open, at the worst and at the best choice per state;
-- how many targets it passes under each of the 24 fixed orders.

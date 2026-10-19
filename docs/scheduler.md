@@ -27,7 +27,7 @@ For PRISM to be yielded, every function between the planner and the PRISM proces
 - `PolicyVerifier.verify_steps`, `verify_exact_steps`, `optimum_steps`, `jointly_feasible_steps`, `forced_states_steps` (`core/verifier.py`);
 - the planner's `_round`, `_check`, `_feedback`, `_joint_conflict`, `_final` and `solve_steps`.
 
-The blocking methods (`run`, `verify`, `optimum`, …) are thin wrappers that run the generator to the end (`run_now`), for tools that check one policy at a time (`ceilings.py`, `regression.py`, `transfer.py`); the mass analyzer only reads the cached optimum. A `yield` marks every point where an instance can wait, for the LLM or for PRISM. Between two yields, an instance's code runs without interruption.
+The blocking methods (`run`, `verify`, `optimum`, …) are thin wrappers that run the generator to the end (`run_now`), for tools that check one policy at a time (`ceilings.py`, `transfer.py`, `recertify.py`); the mass analyzer only reads the cached optimum. A `yield` marks every point where an instance can wait, for the LLM or for PRISM. Between two yields, an instance's code runs without interruption.
 
 The three schedulers drive these generators differently:
 

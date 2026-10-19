@@ -6,7 +6,7 @@ instances. Data: each run's budget_transfer.csv (src/budget_transfer.py). Keep-b
 the lines against each other at equal spend, never a line's rise on its own.
 
 Usage (from PRISM-Guided-Learning/):
-    python viz/plot_budget_transfer.py configs/plot/budget_transfer.yaml
+    python viz/plot_budget_transfer.py <plot config> (PlotConfig below documents each key)
 The experiment's report (src/run_experiment.py) draws the same figure when its file has a `budget:` block.
 """
 from dataclasses import dataclass, field

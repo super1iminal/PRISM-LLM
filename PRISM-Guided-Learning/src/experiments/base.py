@@ -115,10 +115,7 @@ def _cell_benches(spec: dict, benches: List[str]) -> List[str]:
 
 
 def benchmark_specs(data: dict) -> Dict[str, dict]:
-    """An experiment's benchmarks: a mapping, or the name of a set in configs/experiments/benchmarks.yaml."""
-    if isinstance(data["benchmarks"], str):
-        shared = yaml.safe_load((EXPERIMENTS_DIR / "benchmarks.yaml").read_text(encoding="utf-8"))
-        return shared[data["benchmarks"]]
+    """An experiment's benchmarks: name -> its spec."""
     return data["benchmarks"]
 
 

@@ -186,7 +186,7 @@ def write(df: pd.DataFrame, out: Path) -> None:
 
 def run_cmd(args) -> None:
     cfg = load_run_config(args.run_dir)
-    if args.rules == "narrowed" or cfg.rules.early_narrow:   # narrowings name places with numbers (as transfer.py)
+    if cfg.rules.early_narrow:   # narrowings name places with numbers (as transfer.py)
         cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     dataset = args.data or cfg.domain.dataset

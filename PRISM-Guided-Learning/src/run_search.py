@@ -2,13 +2,12 @@
 
 Usage (from PRISM-Guided-Learning/, with the OpenRouter key in the environment: `set -a && . ../.env && set +a`):
     python src/run_search.py <condition> ... [--unseeded 3] [--targets 12-19] [--data <dataset>]
-        [--max-parallel 6] [--transfer-workers 2] [--set section.key=value ...] [--summary CONFIG] [--dry-run]
+        [--max-parallel 6] [--transfer-workers 2] [--set section.key=value ...] [--dry-run]
 
 Each (condition, repeat) is one job, at most `--max-parallel` at once: `run_ablation.py <condition> --unseeded N
 --repeat k` (skipped when the run has finished), then `transfer.py` on the run for `--targets` (skipped when its
 transfer CSV already covers them), and with `--determinize` src/determinize.py and the transfer check of its rules. Output goes to out/results/<core or ablations>/<condition>/seed_none_<k>.log (the comparison experiments, configs/experiments/). Each run
-keeps up to `run.workers` PRISM processes busy, so `--max-parallel` also caps PRISM's memory use. At the end the
-summary page (viz/transfer_summary.py, `--summary`) is rebuilt, if given.
+keeps up to `run.workers` PRISM processes busy, so `--max-parallel` also caps PRISM's memory use.
 """
 import argparse
 import subprocess
@@ -70,7 +69,6 @@ def main(argv=None):
     parser.add_argument("--determinize", action="store_true",
                         help="Also resolve `any` rules into an order chosen on the training instances "
                              "(src/determinize.py) and certify those rules (transfer --rules determinized)")
-    parser.add_argument("--summary", type=Path, default=None, help="Summary config to rebuild at the end")
     parser.add_argument("--dry-run", action="store_true", help="Only print the jobs")
     args = parser.parse_args(argv)
 
@@ -91,8 +89,6 @@ def main(argv=None):
             except Exception as e:     # one job's failure must not stop the others
                 c, k = futures[future]
                 print(f"[{c} {k}] failed: {type(e).__name__}: {e}", flush=True)
-    if args.summary:
-        subprocess.run([PYTHON, "viz/transfer_summary.py", str(args.summary)], cwd=PROJECT_ROOT)
 
 
 if __name__ == "__main__":

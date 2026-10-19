@@ -1,111 +1,82 @@
 # PRISM-Guided-Learning
 
-LLM-based planning with probabilistic verification refinement. The LLM writes a **symbolic,
-possibly partial policy** (ordered rules over the state variables) for a user-specified MDP.
-PRISM checks it in the best and worst case over all completions of the policy, and the feedback
-tells the LLM whether to *refine* existing rules or *extend* coverage, and where.
+LLM-based planning with probabilistic verification. The LLM writes a **symbolic, possibly partial policy** (ordered
+`condition -> action` rules over features of the state) for a user-specified MDP. PRISM checks it in the worst case
+over all completions, and the loop revises the whole list from every training member's failures. The frozen list is
+then certified unchanged on larger held-out instances, and a library of certified lists serves new instances
+(retain, switch, or generate when none is certified).
 
 Predecessor paper: [LLM-Based Grid-World Path Planning With Probabilistic Model Checking](https://doi.org/10.1145/3803437.3806714).
-Its per-state approach is the `legacy` baseline.
 
 ## Requirements
 
 - Python 3.11+ and `pip install -r requirements.txt`
-- [PRISM](https://www.prismmodelchecker.org/download.php), with `prism` on `PATH` or `PRISM_PATH` set
-- [Ollama](https://ollama.com) with the model in `configs/run/default.yaml` (default `qwen3:14b-q4_K_M`, thinking off)
-  - or, without a GPU, [OpenRouter](https://openrouter.ai) with an API key: `--set llm.backend=openrouter --set llm.model=qwen/qwen3-14b` (see docs/openrouter.md)
+- [PRISM](https://www.prismmodelchecker.org/download.php) 4.10, with `prism` on `PATH` or `PRISM_PATH` set
+- An [OpenRouter](https://openrouter.ai) API key for the core conditions (Claude Haiku 5.5; docs/openrouter.md), or
+  [Ollama](https://ollama.com) for the default local model in `configs/run/default.yaml`
 
 ## Layout
 
 ```
 PRISM-Guided-Learning/
   src/
-    core/            domain-agnostic approach: rules, PRISM runner, verifier, mass analysis, planner, prompts,
-                     training sets, LLM tasks, backends (core/backends/) and schedulers (threads, lockstep, event)
-    legacy/          the predecessor's per-state approach (gridworld only), the baseline
-    run_symbolic.py  symbolic approach on any domain
-    run_legacy.py    legacy approach on gridworld
-    run_ablation.py  named conditions x seeds
-    ceilings.py      what any controller can achieve per instance
-    regression.py    legacy policies -> symbolic rules -> identical PRISM results
-    transfer.py      a run's frozen final rules, certified on every instance of a dataset
-    calibrate.py     each requirement's range over all controllers, and the domain's reference policies
-    compare.py       end-to-end comparison report
-    results_io.py    reading finished runs (result files, recorded settings, legacy keep-best)
-  configs/           settings, one folder per tool (see docs/config.md):
-                       run/ (default.yaml + conditions/), ablation/, regression/, transfer/, plot/ (one per figure)
-  domains/           case studies (see domains/README.md), each with its datasets:
-                       gridworld/ (reference), uuv/ (pipeline-inspection AUV, Paessler et al. 2023),
-                       pacman/ (Pac-Man from the Quantitative Verification Benchmark Set)
-  viz/               figures, each made from a configs/plot/ file (see viz/README.md)
+    core/              the domain-agnostic approach: rules, PRISM runner, verifier (exact solvers), planner (the
+                       loop), failure feedback, the pick and repair, prompts (core/templates/), LLM tasks, backends,
+                       schedulers
+    baselines/         1-2-3-Go! trees, PPO, the hand-written template, rule-list search, random policies
+    experiments/       the run store and the RQ1 comparison / RQ2 ablation harnesses
+    legacy/            the predecessor's gridworld model (read by tests and old result files)
+    run_symbolic.py    one run of a condition;  run_ablation.py: conditions x seeds;  run_search.py: runs, then their
+                       held-out checks
+    transfer.py        a run's frozen rules, certified on held-out instances (the loop's solver)
+    recertify.py       every check again with the exact solvers (the paper's certification rule)
+    determinize.py     a run's `any` rules fixed in the order its pick chose
+    run_baseline.py    a baseline, fitted and certified
+    run_experiment.py  plans, launches and reports an experiment (configs/experiments/)
+    sequential.py      the sequential adaptation study (configs/sequential/);  sequential_report.py: its report
+    budget_transfer.py, budget_ii.py, equal_spend.py   budget curves and equal-spend estimates from finished runs
+    calibrate.py, ceilings.py   threshold calibration, and what any controller can achieve per instance
+  configs/             run/ (default.yaml + conditions/), experiments/, baselines/, sequential/, transfer/, ablation/
+                       (docs/config.md)
+  domains/             case studies (domains/README.md): gridworld/ (reference), pacman/ (QVBS), mer/ (Mars
+                       Exploration Rovers), uuv/, consensus/
+  viz/                 paper_results.py (the evaluation's tables and figures, out/paper/), theme.py
   tests/
-  out/results/       run outputs
-DECISIONS.md         design decisions to review
-docs/                semantics.md (formal semantics), config.md (all settings),
-                     openrouter.md (running on OpenRouter, and its smoke test),
-                     scheduler.md (threads, lockstep and event schedulers), related_work_survey.md and
-                     positioning.md (related work), experiments.md (research questions, datasets, methods)
+  out/results/         core/ (the RQ1 runs), ablations/, baselines/, experiments/ (report pages), sequential/
+  out/paper/           tables and figures for the paper (RESULTS-NOTES.md)
+DECISIONS.md           design decisions
+docs/                  semantics.md (formal semantics), config.md (all settings), experiments.md (research questions,
+                       the run store), scheduler.md, openrouter.md, related_work_survey.md and positioning.md
 ```
 
-## Running (from `PRISM-Guided-Learning/`)
+Results of older versions of the approach (the previous loop, the legacy planner, the qwen-era runs) were removed from
+the tree on Oct 19, 2026; they are in the git history.
+
+## Running (from `PRISM-Guided-Learning/`, with the OpenRouter key in the environment)
 
 ```bash
-python src/run_legacy.py --data grid_20_balanced.csv --out out/results/legacy_grid20
-```
-
-```bash
-python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --out out/results/symbolic_grid20
-```
-
-```bash
-python src/run_symbolic.py --domain uuv --data uuv_paper.csv --out out/results/symbolic_uuv
+# the core condition on random grids, 3 repeats, then each run's held-out checks
+python src/run_search.py port_ts_history --unseeded 3 --targets 12-19 --determinize --max-parallel 1 --transfer-workers 1
 ```
 
 ```bash
-# lockstep: one LLM batch per step (one task per active instance), logged to <run>/llm_tasks.jsonl
-python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=lockstep --out out/results/symbolic_grid20_lockstep
+# the RQ1 report over the run store (add --run to launch missing runs, --check to certify them)
+python src/run_experiment.py configs/experiments/rq1_comparison.yaml
 ```
 
 ```bash
-# event, the default for symbolic runs: each instance moves on as soon as its own LLM answer or PRISM result is
-# ready (docs/scheduler.md)
-python src/run_symbolic.py --domain gridworld --data grid_20_balanced.csv --set run.scheduler=event --out out/results/symbolic_grid20_event
+# certify a run's frozen lists with the exact solvers
+python src/recertify.py run out/results/core/port_ts_history/seed_none_1 --rules determinized --targets 12-19
 ```
 
 ```bash
-python src/run_ablation.py B2 R1 R2 R3 R4 R5 --dry-run
+python src/sequential.py configs/sequential/shift_v0.yaml --mode frozen
 ```
 
 ```bash
-python src/ceilings.py
+python viz/paper_results.py
 ```
 
 ```bash
-python src/regression.py
-```
-
-```bash
-python src/calibrate.py --domain uuv --data uuv_paper.csv
-```
-
-```bash
-# one rule set per training set of grids (run.train_sets), on OpenRouter
-python src/run_ablation.py haiku_mi_grid_large --unseeded 1
-```
-
-```bash
-# certify a run's frozen final rules on every grid of its dataset (settings: configs/transfer/default.yaml)
-python src/transfer.py out/results/ablations/haiku_rl2_grid_large_closer/seed_none_2
-```
-
-```bash
-python src/compare.py configs/plot/compare_grid20.yaml
-```
-
-```bash
-python viz/plot_runs.py configs/plot/catchall_ablation.yaml
-```
-
-```bash
-python -m pytest tests
+python -m pytest -q tests
 ```
