@@ -9,7 +9,7 @@
 SAMPLE_S=${SAMPLE_S:-30}
 
 job_start() {             # job_start <command words...>: sets JOB_DIR, writes meta.json, starts the sampler
-    JOB_DIR="$CLUSTER_OUT/jobs/${SLURM_JOB_ID:-local$$}_${SLURM_JOB_NAME:-interactive}"
+    export JOB_DIR="$CLUSTER_OUT/jobs/${SLURM_JOB_ID:-local$$}_${SLURM_JOB_NAME:-interactive}"
     mkdir -p "$JOB_DIR"
     JOB_T0=$(date +%s)
     JOB_CMD="$*"
@@ -41,6 +41,20 @@ env = {k: v for k, v in os.environ.items() if k.startswith("SLURM_") and k in (
     "SLURM_JOB_ID", "SLURM_JOB_NAME", "SLURM_JOB_NODELIST", "SLURM_CPUS_PER_TASK", "SLURM_MEM_PER_NODE",
     "SLURM_JOB_ACCOUNT", "SLURM_SUBMIT_DIR", "SLURM_ARRAY_JOB_ID", "SLURM_ARRAY_TASK_ID")}
 root = os.environ.get("REPO_DIR", ".")
+def hardware():
+    out = {"os": " ".join(open("/etc/os-release").read().split("PRETTY_NAME=")[1].splitlines()[0].strip('"').split())
+           if os.path.exists("/etc/os-release") else None, "kernel": os.uname().release,
+           "cores_allocated": os.environ.get("SLURM_CPUS_PER_TASK"), "cores_visible": len(os.sched_getaffinity(0))}
+    try:
+        cpu = [l for l in open("/proc/cpuinfo") if l.startswith("model name")]
+        out["cpu"] = cpu[0].split(":", 1)[1].strip() if cpu else None
+        out["node_cores"] = len(cpu)
+        mem = [l for l in open("/proc/meminfo") if l.startswith("MemTotal")]
+        out["node_ram_gb"] = round(int(mem[0].split()[1]) / 2**20, 1)
+    except OSError:
+        pass
+    out["job_mem_mb"] = os.environ.get("SLURM_MEM_PER_NODE")
+    return out
 meta = {"state": state, "exit_code": int(code) if code else None, "command": cmd,
         "start": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(int(t0))),
         "end": time.strftime("%Y-%m-%dT%H:%M:%S%z") if state == "finished" else None,
@@ -54,6 +68,11 @@ meta = {"state": state, "exit_code": int(code) if code else None, "command": cmd
         "modules": os.environ.get("LOADEDMODULES", "").split(":"),
         "python": sys.version.split()[0], "java": next(iter((sh("java", "-version", stderr=True) or "").splitlines()), None),
         "prism": os.environ.get("PRISM_PATH"), "tmpdir": os.environ.get("TMPDIR"),
+        "hardware": hardware(),
+        "own_jobs_running": sh("squeue", "-h", "-u", os.environ.get("USER", ""), "-t", "RUNNING",
+                               "-o", "%i %j %C %N"),        # rule 5: what else of ours was running
+        "node_jobs_running": sh("squeue", "-h", "-w", os.uname().nodename, "-t", "RUNNING", "-o", "%C") and
+            len(sh("squeue", "-h", "-w", os.uname().nodename, "-t", "RUNNING", "-o", "%C").splitlines()),
         "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY"))}
 json.dump(meta, open(path, "w"), indent=2)
 EOF

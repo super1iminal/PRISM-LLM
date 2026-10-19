@@ -14,7 +14,9 @@ the OpenRouter key stays in your shell as `OPENROUTER_API_KEY`, and Slurm passes
 | `smoke/02_compute.sbatch` | compute node, 1h | test suite, internet, one free request, a whole toy run plus its certification |
 | `smoke/03_timing.sbatch` | compute node, 3h | certification time per benchmark on copies of core runs (no LLM) |
 | `submit.sh` | login node | sizes and submits `smoke`, `timing`, `exp` (run_experiment.py) and `cmd` jobs |
-| `campaign.sh` | login node | the campaign in waves: `plan`, `wave1`, `wave2`, `baselines`, `report` |
+| `checklist.sh` | login node | Rajan's SEAMS checklist, one subcommand per item (`item1` ... `item7`, `report`) |
+| `checks/` | anywhere | `request_dump.py` (rule 1a: Haiku request byte-identical), `smoke_report.py` (item 3 smoke tests) |
+| `jobs/certify_llm.sh` | inside a job | rule-2 certification of the other LLMs' runs (items 3, 7) |
 | `sacct.sh` | login node | Slurm accounting for every submitted job, to `out/cluster/sacct.csv` |
 | `collect.py` | your machine | tidy CSVs from everything pulled back (`out/cluster/tables/`) |
 
@@ -68,50 +70,36 @@ python cluster/smoke/llm_ping.py --model anthropic/claude-haiku-5.5 --providers 
     --out PRISM-Guided-Learning/out/cluster/smoke/ping_haiku.json
 ```
 
-## 2. The campaign
+## 2. Rajan's checklist
 
-| Job | Experiments | Size | Estimated wall | `--time` |
-|---|---|---|---|---|
-| `campaign.sh wave1` | E4 (`rq1_comparison`, 14 runs) + E1 (`rq2_new_loop_feedback`, ~30 runs), one launcher | 12 runs in flight: 96 cores, 488 GB | 4–6 h | 12h |
-| `campaign.sh wave2` | E2 (`rq2_new_loop`, 30 runs) + the RQ1 cells added later (E6 Sonnet, E10 UUV) | 96 cores, 488 GB | 4–6 h | 12h |
-| `campaign.sh baselines` | RQ1 baselines without a certification (E10) | 16 cores | 1–3 h | 6h |
-| `submit.sh cmd ...` | E3 (`adapt.py`), E5, E7, E8: no LLM | 8–16 cores each | 1–4 h | 3–12h |
-| `campaign.sh report` | `--check` everything, rebuild reports and the index | 8 cores | <1 h | 3h |
+The items, their rules and what each produces are in `PRISM-Guided-Learning/out/paper/RESULTS-NOTES-rajan.md`. Asher's
+list (E1/E2 Haiku restarts, re-certification, the sealed set, Sonnet, ...) is not run from here (checklist rule 6),
+so the earlier `campaign.sh` waves are gone. Order, as the checklist sets it:
 
-Per-run figures (training only, from the existing core runs): families 12–13 min, grids and Pac-Man 19–22 min,
-MER trained on one instance 14–33 min, MER 39–69 min. Certification adds an unmeasured amount; `03` measures
-it. Sonnet runs (one chain: 33 min) are probably 1–2 h with the full chain count.
+| Step | Command | Size | Needs |
+|---|---|---|---|
+| 1 | `bash cluster/checklist.sh item1` (or `EXCLUSIVE=1 ...` for a node of our own) | 3 jobs × 4 cores | PRISM only; first, and alone among our jobs |
+| 2 | `bash cluster/checklist.sh item3-smoke luna` and `... gemini` | 8 cores each | paid key; after item 1 (or 3 h into it) |
+| 3 | `bash cluster/checklist.sh item3-full luna` / `gemini` (each model that passed) | 24 cores, 120 GB | paid key |
+| 3 | `bash cluster/checklist.sh item2` | 12 cores | PRISM only; alongside item 3 |
+| 3 | `bash cluster/checklist.sh item4 frozen`, then `item4 growing` | 10 cores | growing: paid key (Haiku) |
+| 3 | `bash cluster/checklist.sh item5` | 16 cores | paid key (Haiku) |
+| 4 | `bash cluster/checklist.sh item3-certify luna` / `gemini` (after its full runs) | 12 cores | PRISM only |
+| 5 | `bash cluster/checklist.sh item7 <model>` | 8 cores | only once item 7's two conditions hold |
+| - | `bash cluster/checklist.sh item6 ...` | | blocked at this commit (see the notes) |
+| any | `bash cluster/checklist.sh report` | 4 cores | builds Rajan's tables (`viz/rajan_results.py`) |
 
-```bash
-bash cluster/campaign.sh plan            # login node: per cell, the runs found and what --run would launch
-bash cluster/campaign.sh wave1 --dry     # print the sbatch command
-bash cluster/campaign.sh wave1           # Asher has approved E4 and E1? Then submit
-bash cluster/campaign.sh wave2           # queued behind wave1 automatically (Slurm dependency)
-```
+Add `--dry` to see the sbatch line. Every job writes its record (commit, hardware, our other running jobs) to
+`out/cluster/jobs/`. A job's PRISM cap is `prism.max_concurrent` (8; item 3's full runs: 20) slots in its own
+`TMPDIR`, shared by everything in the job, generation runs' `run.workers` included.
 
-The rules the scripts enforce, and why:
-- **Only one `--run` launcher at a time.** Two launchers that both see a repeat as missing would both start it
-  in the same directory. Experiments that share cells (E1's core arm is E4's core cell) go in one job, and
-  `run_experiment.py` runs each configuration once. `submit.sh` refuses a second launcher unless `--force`.
-- **8 cores and 40 GB per run in flight** (`--parallel N`). That's `prism.max_concurrent: 8` PRISM processes with
-  4 GB heaps each. These settings are not part of a run's identity, so changing them never splits a cell.
-- **`TMPDIR=$SLURM_TMPDIR`.** PRISM's process slots are lock files in the temp dir. Per job, they cap that job
-  alone, not every job on the node.
-- **`--time` with 2–3× headroom.** A paid run that Slurm kills midway has to be deleted and rerun (handover rules).
-  Shorter limits do start sooner: 3h and 12h jobs backfill well, 7-day jobs wait.
-
-**If a job dies:** the runs that finished are kept. Find the unfinished run directories, delete them (handover
-rule), then submit the same wave again; finished runs are skipped:
+Freeze: **Wednesday 21 October, 23:59 Toronto time.** A run that is not complete and clean by then stays out of the
+tables; don't extend a job to rescue it. **If a run dies midway:** stop it, delete its directory (handover rule) and
+resubmit. Finished runs are skipped:
 
 ```bash
 cd PRISM-Guided-Learning
-for d in out/results/{core,ablations}/*/seed_*; do [ -f "$d/SYMBOLIC_results.parquet" ] || echo "$d"; done
-```
-
-Other jobs: anything else runs through `cmd`, from `PRISM-Guided-Learning/`, e.g.
-
-```bash
-bash cluster/submit.sh cmd --cpus 16 --mem 64 --time 3:00:00 --name e10-gate -- python src/calibrate.py --domain uuv
+for d in out/results/ablations/*_{luna,gemini}*/seed_*; do [ -f "$d/SYMBOLIC_results.parquet" ] || echo "$d"; done
 ```
 
 ## 3. Getting the data back

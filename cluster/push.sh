@@ -1,8 +1,10 @@
 #!/bin/bash
 # Run on your own machine: copy the repo to Fir.
 #   bash cluster/push.sh                  # code, configs, docs, .git (never out/)
-#   bash cluster/push.sh --with-results   # also out/, once at the start: the existing runs the experiments reuse
-#                                         # (files already on Fir are never overwritten)
+#   bash cluster/push.sh --with-results   # also out/: the existing runs, checks and sequences the items read.
+#                                         # A file is sent only if the local copy is newer (rsync --update), so
+#                                         # Asher's re-certified files replace stale ones and results made on Fir
+#                                         # are never overwritten.
 # Add --dry to see what would be sent. With Fir's MFA, an ssh ControlMaster saves re-authenticating (README).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -20,7 +22,7 @@ rsync -az --info=stats1 "${dry[@]}" \
     --exclude '.pytest_cache/' --exclude 'third_party/*/' --exclude '.env' \
     "$local_root/" "$remote/"
 if [ $with_results = 1 ]; then
-    rsync -az --info=stats1 --ignore-existing "${dry[@]}" --exclude 'smoke/' \
+    rsync -az --info=stats1 --update "${dry[@]}" --exclude 'smoke/' --exclude 'cluster/' \
         "$local_root/PRISM-Guided-Learning/out/" "$remote/PRISM-Guided-Learning/out/"
 fi
 echo "pushed to $remote"

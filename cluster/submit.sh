@@ -4,7 +4,7 @@
 #   bash cluster/submit.sh smoke                                   # smoke test 2 (compute node, free model)
 #   bash cluster/submit.sh timing                                  # smoke test 3 (certification timing, no LLM)
 #   bash cluster/submit.sh exp <file.yaml>... --parallel N --time H:MM:SS [--flags "--run --check"] [--name X]
-#   bash cluster/submit.sh cmd --cpus C --mem G --time H:MM:SS [--name X] -- <command...>
+#   bash cluster/submit.sh cmd --cpus C --mem G --time H:MM:SS [--name X] [--exclusive] -- <command...>  (--mem 0: all)
 # Every job mails its state changes to $NOTIFY_EMAIL (config.sh; an ntfy.sh topic). Common options: --dry (print the sbatch command only), --force (allow a second LLM launcher), --after JOBID.
 #
 # exp: experiment files are relative to PRISM-Guided-Learning/ (e.g. configs/experiments/rq1_comparison.yaml).
@@ -22,7 +22,7 @@ mkdir -p "$CLUSTER_OUT/slurm"
 cd "$REPO_DIR"
 
 kind=${1:?usage: submit.sh smoke|timing|exp|cmd ...}; shift
-parallel=1 time="" cpus="" mem="" name="" flags="--run --check" dry=0 force=0 after="" exps=() cmd=()
+parallel=1 time="" cpus="" mem="" name="" flags="--run --check" dry=0 force=0 after="" exclusive=0 exps=() cmd=()
 while [ $# -gt 0 ]; do
     case $1 in
         --parallel) parallel=$2; shift 2 ;;
@@ -34,6 +34,7 @@ while [ $# -gt 0 ]; do
         --after) after=$2; shift 2 ;;
         --dry) dry=1; shift ;;
         --force) force=1; shift ;;
+        --exclusive) exclusive=1; shift ;;
         --) shift; cmd=("$@"); break ;;
         *) exps+=("$1"); shift ;;
     esac
@@ -41,6 +42,7 @@ done
 
 args=(--account="$FIR_ACCOUNT" --output="$CLUSTER_OUT/slurm/%x-%j.out" --chdir="$REPO_DIR")
 [ -n "$after" ] && args+=(--dependency="afterany:$after")
+[ $exclusive = 1 ] && args+=(--exclusive)
 [ -n "$NOTIFY_EMAIL" ] && args+=(--mail-user="$NOTIFY_EMAIL" --mail-type="$NOTIFY_TYPES")
 case $kind in
     smoke)  script=cluster/smoke/02_compute.sbatch; name=${name:-smoke} ;;
