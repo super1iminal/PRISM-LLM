@@ -215,3 +215,16 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
   - The gridworld template (`domains/gridworld/data/template_policy.py`) was committed on 2026-10-08, before the first transfer runs (Oct 14), but after earlier per-grid LLM rule sets existed.
   - The Pac-Man maze rules were committed on 2026-10-14 with the transfer search.
   - Who wrote them and how long it took is not recorded in the repository. **Asher to fill in.**
+
+## Blocked
+
+- **E4 (third LLM).** `openai/gpt-6-luna` (OpenRouter, provider pinned to `openai`, $0.10 / $0.50 per M) and the fallback `openai/gpt-5-mini` both fail every call with HTTP 400: "Invalid schema for response_format 'answer': 'additionalProperties' is required to be supplied and to be false". OpenAI's strict structured output needs `additionalProperties: false` in the loop's JSON schema (`core/planner.py` `rule_schema`), which is a code change, so per the ground rules the model is dropped (two failed smoke tests). Smoke runs deleted; their error logs were kept outside the repository.
+- **E5 (PassFail).** Not a config switch: `planner.feedback` is `blame | table | failures`, and `table` is the results table (closer to Margins). Skipped.
+
+## In progress (2026-10-19, session cut by a usage limit)
+
+- E1 `ablations/port_fam_history_resample`, E2 `ablations/port_ts_history_resample` and `port_pacman_narrow_core_resample`, E3 `ablations/port_*_sonnet` (5 core conditions × 3; the Sonnet smoke test on families set 0 passed, structured output and re-asks both work). OpenRouter lists Sonnet 5.5 at $2 / $10 per M; `rq1_comparison.yaml` says 3 / 15.
+- P1: `src/recertify.py` (sequential.certify's rule on every check) writes `transfer_ii_*.csv` next to each transfer CSV, and `sizes.json` for refitted baselines. Its first checks (MER run 1, grid runs 1-3) give the same verdicts as the Gauss–Seidel CSVs. `viz/paper_results.py` reads these by default (`--checks gs` gives the old tables, unchanged).
+- P6 frozen mode: `configs/sequential/shift_v0_lib2.yaml`, `shift_v0_lib3.yaml`. P8: `configs/baselines/ppo_features_*_seed{1,2}.yaml`.
+- Done: P3 (`tab_rq2-episodes.csv`, `tab_rq2-example.csv`), P4 (`tab_rq2-generation-cost.csv`), P7 rule-list sizes (`tab_rq1-sizes.csv`; trees and PPO wait for P1's `sizes.json`). A3 was already done (F3, MER panel with Restart's spend marked).
+- Not started: P2 (sealed; job list ready), P5 (`src/budget_ii.py` written, not yet run), A1/A2/A4 regeneration after P1, A5.

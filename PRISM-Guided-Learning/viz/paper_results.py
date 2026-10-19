@@ -10,9 +10,11 @@ Writes out/paper/tables/<label>.tex (a tabular body) and .csv (long format), and
 """
 import argparse
 import json
+import re
 import sys
+from dataclasses import replace
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -20,6 +22,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+import yaml  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -29,9 +32,10 @@ from core.domain import load_domain  # noqa: E402
 from experiments.base import experiment, held_out  # noqa: E402
 from experiments.comparison import Comparison  # noqa: E402
 from results_io import sample_records  # noqa: E402
-from transfer import csv_path, parse_ids  # noqa: E402
+from transfer import RULES, csv_path, parse_ids  # noqa: E402
 
 RESULTS = ROOT / "out" / "results"
+BASELINES_DIR = RESULTS / "baselines"
 OUT = ROOT / "out" / "paper"
 RQ1_SPEC = ROOT / "configs" / "experiments" / "rq1_comparison.yaml"
 
@@ -96,16 +100,57 @@ def stats(values) -> dict:
 
 
 def runs_of(name: str, root: str = "core") -> List[Path]:
-    return sorted(p for p in (RESULTS / root / name).glob("seed_*") if (p / "config.json").exists())
+    """The finished runs of a condition (a run still in progress has no results parquet yet)."""
+    return sorted(p for p in (RESULTS / root / name).glob("seed_*")
+                  if (p / "config.json").exists() and (p / "SYMBOLIC_results.parquet").exists())
 
 
 # ---------------------------------------------------------------- RQ1: per (controller, held-out target) outcomes
 
+CHECKS = "ii"      # ii: src/recertify.py's interval-iteration verdicts (transfer_ii_*.csv); gs: the loop solver's
+
+
+def checked(path: Optional[Path], kind: Optional[str] = None) -> Optional[Path]:
+    """The CSV of `path`'s checks of `kind` (default CHECKS): transfer_<x>.csv itself (gs), its
+    transfer_ii_<x>.csv (ii) or, for the sealed test pass, its transfer_sealed_<x>.csv (sealed; both by
+    src/recertify.py)."""
+    kind = kind or CHECKS
+    if path is None or kind == "gs":
+        return path
+    return path.with_name(path.name.replace("transfer_", f"transfer_{kind}_", 1))
+
+
+# The sealed test targets per benchmark (configs/transfer/default.yaml `sealed`), read only by the test pass (P2)
+SEALED = {"grids": {"targets": "0-41", "dataset": "grid_test_large.csv"},
+          "families": {"targets": "36-59,96-119,156-179",
+                       "groups": {"rooms": "36-59", "crossing": "96-119", "adjacent": "156-179"}},
+          "pacman": {"targets": "10-11"}, "mer": {"targets": "9-11"}, "mer_n": {"targets": "9-11"}}
+
+
+def sealed_bench(bench):
+    """`bench` with its sealed test targets (and dataset) in place of the validation ones."""
+    return replace(bench, **SEALED[bench.name])
+
+
+def baseline_csv(config: str, rules: str = "final", dataset: Optional[str] = None) -> Path:
+    """A baseline's transfer CSV (Comparison._csv), named for `dataset` when it checks another dataset's targets."""
+    path = Comparison._csv(config, rules)
+    if dataset is None:
+        return path
+    suffix = "_open" if rules == "open" else ""
+    return path.with_name(f"transfer_{Path(dataset).stem}{suffix}.csv")
+
+
 def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[List[str]] = None,
-             source_groups: Optional[Dict[str, str]] = None) -> pd.DataFrame:
-    """One row per (rule list or controller, held-out target) of a transfer CSV, on the list's own group's targets
-    where the benchmark has groups (a source checked on every group, "*", counts once per group)."""
+             source_groups: Optional[Dict[str, str]] = None, kind: Optional[str] = None) -> pd.DataFrame:
+    """One row per (rule list or controller, held-out target) of a transfer CSV (`path` as src/transfer.py names it;
+    read under CHECKS), on the list's own group's targets where the benchmark has groups (a source checked on every
+    group, "*", counts once per group). Columns certified, inconclusive, timeout (not certifiable within PRISM's
+    limits) and error_other (unparsed or another error)."""
+    path = checked(path, kind)
     if path is None or not path.exists():
+        if path is not None:
+            print(f"  missing: {path.relative_to(ROOT)}")
         return pd.DataFrame()
     df = pd.read_csv(path)
     df["source"] = df.source.astype(str)
@@ -115,8 +160,14 @@ def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[
     df = df[df.target.isin(held_out(bench)) & ~trained].copy()
     df["certified"] = df.certified.fillna(False).astype(bool)
     errors = df["error"].fillna("").astype(str) if "error" in df else pd.Series("", index=df.index)
-    df["timeout"] = errors.str.contains("Timeout")
-    df["error_other"] = (errors != "") & ~df.timeout
+    if "outcome" in df:            # recertify.py: the verdict of sequential.certify's rule
+        df["inconclusive"] = df.outcome == "inconclusive"
+        df["timeout"] = df.outcome == "not_certifiable"
+        df["error_other"] = df.outcome == "unparsed"
+    else:
+        df["inconclusive"] = np.nan
+        df["timeout"] = errors.str.contains("Timeout")
+        df["error_other"] = (errors != "") & ~df.timeout
     parts = []
     for source, part in df.groupby("source"):
         if bench.groups:
@@ -130,24 +181,31 @@ def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[
     return out.assign(approach=approach, bench=bench.name, run=run)
 
 
-def rq1_outcomes(exp) -> Dict[str, pd.DataFrame]:
+def rq1_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
     """{"frozen": ..., "permissive": ...}: per-target outcomes of every RQ1 controller. Full: frozen = the list with
     `any` resolved by the pick's order (determinized; Pac-Man: the narrowed lists as kept, already resolved),
     permissive = the list as kept, `any` open (none for Pac-Man). Baselines: their CSV, and the ties-open CSV as the
-    permissive controller where one exists (otherwise the controller has one action per state and both coincide)."""
+    permissive controller where one exists (otherwise the controller has one action per state and both coincide).
+    `sealed`: the same controllers on the sealed test targets (transfer_sealed_*.csv)."""
     spec = exp.spec
+    kind = "sealed" if sealed else None
     frozen, permissive = [], []
     baselines = {b["name"]: b for b in spec["baselines"]}
     for name, bench in spec["benchmarks"].items():
-        if name not in RQ1_BENCHES and name not in EXTRA_BENCHES:
+        if name not in RQ1_BENCHES and (sealed or name not in EXTRA_BENCHES):
             continue
         cfg = load_config(bench.base)
         dataset = bench.dataset or cfg.domain.dataset
+        other = None
+        if sealed:
+            bench = sealed_bench(bench)
+            other = SEALED[name].get("dataset")
+            dataset = other or dataset
         for run in runs_of(bench.base):
             fz = "final" if name == "pacman" else "determinized"
-            frozen.append(outcomes(csv_path(run, dataset, fz), bench, "Full", run.name))
+            frozen.append(outcomes(csv_path(run, dataset, fz), bench, "Full", run.name, kind=kind))
             if name != "pacman":
-                permissive.append(outcomes(csv_path(run, dataset, "final"), bench, "Full", run.name))
+                permissive.append(outcomes(csv_path(run, dataset, "final"), bench, "Full", run.name, kind=kind))
         for approach in APPROACHES[1:]:
             base = BASELINES[approach]
             base = base.get(name) if isinstance(base, dict) else base
@@ -156,25 +214,52 @@ def rq1_outcomes(exp) -> Dict[str, pd.DataFrame]:
                 continue
             src = Comparison._sources(b["sources"][name])
             config = b["config"][name]
-            frozen.append(outcomes(Comparison._csv(config), bench, approach, "", src["sources"],
-                                   src["source_groups"]))
-            opened = Comparison._csv(config, "open")
-            permissive.append(outcomes(opened if opened.exists() else Comparison._csv(config), bench, approach, "",
-                                       src["sources"], src["source_groups"]))
+            frozen.append(outcomes(baseline_csv(config, dataset=other), bench, approach, "", src["sources"],
+                                   src["source_groups"], kind=kind))
+            opened = baseline_csv(config, "open", other)
+            permissive.append(outcomes(opened if checked(opened, kind).exists() else baseline_csv(config, dataset=other),
+                                       bench, approach, "", src["sources"], src["source_groups"], kind=kind))
+    return {"frozen": pd.concat(frozen, ignore_index=True), "permissive": pd.concat(permissive, ignore_index=True)}
+
+
+def llm_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
+    """As rq1_outcomes, for Full only, one approach per LLM: Haiku 5.5's core runs and the other LLMs' runs of the
+    same core conditions (OTHER_LLMS; only the model differs)."""
+    kind = "sealed" if sealed else None
+    frozen, permissive = [], []
+    for name, bench in exp.spec["benchmarks"].items():
+        if name not in RQ1_BENCHES:
+            continue
+        cfg = load_config(bench.base)
+        dataset = bench.dataset or cfg.domain.dataset
+        if sealed:
+            bench = sealed_bench(bench)
+            dataset = SEALED[name].get("dataset") or dataset
+        arms = {"Claude Haiku 5.5": runs_of(bench.base)}
+        arms.update({llm: runs_of(bench.base + suffix, "ablations") for llm, suffix in OTHER_LLMS.items()})
+        for llm, runs in arms.items():
+            for run in runs:
+                fz = "final" if name == "pacman" else "determinized"
+                frozen.append(outcomes(csv_path(run, dataset, fz), bench, llm, run.name, kind=kind))
+                if name != "pacman":
+                    permissive.append(outcomes(csv_path(run, dataset, "final"), bench, llm, run.name, kind=kind))
     return {"frozen": pd.concat(frozen, ignore_index=True), "permissive": pd.concat(permissive, ignore_index=True)}
 
 
 def per_list(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby(["bench", "approach", "list"]).agg(
         coverage=("certified", "mean"), certified=("certified", "sum"), targets=("target", "count"),
-        timeout=("timeout", "mean"), error=("error_other", "mean")).reset_index()
+        timeout=("timeout", "mean"), error=("error_other", "mean"),
+        inconclusive=("inconclusive", "mean")).reset_index()
 
 
-def rq1_tables(data: Dict[str, pd.DataFrame]) -> None:
+def coverage_table(data: Dict[str, pd.DataFrame], benches, approaches) -> pd.DataFrame:
+    """Per (benchmark, approach): mean, sd and n over controllers of their coverage, permissive and frozen, and the
+    shares of the frozen checks that were inconclusive, not certifiable within limits (timeout) or errors."""
     lists = {k: per_list(v) for k, v in data.items()}
     rows = []
-    for bench in list(RQ1_BENCHES) + list(EXTRA_BENCHES):
-        for approach in APPROACHES:
+    for bench in benches:
+        for approach in approaches:
             entry = {"bench": bench, "approach": approach}
             for kind, df in lists.items():
                 g = df[(df.bench == bench) & (df.approach == approach)]
@@ -185,13 +270,22 @@ def rq1_tables(data: Dict[str, pd.DataFrame]) -> None:
                               f"{kind}_targets_per_list": g.targets.mean(),
                               f"{kind}_certified_per_list": g.certified.mean()})
                 if kind == "frozen":
-                    entry.update({"timeout_share": g.timeout.mean(), "error_share": g.error.mean()})
+                    entry.update({"timeout_share": g.timeout.mean(), "error_share": g.error.mean(),
+                                  "inconclusive_share": g.inconclusive.mean()})
             if len(entry) > 2:
-                entry.update({"inconclusive_share": np.nan, "split": "validation",
-                              "llm": "anthropic/claude-haiku-5.5" if approach == "Full" else ""})
+                entry.update({"split": "validation", "checks": CHECKS})
                 rows.append(entry)
-    table = pd.DataFrame(rows)
-    long = table.melt(id_vars=["bench", "approach", "split", "llm"], var_name="metric").dropna(subset=["value"])
+    return pd.DataFrame(rows)
+
+
+def share(value) -> str:
+    return "--" if value is None or pd.isna(value) else f"${100 * value:.1f}$"
+
+
+def rq1_tables(data: Dict[str, pd.DataFrame], llms: Dict[str, pd.DataFrame]) -> None:
+    table = coverage_table(data, list(RQ1_BENCHES) + list(EXTRA_BENCHES), APPROACHES)
+    table["llm"] = np.where(table.approach == "Full", "anthropic/claude-haiku-5.5", "")
+    long = table.melt(id_vars=["bench", "approach", "split", "llm", "checks"], var_name="metric").dropna(subset=["value"])
     tex = [r"\toprule", r"Controller & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) \\"]
     for bench, title in RQ1_BENCHES.items():
         b = table[table.bench == bench]
@@ -202,23 +296,25 @@ def rq1_tables(data: Dict[str, pd.DataFrame]) -> None:
             for k in ("permissive", "frozen"):
                 cells.append(pct(r.get(f"{k}_mean"), r.get(f"{k}_sd"), count(r.get(f"{k}_n")),
                                  bold=not pd.isna(r.get(f"{k}_mean")) and np.isclose(r[f"{k}_mean"], best[k])))
-            tex.append(f"{r.approach} & {cells[0]} & {cells[1]} & -- & ${100 * r.timeout_share:.1f}$ \\\\")
+            tex.append(f"{r.approach} & {cells[0]} & {cells[1]} & {share(r.get('inconclusive_share'))} & "
+                       f"{share(r.timeout_share)} \\\\")
     tex.append(r"\bottomrule")
     write_table("tab_rq1-coverage", tex, long.to_dict("records"))
 
-    # Per LLM (Full only): only Haiku 5.5 has runs of the core loop
+    # Per LLM (Full only): Haiku 5.5's core runs and the other LLMs' runs of the same conditions
+    names = ["Claude Haiku 5.5"] + list(OTHER_LLMS)
+    per_llm = coverage_table(llms, list(RQ1_BENCHES), names)
     tex = [r"\toprule", r"LLM & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) \\"]
-    llm_rows = []
     for bench, title in RQ1_BENCHES.items():
-        r = table[(table.bench == bench) & (table.approach == "Full")].iloc[0]
-        tex += [r"\midrule", rf"\multicolumn{{5}}{{l}}{{\emph{{{title}}}}} \\",
-                f"Claude Haiku 5.5 & {pct(r.get('permissive_mean'), r.get('permissive_sd'), count(r.get('permissive_n')))}"
-                f" & {pct(r.frozen_mean, r.frozen_sd, int(r.frozen_n))} & -- & ${100 * r.timeout_share:.1f}$ \\\\"]
-        llm_rows += [{"bench": bench, "llm": "anthropic/claude-haiku-5.5", "metric": m, "value": r.get(m)}
-                     for m in ("permissive_mean", "permissive_sd", "permissive_n", "frozen_mean", "frozen_sd",
-                               "frozen_n", "timeout_share") if not pd.isna(r.get(m))]
+        tex += [r"\midrule", rf"\multicolumn{{5}}{{l}}{{\emph{{{title}}}}} \\"]
+        for _, r in per_llm[per_llm.bench == bench].iterrows():
+            tex.append(f"{r.approach} & {pct(r.get('permissive_mean'), r.get('permissive_sd'), count(r.get('permissive_n')))}"
+                       f" & {pct(r.frozen_mean, r.frozen_sd, count(r.frozen_n))} & {share(r.get('inconclusive_share'))}"
+                       f" & {share(r.timeout_share)} \\\\")
     tex.append(r"\bottomrule")
-    write_table("tab_rq1-coverage-llm", tex, [{**x, "split": "validation"} for x in llm_rows])
+    long = per_llm.rename(columns={"approach": "llm"}).melt(id_vars=["bench", "llm", "split", "checks"],
+                                                             var_name="metric").dropna(subset=["value"])
+    write_table("tab_rq1-coverage-llm", tex, long.to_dict("records"))
 
 
 def rq1_size_figure(data: Dict[str, pd.DataFrame]) -> None:
@@ -288,7 +384,8 @@ def rq1_misses(data: Dict[str, pd.DataFrame]) -> None:
                        if not pd.isna(getattr(r, f"worst_{q.name}", np.nan))}
             worst = min(margins, key=margins.get) if margins else None
             rows.append({"bench": bench, "list": r.list, "target": r.target, "smallest_margin": margins.get(worst),
-                         "requirement": worst, "timeout": r.timeout, "split": "validation"})
+                         "requirement": worst, "timeout": r.timeout, "outcome": getattr(r, "outcome", None),
+                         "split": "validation", "checks": CHECKS})
     out = pd.DataFrame(rows)
     out.to_csv(OUT / "tables" / "tab_rq1-misses.csv", index=False)
     print("wrote tables/tab_rq1-misses.csv")
@@ -405,11 +502,205 @@ def rq2_tables(seq: Dict[str, pd.DataFrame], expected: int) -> None:
     pd.DataFrame(curve_rows).to_csv(OUT / "figures" / "fig_rq2-extension.csv", index=False)
 
 
+def rq2_episodes(study: str, example: Tuple[str, int, int] = ("s1", 2, 3)) -> None:
+    """P3: one row per (setting, sequence, episode): the map, the decision, the list that served it and where that
+    list came from (the seed library, generated in this episode, or generated earlier in the same sequence). Also the
+    running example (`example`: sequence, the episode that generated, the next one): every library list's worst case
+    and margin per requirement on the instance met, the generated list's on the next instance, and its size."""
+    rows = []
+    for mode, setting in (("growing", "Extended"), ("frozen", "Frozen")):
+        for seq in sorted((RESULTS / "sequential" / study / mode).glob("s*")):
+            e = pd.read_csv(seq / "episodes.csv")
+            for r in e.itertuples(index=False):
+                deployed = r.deployed if isinstance(r.deployed, str) else ""
+                made = int(deployed[len("gen_t"):]) if deployed.startswith("gen_t") else None
+                origin = ("seed library" if deployed.startswith("seed") else "" if not deployed else
+                          "generated in this episode" if made == r.episode else "generated earlier in this sequence")
+                rows.append({"setting": setting, "sequence": seq.name, "position": r.episode + 1,
+                             "instance": r.instance, "map": r.family, "size": r.n, "decision": r.decision,
+                             "served_by": deployed, "origin": origin,
+                             "generated_at_position": made + 1 if made is not None else np.nan,
+                             "reused_generated": origin == "generated earlier in this sequence",
+                             "split": "validation"})
+    pd.DataFrame(rows).to_csv(OUT / "tables" / "tab_rq2-episodes.csv", index=False)
+    print("wrote tables/tab_rq2-episodes.csv")
+
+    name, ep_gen, ep_next = example
+    seq = RESULTS / "sequential" / study / "growing" / name
+    checks = pd.read_csv(seq / "checks.csv")
+    library = {e["name"]: e for e in json.loads((seq / "library.json").read_text(encoding="utf-8"))}
+    study_cfg = yaml.safe_load((ROOT / "configs" / "sequential" / f"{study}.yaml").read_text(encoding="utf-8"))
+    domain = load_domain("gridworld", load_config(study_cfg["condition"]).domain.visible_extra)
+    instances = {int(i.id): i for i in domain.load_instances(study_cfg["dataset"])}
+    out = []
+    for ep in (ep_gen, ep_next):
+        for c in checks[checks.episode == ep].itertuples(index=False):
+            entry = library[c.rule_list]
+            size = list_size(entry["rules"])
+            for q in domain.spec(instances[c.instance]).requirements:
+                worst = getattr(c, f"worst_{q.name}")
+                out.append({"sequence": name, "position": ep + 1, "instance": c.instance, "rule_list": c.rule_list,
+                            "trained_on": " ".join(map(str, entry["training"])), "outcome": c.outcome,
+                            "solver": c.solver, "requirement": q.name, "worst": worst, "threshold": q.threshold,
+                            "margin": q.margin(worst), "smallest_margin": c.margin, **size, "split": "validation"})
+    pd.DataFrame(out).to_csv(OUT / "tables" / "tab_rq2-example.csv", index=False)
+    print("wrote tables/tab_rq2-example.csv")
+
+
+# ---------------------------------------------------------------- sizes and costs
+
+def _split_top(cond: str, sep: str) -> List[str]:
+    """`cond` split at `sep` outside parentheses."""
+    parts, depth, cur = [], 0, ""
+    for ch in cond:
+        depth += (ch == "(") - (ch == ")")
+        if ch == sep and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return [p.strip() for p in parts + [cur] if p.strip()]
+
+
+IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def list_size(rules) -> dict:
+    """A rule list's size: rules, conjuncts per condition (top-level `&`; `true` has none), distinct names read."""
+    conds = [str(c).strip() for c, _ in rules]
+    conj = [0 if c in ("true", "") else len(_split_top(c, "&")) for c in conds]
+    names = {n for c in conds for n in IDENT.findall(c) if n not in ("true", "false")}
+    return {"rules": len(rules), "conjuncts_mean": float(np.mean(conj)) if conj else 0.0,
+            "conjuncts_max": int(max(conj)) if conj else 0, "conjuncts_total": int(sum(conj)),
+            "features": len(names)}
+
+
+def controller_sizes() -> None:
+    """P7: per controller, its size. Rule lists (Full, Restart, NoRepair, and the other LLMs' Full): rules,
+    conjuncts per condition, distinct features. Trees: nodes and depth; PPO: parameters (src/recertify.py's
+    sizes.json, written when it refits a baseline). Per benchmark mean and sd over controllers."""
+    rows = []
+    for bench in RQ1_BENCHES:
+        b = EXP.spec["benchmarks"][bench]
+        frozen = "final" if bench == "pacman" else "determinized"
+        arms = {"Full": [(r, frozen) for r in runs_of(b.base)],
+                "NoRepair": [(r, "norepair_determinized") for r in runs_of(b.base)],
+                "Restart": [(r, frozen) for r in runs_of(RESTARTS.get(bench, ""), "ablations")] if bench in RESTARTS
+                else []}
+        for llm, suffix in OTHER_LLMS.items():
+            arms[f"Full ({llm})"] = [(r, frozen) for r in runs_of(b.base + suffix, "ablations")]
+        for arm, runs in arms.items():
+            for run, rules in runs:
+                for sid, lst in RULES[rules][0](run).items():
+                    rows.append({"bench": bench, "controller": arm, "source": f"{run.name}/{sid}",
+                                 "kind": "rule list", **list_size(lst)})
+        for approach in APPROACHES[1:]:
+            base = BASELINES[approach]
+            base = base.get(bench) if isinstance(base, dict) else base
+            spec = next((x for x in EXP.spec["baselines"] if x["name"] == base), None)
+            if spec is None or bench not in spec["config"]:
+                continue
+            path = ROOT / spec["config"][bench]
+            sources = Comparison._sources(spec["sources"][bench])["sources"]
+            if approach == "Hand" and bench == "pacman":
+                lists = yaml.safe_load(path.read_text(encoding="utf-8"))["params"]["lists"]
+                rows += [{"bench": bench, "controller": approach, "source": s, "kind": "rule list",
+                          **list_size(lists[s])} for s in sources]
+                continue
+            if approach == "Hand":
+                rows.append({"bench": bench, "controller": approach, "source": "cautious",
+                             "kind": "Python template (compiled per cell)"})
+                continue
+            sizes = BASELINES_DIR / path.stem / "sizes.json"
+            data = json.loads(sizes.read_text(encoding="utf-8")) if sizes.exists() else {}
+            for s in sources:
+                kind = "network" if approach == "RL" else "tree"
+                rows.append({"bench": bench, "controller": approach, "source": s, "kind": kind,
+                             **(data.get(s) or {"missing": f"no {sizes.relative_to(ROOT)}"})})
+    df = pd.DataFrame(rows)
+    metrics = [c for c in ("rules", "conjuncts_mean", "conjuncts_max", "features", "nodes", "depth", "leaves",
+                           "parameters") if c in df]
+    summary = []
+    for (bench, controller), g in df.groupby(["bench", "controller"], sort=False):
+        entry = {"bench": bench, "controller": controller, "kind": g.kind.iloc[0], "n": len(g)}
+        for m in metrics:
+            if m in g and g[m].notna().any():
+                entry[f"{m}_mean"], entry[f"{m}_sd"] = g[m].mean(), g[m].std(ddof=1) if g[m].notna().sum() > 1 else np.nan
+        if "missing" in g and g.missing.notna().any():
+            entry["missing"] = g.missing.dropna().iloc[0]
+        summary.append(entry)
+    pd.DataFrame(summary).to_csv(OUT / "tables" / "tab_rq1-sizes.csv", index=False)
+    df.to_csv(OUT / "tables" / "tab_rq1-sizes-per-controller.csv", index=False)
+    print("wrote tables/tab_rq1-sizes.csv, tab_rq1-sizes-per-controller.csv")
+
+
+# $ per M prompt and output tokens, as OpenRouter lists them on 2026-10-19 (provider pinned)
+PRICES = {"anthropic/claude-haiku-5.5": (0.10, 0.50), "anthropic/claude-sonnet-5.5": (2.00, 10.00),
+          "openai/gpt-6-luna": (0.10, 0.50)}
+OTHER_LLMS = {"Sonnet 5.5": "_sonnet", "GPT-6 Luna": "_luna"}     # condition suffixes of the other LLMs' core runs
+
+
+def generation_cost(study: str) -> None:
+    """P4: per condition, per training set: wall-clock minutes (the set's `total_time`, every chain and the pick),
+    the LLM and PRISM seconds summed over every round of every chain (chains run concurrently, so these sums overlap
+    each other and can exceed the wall clock), LLM calls, tokens and dollars. Median and range over training sets."""
+    conditions = {f"Full ({b})": (EXP.spec["benchmarks"][b].base, "core") for b in RQ1_BENCHES}
+    for bench in RQ1_BENCHES:
+        base = EXP.spec["benchmarks"][bench].base
+        for name, root in ((base + "_resample", "ablations"), (RESTARTS.get(bench), "ablations")):
+            if name and runs_of(name, root):
+                conditions[f"Restart ({bench})"] = (name, root)
+        for llm, suffix in OTHER_LLMS.items():
+            if runs_of(base + suffix, "ablations"):
+                conditions[f"Full {llm} ({bench})"] = (base + suffix, "ablations")
+    rows, per_set = [], []
+    for label, (name, root) in conditions.items():
+        for run in runs_of(name, root):
+            model = json.loads((run / "config.json").read_text(encoding="utf-8"))["llm"]["model"]
+            price = PRICES.get(model, (np.nan, np.nan))
+            for sid, record in sample_records(run).items():
+                its = record.get("iterations", [])
+                prompt = sum(it.get("llm_prompt_tokens") or 0 for it in its)
+                output = sum(it.get("llm_output_tokens") or 0 for it in its)
+                per_set.append({"condition": label, "run_condition": name, "run": run.name, "set": sid, "model": model,
+                                "wall_min": (record.get("total_time") or np.nan) / 60,
+                                "llm_s": sum(it.get("llm_time") or 0 for it in its),
+                                "prism_s": sum(it.get("prism_time") or 0 for it in its),
+                                "llm_calls": sum(it.get("llm_calls") or 0 for it in its),
+                                "tokens": prompt + output, "prompt_tokens": prompt, "output_tokens": output,
+                                "dollars": (prompt * price[0] + output * price[1]) / 1e6})
+    df = pd.DataFrame(per_set)
+    for (label, model), g in df.groupby(["condition", "model"], sort=False):
+        for m in ("wall_min", "llm_s", "prism_s", "llm_calls", "tokens", "dollars"):
+            rows.append({"condition": label, "model": model, "metric": m, "median": g[m].median(), "min": g[m].min(),
+                         "max": g[m].max(), "n_sets": len(g), "runs": g.run.nunique(),
+                         "price_per_M": "/".join(f"{p:.2f}" for p in PRICES.get(model, (np.nan, np.nan)))})
+    seq = sequential(study)["episodes"]
+    gen = seq[seq.get("generation_seconds", pd.Series(dtype=float)).notna()]
+    price = PRICES["anthropic/claude-haiku-5.5"]
+    dollars = (gen.prompt_tokens * price[0] + gen.output_tokens * price[1]) / 1e6
+    rows += [{"condition": f"Sequential study {study} (growing, all generations)", "model": "anthropic/claude-haiku-5.5",
+              "metric": "dollars_total", "median": dollars.sum(), "min": np.nan, "max": np.nan, "n_sets": len(gen)},
+             {"condition": f"Sequential study {study} (per generation)", "model": "anthropic/claude-haiku-5.5",
+              "metric": "dollars", "median": dollars.median(), "min": dollars.min(), "max": dollars.max(),
+              "n_sets": len(gen)},
+             {"condition": f"Sequential study {study} (per generation)", "model": "anthropic/claude-haiku-5.5",
+              "metric": "wall_min", "median": gen.generation_seconds.median() / 60,
+              "min": gen.generation_seconds.min() / 60, "max": gen.generation_seconds.max() / 60, "n_sets": len(gen)},
+             {"condition": f"Sequential study {study} (per generation)", "model": "anthropic/claude-haiku-5.5",
+              "metric": "llm_calls", "median": gen.llm_calls.median(), "min": gen.llm_calls.min(),
+              "max": gen.llm_calls.max(), "n_sets": len(gen)}]
+    pd.DataFrame(rows).assign(split="validation").to_csv(OUT / "tables" / "tab_rq2-generation-cost.csv", index=False)
+    df.to_csv(OUT / "tables" / "tab_rq2-generation-cost-per-set.csv", index=False)
+    print("wrote tables/tab_rq2-generation-cost.csv, tab_rq2-generation-cost-per-set.csv")
+
+
 # ---------------------------------------------------------------- RQ3: ingredients of generation
 
 RQ3_BENCHES = {"grids": "Random grids", "families": "Grid-world families", "pacman": "Pac-Man",
                "mer": "MER across $x$", "mer_n": "MER across $n$"}
-RESTARTS = {"mer": "port_mer_resample"}          # pure restarts of the core loop (planner.retry: always)
+RESTARTS = {"mer": "port_mer_resample", "families": "port_fam_history_resample", "grids": "port_ts_history_resample",
+            "pacman": "port_pacman_narrow_core_resample"}   # pure restarts of the core loop (planner.retry: always)
 
 
 def members_passed(run: Path, norepair: bool = False) -> List[float]:
@@ -433,7 +724,7 @@ def calls_per_set(run: Path) -> float:
 
 
 def rq3_tables() -> None:
-    rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Training pass rate (\%) \\"]
+    rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Training pass rate (\%) & LLM calls per set \\"]
     for bench, title in RQ3_BENCHES.items():
         b = EXP.spec["benchmarks"][bench]
         cfg = load_config(b.base)
@@ -444,7 +735,7 @@ def rq3_tables() -> None:
                    "NoRepair": (runs_of(b.base), "norepair_determinized", True)}
         block = []
         for name, (runs, rules, norepair) in configs.items():
-            if not runs or not all(csv_path(r, dataset, rules).exists() for r in runs):
+            if not runs or not all(checked(csv_path(r, dataset, rules)).exists() for r in runs):
                 continue
             cov = pd.concat([outcomes(csv_path(r, dataset, rules), b, name, r.name) for r in runs])
             cov = per_list(cov)
@@ -457,8 +748,10 @@ def rq3_tables() -> None:
                                   ("certified_per_list", cov.certified.mean()),
                                   ("targets_per_list", cov.targets.mean()),
                                   ("training_pass_mean", p["mean"]), ("training_pass_sd", p["sd"]),
-                                  ("training_pass_n", p["n"]), ("llm_calls_per_set", np.mean(calls)))]
-            block.append(f"{name} & {pct(c['mean'], c['sd'], c['n'])} & {pct(p['mean'], p['sd'], p['n'])} \\\\")
+                                  ("training_pass_n", p["n"]), ("llm_calls_per_set", np.mean(calls)),
+                                  ("inconclusive_share", cov.inconclusive.mean()), ("timeout_share", cov.timeout.mean()))]
+            block.append(f"{name} & {pct(c['mean'], c['sd'], c['n'])} & {pct(p['mean'], p['sd'], p['n'])} & "
+                         f"${np.mean(calls):.1f}$ \\\\")
         if bench == "grids":           # the hand-written template does not use `closer`: without it, it is unchanged
             hand = per_list(outcomes(Comparison._csv("configs/baselines/template_grid_large.yaml"), b, "Hand", "",
                                      ["cautious"], {}))
@@ -466,8 +759,8 @@ def rq3_tables() -> None:
             rows += [{"bench": bench, "configuration": "NoSP (Hand)", "metric": m, "value": v, "split": "validation",
                       "runs": 1} for m, v in (("coverage_mean", c["mean"]), ("coverage_n", c["n"]),
                                               ("certified_per_list", hand.certified.mean()))]
-            block.append(f"NoSP (Hand) & {pct(c['mean'], c['sd'], c['n'])} & -- \\\\")
-        tex += [r"\midrule", rf"\multicolumn{{3}}{{l}}{{\emph{{{title}}}}} \\"] + block
+            block.append(f"NoSP (Hand) & {pct(c['mean'], c['sd'], c['n'])} & -- & -- \\\\")
+        tex += [r"\midrule", rf"\multicolumn{{4}}{{l}}{{\emph{{{title}}}}} \\"] + block
     tex.append(r"\bottomrule")
     write_table("tab_rq3-ablation", tex, rows)
 
@@ -586,17 +879,23 @@ EXP = None
 
 
 def main(argv=None):
-    global EXP
+    global EXP, CHECKS
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--study", default="shift_v0", help="out/results/sequential/<study>")
     parser.add_argument("--episodes", type=int, default=12, help="episodes per sequence (figure axis)")
+    parser.add_argument("--checks", choices=["ii", "gs"], default="ii",
+                        help="ii: the interval-iteration verdicts of src/recertify.py; gs: the loop solver's")
     args = parser.parse_args(argv)
+    CHECKS = args.checks
     EXP = experiment(RQ1_SPEC)
     data = rq1_outcomes(EXP)
-    rq1_tables(data)
+    rq1_tables(data, llm_outcomes(EXP))
     rq1_size_figure(data)
     rq1_misses(data)
     rq2_tables(sequential(args.study), args.episodes)
+    rq2_episodes(args.study)
+    generation_cost(args.study)
+    controller_sizes()
     rq3_tables()
     rq3_budget_figure()
 
