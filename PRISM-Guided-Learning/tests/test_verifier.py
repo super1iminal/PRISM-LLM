@@ -61,3 +61,17 @@ def test_a_prism_timeout_moves_the_exact_check_to_its_fallback_solver(tiny_grid)
         exact, solver = done.value
     assert len(timed_out) == 1 and solver == "Gauss-Seidel 1e-12"
     assert exact.worst == pytest.approx(verifier.verify_exact(policy)[0].worst, abs=1e-6)
+
+
+def test_the_certification_rule_uses_each_solvers_band():
+    """Linear programming has no error bound, so `prism.lp_tolerance` around a threshold decides nothing; interval
+    iteration's band is its precision; the Gauss-Seidel fallback never certifies."""
+    from core.verifier import exact_verdict
+    prism = load_config().prism
+    lp, ii, gs = "linear programming", "interval iteration", "Gauss-Seidel 1e-12"
+    assert exact_verdict({"a": 0.01, "b": 0.2}, lp, prism) == "certified"
+    assert exact_verdict({"a": prism.lp_tolerance / 2}, lp, prism) == "inconclusive"
+    assert exact_verdict({"a": -prism.lp_tolerance / 2}, lp, prism) == "inconclusive"
+    assert exact_verdict({"a": -0.01}, lp, prism) == "failed"
+    assert exact_verdict({"a": prism.lp_tolerance / 2}, ii, prism) == "certified"
+    assert exact_verdict({"a": 0.01}, gs, prism) == "inconclusive" and exact_verdict({"a": -0.01}, gs, prism) == "failed"

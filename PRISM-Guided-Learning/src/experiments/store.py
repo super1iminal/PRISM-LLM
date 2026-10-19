@@ -25,7 +25,7 @@ ROOTS = (CORE_PATH, ABLATIONS_PATH)
 
 IGNORED = {"condition", "run.workers", "run.scheduler", "llm.seed", "llm.openrouter.timeout_s",
            "llm.openrouter.max_retries", "prism.java_max_mem", "prism.timeout_s",
-           "prism.max_concurrent", "rules.any_prune"}
+           "prism.max_concurrent", "rules.any_prune", "prism.exact_method", "prism.lp_tolerance"}
 
 
 def _flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:

@@ -16,9 +16,11 @@ Usage (from PRISM-Guided-Learning/):
     python src/recertify.py baseline configs/baselines/<name>.yaml [--rules final|open] [--set key=value ...]
         [--workers 2] [--prefix transfer_lp] [--unseal]
 The prefix defaults to transfer_lp (linear programming) or transfer_ii (`prism.exact_method: intervaliter`).
+    python src/recertify.py reverdict <csv> [<csv> ...]
 `run` writes <run dir>/<prefix>_<dataset stem><rules suffix>.csv (suffixes as src/transfer.py's); `baseline` refits
 the baseline as src/run_baseline.py does and writes out/results/baselines/<name>/<prefix>_<dataset stem>[_open].csv.
-Rows of an existing CSV for targets not checked again are kept. Columns: source, target, trained, outcome
+Rows of an existing CSV for targets not checked again are kept. `reverdict` re-applies the certification rule with
+the current bands (e.g. after `prism.lp_tolerance` changes) to written CSVs, from their margins and solvers. Columns: source, target, trained, outcome
 (certified | failed | inconclusive | not_certifiable | unparsed), certified, solver, fallback, margin, binding (the
 requirement with the smallest margin), worst_<requirement>, seconds, model_seconds, states, error.
 """
@@ -255,9 +257,21 @@ def controller_sizes(baseline) -> Dict[str, dict]:
     return out
 
 
+def reverdict(path: Path, prism) -> pd.DataFrame:
+    """`path`'s outcome and certified columns again from its margins and solvers, with `prism`'s bands."""
+    df = pd.read_csv(path)
+    rated = df.margin.notna() & df.outcome.isin(["certified", "failed", "inconclusive"])
+    df.loc[rated, "outcome"] = [exact_verdict({"smallest": m}, s, prism) for m, s in zip(df.margin[rated], df.solver[rated])]
+    df["certified"] = df.outcome == "certified"
+    df.to_csv(path, index=False)
+    return df
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="kind", required=True)
+    v = sub.add_parser("reverdict", help="Written CSVs again, with the current bands")
+    v.add_argument("csvs", type=Path, nargs="+")
     r = sub.add_parser("run", help="A run's rule lists")
     r.add_argument("run_dir", type=Path)
     r.add_argument("--rules", choices=list(RULES), default="determinized")
@@ -275,6 +289,11 @@ def main(argv=None):
         p.add_argument("--source-targets", default=None,
                        help="JSON, source -> its own target ids (e.g. each family's list on its family only)")
     args = parser.parse_args(argv)
+    if args.kind == "reverdict":
+        prism = load_config().prism
+        for path in args.csvs:
+            print(f"{path}: {reverdict(path, prism).outcome.value_counts().to_dict()}", flush=True)
+        return
     (run_cmd if args.kind == "run" else baseline_cmd)(args)
 
 
