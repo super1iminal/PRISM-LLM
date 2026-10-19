@@ -41,7 +41,7 @@ def test_failing_respects_each_bound():
 @needs_prism
 def test_a_prism_timeout_moves_the_exact_check_to_its_fallback_solver(tiny_grid):
     """A timeout reaches the verifier as subprocess.TimeoutExpired thrown into its generator, at the point
-    where subprocess.run used to raise it, so the exact check still falls back to Gauss-Seidel."""
+    where subprocess.run used to raise it, so the exact check still falls back to the next solver."""
     import subprocess
 
     from core.prism import run_call
@@ -52,14 +52,14 @@ def test_a_prism_timeout_moves_the_exact_check_to_its_fallback_solver(tiny_grid)
     try:
         call = next(steps)
         while True:
-            if "-lp" in call.cmd:
+            if "-intervaliter" in call.cmd:
                 timed_out.append(call)
                 call = steps.throw(subprocess.TimeoutExpired(list(call.cmd), call.timeout))
             else:
                 call = steps.send(run_call(call))
     except StopIteration as done:
         exact, solver = done.value
-    assert len(timed_out) == 1 and solver == "Gauss-Seidel 1e-12"
+    assert len(timed_out) == 1 and solver == "linear programming"
     assert exact.worst == pytest.approx(verifier.verify_exact(policy)[0].worst, abs=1e-6)
 
 

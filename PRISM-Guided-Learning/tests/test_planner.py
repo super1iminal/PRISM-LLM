@@ -137,7 +137,7 @@ def test_prism_failure_scores_the_round_without_losing_the_instance(tiny_grid, m
 
 def test_the_final_policy_is_checked_exactly(tiny_grid):
     result, _ = solve(tiny_grid, [PRE_G1, POST_G1], 2)
-    assert result["success"] and result["final_check"] == "linear programming"
+    assert result["success"] and result["final_check"] == "interval iteration"
     for case in ("best", "worst"):
         loop, final = result[f"loop_{case}"], result[f"final_{case}"]
         assert loop == result["iterations"][-1][case] and list(final) == REQUIREMENTS
@@ -150,11 +150,13 @@ def test_without_the_exact_check_the_run_reports_the_loops_values(tiny_grid):
     assert result["final_worst"] == result["loop_worst"] == result["iterations"][0]["worst"]
 
 
-def test_the_exact_check_falls_back_to_gauss_seidel_then_to_the_loops_values(tiny_grid):
-    ii = ["prism.exact_method=intervaliter", "prism.exact_epsilon=bad"]   # PRISM rejects it: interval iteration fails
-    result, _ = solve(tiny_grid, [LEFT], 1, *ii)
+def test_the_exact_check_falls_back_to_lp_then_gauss_seidel_then_to_the_loops_values(tiny_grid):
+    bad = "prism.exact_epsilon=bad"                     # PRISM rejects it: interval iteration fails
+    result, _ = solve(tiny_grid, [LEFT], 1, bad)
+    assert result["final_check"] == "linear programming"
+    result, _ = solve(tiny_grid, [LEFT], 1, bad, "prism.exact_methods=[intervaliter]")
     assert result["final_check"] == "Gauss-Seidel 1e-12"
-    result, _ = solve(tiny_grid, [LEFT], 1, *ii, "prism.exact_fallback_epsilon=bad")
+    result, _ = solve(tiny_grid, [LEFT], 1, bad, "prism.exact_methods=[intervaliter]", "prism.exact_fallback_epsilon=bad")
     assert result["final_check"] == "failed" and result["final_worst"] == result["loop_worst"]
 
 

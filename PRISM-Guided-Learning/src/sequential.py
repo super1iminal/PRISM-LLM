@@ -10,9 +10,9 @@ before every episode decides which rule list controls it (the policy of the pape
 
 Mode `frozen` never generates, so it measures reuse alone. Certification uses the exact solvers
 (`PolicyVerifier.verify_exact`) and the certification rule (`core.verifier.exact_verdict`): a rule list is certified
-only if the exact solver (`prism.exact_method`: linear programming, or interval iteration) finished and every worst
-case lies beyond its threshold by more than its band (`prism.lp_tolerance`, or `prism.exact_epsilon` for interval
-iteration). A value within that band, or a value from the Gauss-Seidel fallback (no error bound), is inconclusive and
+only if an exact solver (`prism.exact_methods`: interval iteration, then linear programming where it stalls)
+finished and every worst case lies beyond its threshold by more than its band (`prism.exact_epsilon` for interval
+iteration, `prism.lp_tolerance` for linear programming). A value within that band, or a value from the Gauss-Seidel fallback (no error bound), is inconclusive and
 counts as not certified; failure, inconclusive results and timeouts are recorded separately. Generation runs the study's condition through src/run_ablation.py (LLM calls),
 then src/determinize.py fixes the order of its `any` rules, as for the library's seed rule lists.
 

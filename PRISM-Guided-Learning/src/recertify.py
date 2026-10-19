@@ -2,27 +2,31 @@
 
 `src/transfer.py` and `src/run_baseline.py` check held-out targets with the loop's solver and re-check only near a
 threshold, so they cannot say when a verdict is inconclusive. This applies the certification rule
-(`core.verifier.exact_verdict`, as `sequential.certify`) to every (controller, target) pair: the exact solver
-(`prism.exact_method`: PRISM's linear programming by default, or interval iteration at `prism.exact_epsilon`), falling
-back to Gauss-Seidel at `prism.exact_fallback_epsilon`; certified iff the exact solver finished and the smallest margin
-over the requirements is beyond its band (`prism.lp_tolerance` for linear programming, `prism.exact_epsilon` for
-interval iteration); inconclusive within the band, or when only the fallback finished and the margin is >= -band;
-failed otherwise. A check where neither solver finishes, or whose model cannot be built, is "not certifiable within
-limits", with the reason. It changes nothing in the loop or the other checkers.
+(`core.verifier.exact_verdict`, as `sequential.certify`) to every (controller, target) pair: the exact solvers in turn
+(`prism.exact_methods`: interval iteration at `prism.exact_epsilon`, capped at `prism.ii_max_iters` iterations,
+then PRISM's linear programming where it stalls), falling back to Gauss-Seidel at `prism.exact_fallback_epsilon`;
+certified iff an exact solver finished and the smallest margin over the requirements is beyond its band
+(`prism.exact_epsilon` for interval iteration, `prism.lp_tolerance` for linear programming); inconclusive within the
+band, or when only the fallback finished and the margin is >= -band; failed otherwise. A check where no solver
+finishes, or whose model cannot be built, is "not certifiable within limits", with the reason. It changes nothing in
+the loop or the other checkers.
 
 Usage (from PRISM-Guided-Learning/):
     python src/recertify.py run <run dir> --rules determinized [--targets 12-19] [--data D] [--workers 2]
-        [--prefix transfer_lp] [--unseal]
+        [--prefix transfer_exact] [--unseal]
     python src/recertify.py baseline configs/baselines/<name>.yaml [--rules final|open] [--set key=value ...]
-        [--workers 2] [--prefix transfer_lp] [--unseal]
-The prefix defaults to transfer_lp (linear programming) or transfer_ii (`prism.exact_method: intervaliter`).
+        [--workers 2] [--prefix transfer_exact] [--unseal]
     python src/recertify.py reverdict <csv> [<csv> ...]
+    python src/recertify.py combine <dir or csv> [...]
 `run` writes <run dir>/<prefix>_<dataset stem><rules suffix>.csv (suffixes as src/transfer.py's); `baseline` refits
 the baseline as src/run_baseline.py does and writes out/results/baselines/<name>/<prefix>_<dataset stem>[_open].csv.
-Rows of an existing CSV for targets not checked again are kept. `reverdict` re-applies the certification rule with
-the current bands (e.g. after `prism.lp_tolerance` changes) to written CSVs, from their margins and solvers. Columns: source, target, trained, outcome
-(certified | failed | inconclusive | not_certifiable | unparsed), certified, solver, fallback, margin, binding (the
-requirement with the smallest margin), worst_<requirement>, seconds, model_seconds, states, error.
+The prefix defaults to transfer_exact (transfer_ii or transfer_lp when `prism.exact_methods` names one method). Rows
+of an existing CSV for targets not checked again are kept. `reverdict` re-applies the certification rule with the
+current bands to written CSVs, from their margins and solvers. `combine` builds transfer_exact_<x>.csv from checks
+made with one method each: interval iteration's row where it converged (transfer_ii_<x>.csv), else linear
+programming's (transfer_lp_<x>.csv). Columns: source, target, trained, outcome (certified | failed | inconclusive |
+not_certifiable | unparsed), certified, solver, fallback, margin, binding (the requirement with the smallest margin),
+worst_<requirement>, seconds, model_seconds, states, error.
 """
 import argparse
 import json
@@ -50,9 +54,12 @@ from transfer import RULES, guard_sealed, merge, parse_ids, training_instances
 MODEL_TIME = re.compile(r"Time for model construction:\s*([\d.]+)")
 
 
+PREFIXES = {("intervaliter",): "transfer_ii", ("lp",): "transfer_lp"}
+
+
 def prefix_of(cfg) -> str:
-    """The output prefix for `cfg`'s exact solver."""
-    return "transfer_lp" if cfg.prism.exact_method == "lp" else "transfer_ii"
+    """The output prefix for `cfg`'s exact solvers."""
+    return PREFIXES.get(tuple(cfg.prism.exact_methods), "transfer_exact")
 
 
 def summarize(row: dict, spec, worst: Dict[str, float], solver: str, prism) -> dict:
@@ -122,7 +129,7 @@ def certify_explicit(domain, cfg, instance, policies_of) -> List[dict]:
         model = model.part(model.reachable())
         if model.S == 1:        # PRISM cannot import a one-state model; its values are exact in numpy
             worst, solver, stdout, errors = ({r.name: model.value(r, worst=True) for r in reqs},
-                                             SOUND[cfg.prism.exact_method], "", [])
+                                             SOUND[cfg.prism.exact_methods[0]], "", [])
         else:
             worst, solver, stdout, errors = prism_worst(mdp, model)
         seconds = time.time() - start
@@ -267,11 +274,48 @@ def reverdict(path: Path, prism) -> pd.DataFrame:
     return df
 
 
+def combine(stem_dir: Path, stem: str, prism) -> pd.DataFrame:
+    """transfer_exact_<stem>.csv in `stem_dir` from its one-method checks: per (source, target), a row already there,
+    else interval iteration's where it converged, else linear programming's, else whatever was checked; verdicts again
+    with `prism`'s bands."""
+    key = ["source", "target"]
+    parts = {p: pd.read_csv(stem_dir / f"{p}_{stem}.csv") for p in ("transfer_exact", "transfer_ii", "transfer_lp")
+             if (stem_dir / f"{p}_{stem}.csv").exists()}
+    ii, lp = parts.get("transfer_ii"), parts.get("transfer_lp")
+    picks = [parts["transfer_exact"]] if "transfer_exact" in parts else []
+    if ii is not None:
+        picks.append(ii[(ii.solver == SOUND["intervaliter"]) & ii.outcome.isin(["certified", "failed"])])
+    if lp is not None:
+        picks.append(lp[lp.solver == SOUND["lp"]])
+    picks += [d for d in (ii, lp) if d is not None]
+    df = pd.concat([d.assign(source=d.source.astype(str)) for d in picks], ignore_index=True).drop_duplicates(key)
+    out = stem_dir / f"transfer_exact_{stem}.csv"
+    df.sort_values(key, key=lambda c: c.astype(str)).to_csv(out, index=False)
+    return reverdict(out, prism)
+
+
+def combine_cmd(paths: List[Path], prism) -> None:
+    """`combine` over CSVs and the transfer_ii / transfer_lp CSVs under directories."""
+    stems = set()
+    for path in paths:
+        for f in (sorted(path.rglob("transfer_*.csv")) if path.is_dir() else [path]):
+            m = re.match(r"transfer_(ii|lp)_(.+)\.csv$", f.name)
+            if m:
+                stems.add((f.parent, m.group(2)))
+    for stem_dir, stem in sorted(stems):
+        df = combine(stem_dir, stem, prism)
+        left = int((df.outcome == "inconclusive").sum())
+        print(f"{stem_dir / f'transfer_exact_{stem}.csv'}: {df.outcome.value_counts().to_dict()}"
+              + (f" ({left} still inconclusive)" if left else ""), flush=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="kind", required=True)
     v = sub.add_parser("reverdict", help="Written CSVs again, with the current bands")
     v.add_argument("csvs", type=Path, nargs="+")
+    c = sub.add_parser("combine", help="transfer_exact_*.csv from the transfer_ii / transfer_lp checks")
+    c.add_argument("paths", type=Path, nargs="+")
     r = sub.add_parser("run", help="A run's rule lists")
     r.add_argument("run_dir", type=Path)
     r.add_argument("--rules", choices=list(RULES), default="determinized")
@@ -283,8 +327,8 @@ def main(argv=None):
     b.add_argument("--set", action="append", default=[], help="Baseline config override key=value")
     for p in (r, b):
         p.add_argument("--workers", type=int, default=2)
-        p.add_argument("--prefix", default=None, help="Output file prefix (default transfer_lp, or transfer_ii for "
-                       "prism.exact_method=intervaliter; transfer_sealed for the test pass)")
+        p.add_argument("--prefix", default=None, help="Output file prefix (default transfer_exact; transfer_sealed "
+                       "for the test pass)")
         p.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
         p.add_argument("--source-targets", default=None,
                        help="JSON, source -> its own target ids (e.g. each family's list on its family only)")
@@ -293,6 +337,9 @@ def main(argv=None):
         prism = load_config().prism
         for path in args.csvs:
             print(f"{path}: {reverdict(path, prism).outcome.value_counts().to_dict()}", flush=True)
+        return
+    if args.kind == "combine":
+        combine_cmd(args.paths, load_config().prism)
         return
     (run_cmd if args.kind == "run" else baseline_cmd)(args)
 

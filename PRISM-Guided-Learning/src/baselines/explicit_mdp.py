@@ -359,8 +359,8 @@ class ExplicitMDP(Model):
 
     def certify(self, policies: Dict[str, np.ndarray]) -> List[dict]:
         """Each named policy certified by PRISM on this instance: rows in src/transfer.py's format. The model under
-        the policy (its reachable part) goes to PRISM as explicit files, checked with the exact solver
-        (`prism.exact_method`), or Gauss-Seidel at `prism.exact_fallback_epsilon` where that fails."""
+        the policy (its reachable part) goes to PRISM as explicit files, checked with the exact solvers
+        (`prism.exact_methods`), or Gauss-Seidel at `prism.exact_fallback_epsilon` where they all fail."""
         rows = []
         reqs = self.spec.requirements
         for source, policy in policies.items():

@@ -108,13 +108,15 @@ def runs_of(name: str, root: str = "core") -> List[Path]:
 
 # ---------------------------------------------------------------- RQ1: per (controller, held-out target) outcomes
 
-CHECKS = "lp"      # lp / ii: src/recertify.py's verdicts by linear programming (transfer_lp_*.csv; Asher, Oct 19) or
-                   # interval iteration (transfer_ii_*.csv); gs: the loop solver's
+CHECKS = "exact"   # exact: src/recertify.py's verdicts, interval iteration with linear programming where it stalls
+                   # (transfer_exact_*.csv, `recertify.py combine`; Asher, Oct 19); ii / lp: one method each; gs: the
+                   # loop solver's
 
 
 def checked(path: Optional[Path], kind: Optional[str] = None) -> Optional[Path]:
     """The CSV of `path`'s checks of `kind` (default CHECKS): transfer_<x>.csv itself (gs), its
-    transfer_lp_<x>.csv (lp), transfer_ii_<x>.csv (ii) or, for the sealed test pass, its transfer_sealed_<x>.csv (sealed; all by
+    transfer_exact_<x>.csv (exact), transfer_lp_<x>.csv (lp), transfer_ii_<x>.csv (ii) or, for the sealed test pass, its
+    transfer_sealed_<x>.csv (sealed; all by
     src/recertify.py)."""
     kind = kind or CHECKS
     if path is None or kind == "gs":
@@ -908,9 +910,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--study", default="shift_v0", help="out/results/sequential/<study>")
     parser.add_argument("--episodes", type=int, default=12, help="episodes per sequence (figure axis)")
-    parser.add_argument("--checks", choices=["lp", "ii", "gs"], default="lp",
-                        help="lp / ii: src/recertify.py's verdicts by linear programming / interval iteration; gs: the "
-                             "loop solver's")
+    parser.add_argument("--checks", choices=["exact", "ii", "lp", "gs"], default="exact",
+                        help="exact: src/recertify.py's verdicts (interval iteration, linear programming where it "
+                             "stalls); ii / lp: one method each; gs: the loop solver's")
     args = parser.parse_args(argv)
     CHECKS = args.checks
     EXP = experiment(RQ1_SPEC)

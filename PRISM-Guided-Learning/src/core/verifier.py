@@ -10,23 +10,25 @@ from core.prism import Choice, PrismError, PrismResult, PrismRunner, PrismSteps,
 from core.rules import SymbolicPolicy, Value
 
 
-SOUND = {"lp": "linear programming", "intervaliter": "interval iteration"}   # prism.exact_method -> solver name
+SOUND = {"intervaliter": "interval iteration", "lp": "linear programming"}   # prism.exact_methods -> solver name
 
 
 def exact_solvers(cfg) -> List[Tuple[str, List[str]]]:
-    """The exact check's solvers in order, as (name, PRISM arguments), for PRISM config `cfg`: `exact_method`
-    (linear programming, or interval iteration at `exact_epsilon`), then Gauss-Seidel at `exact_fallback_epsilon`
-    (no error bound) where it fails."""
-    first = ["-lp"] if cfg.exact_method == "lp" else ["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon]
-    return [(SOUND[cfg.exact_method], first),
-            (f"Gauss-Seidel {cfg.exact_fallback_epsilon}", ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon])]
+    """The exact check's solvers in order, as (name, PRISM arguments), for PRISM config `cfg`: `exact_methods`
+    (by default interval iteration at `exact_epsilon`, capped at `ii_max_iters` iterations, then linear
+    programming), then Gauss-Seidel at `exact_fallback_epsilon` (no error bound) where they all fail."""
+    args = {"intervaliter": ["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon,
+                             "-maxiters", str(cfg.ii_max_iters)],    # after the runner's own -maxiters: PRISM takes it
+            "lp": ["-lp"]}
+    return [(SOUND[m], args[m]) for m in cfg.exact_methods] + [
+        (f"Gauss-Seidel {cfg.exact_fallback_epsilon}", ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon])]
 
 
 def exact_band(cfg, solver: Optional[str] = None) -> float:
-    """How close to a threshold a value from `solver` (default: `exact_method`'s) decides nothing: `lp_tolerance`
-    for linear programming, which has no error bound, and interval iteration's precision for it."""
-    method = {name: m for m, name in SOUND.items()}.get(solver, cfg.exact_method)
-    return float(cfg.lp_tolerance) if method == "lp" else float(cfg.exact_epsilon)
+    """How close to a threshold a value from `solver` decides nothing: interval iteration's precision for it,
+    `lp_tolerance` for linear programming (no error bound), the wider of the two for anything else."""
+    bands = {SOUND["intervaliter"]: float(cfg.exact_epsilon), SOUND["lp"]: float(cfg.lp_tolerance)}
+    return bands.get(solver, max(bands.values()))
 
 
 def exact_verdict(margins: Dict[str, float], solver: Optional[str], cfg) -> str:
@@ -125,15 +127,15 @@ class PolicyVerifier:
         return run_now(self.verify_exact_steps(policy))
 
     def verify_exact_steps(self, policy: SymbolicPolicy) -> PrismSteps[Tuple[Optional[Verification], Optional[str]]]:
-        """Model check `policy` with the exact solver (`prism.exact_method`: linear programming, or interval
-        iteration), or Gauss-Seidel at `prism.exact_fallback_epsilon` where it fails (`exact_solvers`). Returns
-        the verification and the solver used, or (None, None) if neither finishes.
+        """Model check `policy` with the exact solvers in turn (`prism.exact_methods`: interval iteration, then
+        linear programming where it does not converge), or Gauss-Seidel at `prism.exact_fallback_epsilon` where they
+        all fail (`exact_solvers`). Returns the verification and the solver used, or (None, None) if none finishes.
 
         The loop's solver stops when an iteration changes little, which bounds nothing: on chains that
         leak probability slowly it stops early, and values PRISM derives as 1 - another probability
         (`G` properties, the worst case of LTL properties) then come out too high. Interval iteration bounds the
         error but can stall on such chains (the crossing family's moving obstacle: no convergence in 10^8
-        iterations); linear programming solves the model directly.
+        iterations), so it stops at `prism.ii_max_iters`; linear programming then solves the model directly.
         """
         cfg = self.prism_config
         exact = replace(cfg, method="", max_iters=cfg.exact_max_iters)

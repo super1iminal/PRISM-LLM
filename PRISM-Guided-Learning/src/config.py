@@ -133,11 +133,12 @@ class PrismConfig:
     multi_engine: str                         # PRISM's explicit engine has no multi-objective support
     multi_method: str                         # exact LP; value iteration fails to converge on periodic chains
     exact_check: bool                         # re-verify the final policy with sound solvers and report those values
-    exact_method: str                         # the exact solver: lp (PRISM's linear programming) or intervaliter
+    exact_methods: List[str]                  # sound solvers tried in order: intervaliter, lp (PRISM's linear programming)
     lp_tolerance: float                       # lp has no error bound: margins within this decide nothing
     exact_epsilon: str                        # interval iteration's precision (passed to PRISM as written)
-    exact_fallback_epsilon: str               # Gauss-Seidel's, where the exact method fails
-    exact_max_iters: int
+    exact_fallback_epsilon: str               # Gauss-Seidel's, where every exact method fails
+    exact_max_iters: int                      # the exact check's iteration cap (the Gauss-Seidel fallback)
+    ii_max_iters: int                         # interval iteration's own cap before the next method
     max_concurrent: Optional[int]            # PRISM processes at once on the whole machine (lock-file slots); null: no cap
 
 
@@ -330,6 +331,11 @@ def validate(cfg: Config) -> None:
     limit = cfg.prism.max_concurrent
     if limit is not None and not (isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1):
         raise ValueError(f"prism.max_concurrent={limit!r} must be a number of processes (>= 1) or null")
+    methods = cfg.prism.exact_methods
+    if not (isinstance(methods, list) and methods and set(methods) <= {"intervaliter", "lp"}):
+        raise ValueError(f"prism.exact_methods={methods!r} must list intervaliter and/or lp")
+    if cfg.prism.ii_max_iters < 1:
+        raise ValueError(f"prism.ii_max_iters={cfg.prism.ii_max_iters!r} must be >= 1")
     if cfg.prism.exact_max_iters < 1:
         raise ValueError(f"prism.exact_max_iters={cfg.prism.exact_max_iters!r} must be >= 1")
     chains = cfg.planner.chains
