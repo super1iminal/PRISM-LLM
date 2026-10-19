@@ -1,4 +1,5 @@
 """core/backends/openrouter.py against a stand-in client; one opt-in test against the real API."""
+import json
 import os
 import shutil
 import threading
@@ -50,6 +51,17 @@ def test_unset_options_are_left_to_openrouter():
     assert request["extra_body"] == {"provider": {"require_parameters": True}, "reasoning": {"enabled": True}}
     assert request["temperature"] == 0.2
     assert "seed" not in request and "response_format" not in request
+
+
+def test_unstructured_puts_the_schema_in_the_prompt_and_cuts_the_json_out():
+    client = FakeChatClient(reply=lambda kwargs: 'Here it is:\n```json\n{"rules": []}\n```')
+    backend = OpenRouterBackend(llm_config("llm.openrouter.structured=false"), client=client)
+    result = backend.execute(make_tasks(1)[0])
+    request = client.requests[0]
+    assert "response_format" not in request
+    assert request["messages"][-1]["content"].startswith("prompt 0\n\nAnswer with one JSON object")
+    assert request["messages"][-1]["content"].endswith(json.dumps(SCHEMA))
+    assert result.text == '{"rules": []}'
 
 
 def test_results_keep_task_order_and_report_tokens():
