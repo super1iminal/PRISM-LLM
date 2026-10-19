@@ -133,8 +133,10 @@ class PrismConfig:
     multi_engine: str                         # PRISM's explicit engine has no multi-objective support
     multi_method: str                         # exact LP; value iteration fails to converge on periodic chains
     exact_check: bool                         # re-verify the final policy with sound solvers and report those values
+    exact_method: str                         # the exact solver: lp (PRISM's linear programming) or intervaliter
+    lp_tolerance: float                       # lp has no error bound: margins within this decide nothing
     exact_epsilon: str                        # interval iteration's precision (passed to PRISM as written)
-    exact_fallback_epsilon: str               # Gauss-Seidel's, where interval iteration does not converge
+    exact_fallback_epsilon: str               # Gauss-Seidel's, where the exact method fails
     exact_max_iters: int
     max_concurrent: Optional[int]            # PRISM processes at once on the whole machine (lock-file slots); null: no cap
 

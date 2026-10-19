@@ -228,3 +228,14 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 - P6 frozen mode: `configs/sequential/shift_v0_lib2.yaml`, `shift_v0_lib3.yaml`. P8: `configs/baselines/ppo_features_*_seed{1,2}.yaml`.
 - Done: P3 (`tab_rq2-episodes.csv`, `tab_rq2-example.csv`), P4 (`tab_rq2-generation-cost.csv`), P7 rule-list sizes (`tab_rq1-sizes.csv`; trees and PPO wait for P1's `sizes.json`). A3 was already done (F3, MER panel with Restart's spend marked).
 - Not started: P2 (sealed; job list ready), P5 (`src/budget_ii.py` written, not yet run), A1/A2/A4 regeneration after P1, A5.
+
+## Changed since last regeneration (2026-10-19 13:15, partial: P1 not finished)
+
+`python viz/paper_results.py` now reads the interval-iteration checks (`transfer_ii_*.csv`, `src/recertify.py`); `--checks gs` reproduces the previous tables exactly. Controllers without an interval-iteration file yet are left out (the script lists them), so this regeneration is **partial**: T1's permissive column, every baseline except DT-voc and Hand on random grids, NoRepair, and Restart on MER are missing until P1 reaches them.
+
+- **T1/T4, families, Full (frozen): 87.2 ± 12.0 → 69.4 ± 37.1 %** (17.44 → 13.89 of 20 per list; inconclusive share 17.8 %). The crossing-family lists of runs 2 and 3 are inconclusive on 15 and 16 of their 20 targets: interval iteration does not converge within 10^8 iterations (models of 690-1418 states, 200-918 s per check), and Gauss-Seidel at 1e-12, which has no error bound, gives margins +0.02 to +0.15. Run 1's lists and the other families' lists keep their verdicts (run 1 crossing: 18 → 17, one inconclusive).
+- **T1/T4, random grids, Full (frozen): 92.7 ± 11.3 → 91.7 ± 14.4 %**: one check inconclusive (1.0 %).
+- **New: T4 Pac-Man Restart** (`ablations/port_pacman_narrow_core_resample`, 3 runs): 33.3 ± 28.9 % (1, 1 and 4 of 6) against Full's 66.7 %; it passes every training member in 1 of 3 runs; 59.0 LLM calls per set against Full's 49.3.
+- **New: T1 per-LLM rows, Sonnet 5.5** (`ablations/port_*_sonnet`): MER across x and n 100 % (3 runs each); Pac-Man 44.4 ± 25.5 % (4, 1, 3 of 6); families 98.3 ± 2.9 % (run 3 only so far; reruns 1-2 in progress); random grids 68.8 ± 12.5 % (run 3 only: runs 1-2 lost chains to OpenRouter 402s and are not rerun for lack of credit).
+- **New: T2 blocks per seed library (P6, frozen):** library of run 2: 28 retain, 3 switch, 5 defer (31/36 served, as library 1); library of run 3: 19 retain, 9 switch, 8 defer (28/36).
+- T4c (`tab_rq3-nosp.csv`) still uses the loop solver's checks (`checks` column): `port_ts_noclose` is outside P1's scope.

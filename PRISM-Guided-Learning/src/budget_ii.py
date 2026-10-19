@@ -26,7 +26,7 @@ from core.domain import load_domain
 from core.planner import SymbolicPlanner
 from core.rules import fixed_order
 from core.training import training_sets
-from recertify import certify_rules
+from recertify import certify_rules, own_targets
 from transfer import guard_sealed, parse_ids, training_instances
 
 OUT = {"rounds": "budget_ii_rounds.csv", "chains": "budget_ii_chains.csv"}
@@ -71,7 +71,7 @@ def picks(run_dir: Path, axis: str) -> List[dict]:
     return out
 
 
-def table(run_dir: Path, axis: str, targets: str, price, workers: int) -> pd.DataFrame:
+def table(run_dir: Path, axis: str, targets: str, price, workers: int, source_targets=None) -> pd.DataFrame:
     cfg = load_run_config(run_dir)
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = {int(t.id): t for t in domain.load_instances(cfg.domain.dataset)}
@@ -79,8 +79,15 @@ def table(run_dir: Path, axis: str, targets: str, price, workers: int) -> pd.Dat
     guard_sealed(cfg.domain.dataset, wanted)
     rows_of = picks(run_dir, axis)
     lists: Dict[str, list] = {rules_hash(p["rules"]): p["rules"] for p in rows_of}
+    own = own_targets(source_targets)       # by training set: a hash is checked where any of its sets' targets are
+    sets_of: Dict[str, set] = {}
+    for p in rows_of:
+        sets_of.setdefault(rules_hash(p["rules"]), set()).add(str(p["source"]))
+
+    def todo(t):
+        return {h: r for h, r in lists.items() if any(own({s: r}, instances[t]) for s in sets_of[h])}
     with ThreadPoolExecutor(workers) as pool:
-        checks = [r for part in pool.map(lambda t: certify_rules(domain, cfg, instances[t], lists), wanted)
+        checks = [r for part in pool.map(lambda t: certify_rules(domain, cfg, instances[t], todo(t)), wanted)
                   for r in part]
     by = {(c["source"], int(c["target"])): c for c in checks}
     trained = training_instances(run_dir)
@@ -89,6 +96,8 @@ def table(run_dir: Path, axis: str, targets: str, price, workers: int) -> pd.Dat
         h = rules_hash(p["rules"])
         dollars = (p["prompt_tokens"] * price[0] + p["output_tokens"] * price[1]) / 1e6 if price else float("nan")
         for t in wanted:
+            if (h, t) not in by or not own({str(p["source"]): None}, instances[t]):
+                continue
             c = {k: v for k, v in by[(h, t)].items() if k not in ("source", "target")}
             rows.append({**{k: v for k, v in p.items() if k != "rules"}, "rules_hash": h, "num_rules": len(p["rules"]),
                          "dollars": dollars, "target": t, "trained": t in trained.get(p["source"], []), **c})
@@ -106,9 +115,10 @@ def main(argv=None):
     parser.add_argument("--axis", nargs="+", choices=list(OUT), default=list(OUT))
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--price", type=float, nargs=2, default=None, metavar=("IN", "OUT"))
+    parser.add_argument("--source-targets", default=None, help='JSON, training set -> its own target ids')
     args = parser.parse_args(argv)
     for axis in args.axis:
-        table(args.run_dir, axis, args.targets, args.price, args.workers)
+        table(args.run_dir, axis, args.targets, args.price, args.workers, args.source_targets)
 
 
 if __name__ == "__main__":

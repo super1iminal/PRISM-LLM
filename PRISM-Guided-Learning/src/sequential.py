@@ -9,10 +9,11 @@ before every episode decides which rule list controls it (the policy of the pape
 4. otherwise adaptation fails and the episode is deferred.
 
 Mode `frozen` never generates, so it measures reuse alone. Certification uses the exact solvers
-(`PolicyVerifier.verify_exact`): a rule list is certified only if interval iteration converged and every worst case
-lies beyond its threshold by more than `prism.exact_epsilon`. A value within that band, or a value from the
-Gauss-Seidel fallback (no error bound), is inconclusive and counts as not certified; failure, inconclusive results
-and timeouts are recorded separately. Generation runs the study's condition through src/run_ablation.py (LLM calls),
+(`PolicyVerifier.verify_exact`) and the certification rule (`core.verifier.exact_verdict`): a rule list is certified
+only if the exact solver (`prism.exact_method`: linear programming, or interval iteration) finished and every worst
+case lies beyond its threshold by more than its band (`prism.lp_tolerance`, or `prism.exact_epsilon` for interval
+iteration). A value within that band, or a value from the Gauss-Seidel fallback (no error bound), is inconclusive and
+counts as not certified; failure, inconclusive results and timeouts are recorded separately. Generation runs the study's condition through src/run_ablation.py (LLM calls),
 then src/determinize.py fixes the order of its `any` rules, as for the library's seed rule lists.
 
 Usage (from PRISM-Guided-Learning/, with the OpenRouter key in the environment: `set -a && . ../.env && set +a`):
@@ -38,7 +39,7 @@ from config import load_config
 from core.domain import load_domain
 from core.prism import PrismError, PrismRunner
 from core.rules import RuleError
-from core.verifier import PolicyVerifier
+from core.verifier import PolicyVerifier, exact_verdict
 from settings import PROJECT_ROOT
 from transfer import determinized_rules, guard_sealed, training_instances
 
@@ -104,13 +105,9 @@ def certify(domain, cfg, runner, instance, entry: Entry) -> dict:
     seconds = time.time() - start
     if v is None:
         return {**row, "outcome": "timeout", "seconds": seconds}
-    eps = float(cfg.prism.exact_epsilon)
     margins = {r.name: r.margin(v.worst[r.name]) for r in spec.requirements}
     smallest = min(margins.values())
-    if solver != "interval iteration" or abs(smallest) <= eps:
-        outcome = "inconclusive" if smallest >= -eps else "failed"
-    else:
-        outcome = "certified" if smallest > eps else "failed"
+    outcome = exact_verdict(margins, solver, cfg.prism)
     model_seconds = sum(float(x) for x in MODEL_TIME.findall(getattr(v.result, "stdout", "") or ""))
     return {**row, "outcome": outcome, "solver": solver, "margin": smallest, "seconds": seconds,
             "model_seconds": model_seconds, "states": len(v.result.states),

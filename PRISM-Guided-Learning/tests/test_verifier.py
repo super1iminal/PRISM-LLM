@@ -52,7 +52,7 @@ def test_a_prism_timeout_moves_the_exact_check_to_its_fallback_solver(tiny_grid)
     try:
         call = next(steps)
         while True:
-            if "-intervaliter" in call.cmd:
+            if "-lp" in call.cmd:
                 timed_out.append(call)
                 call = steps.throw(subprocess.TimeoutExpired(list(call.cmd), call.timeout))
             else:

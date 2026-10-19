@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from config import load_config  # noqa: E402
 from core.domain import load_domain  # noqa: E402
+from core.verifier import SOUND  # noqa: E402
 from experiments.base import experiment, held_out  # noqa: E402
 from experiments.comparison import Comparison  # noqa: E402
 from results_io import sample_records  # noqa: E402
@@ -107,12 +108,13 @@ def runs_of(name: str, root: str = "core") -> List[Path]:
 
 # ---------------------------------------------------------------- RQ1: per (controller, held-out target) outcomes
 
-CHECKS = "ii"      # ii: src/recertify.py's interval-iteration verdicts (transfer_ii_*.csv); gs: the loop solver's
+CHECKS = "lp"      # lp / ii: src/recertify.py's verdicts by linear programming (transfer_lp_*.csv; Asher, Oct 19) or
+                   # interval iteration (transfer_ii_*.csv); gs: the loop solver's
 
 
 def checked(path: Optional[Path], kind: Optional[str] = None) -> Optional[Path]:
     """The CSV of `path`'s checks of `kind` (default CHECKS): transfer_<x>.csv itself (gs), its
-    transfer_ii_<x>.csv (ii) or, for the sealed test pass, its transfer_sealed_<x>.csv (sealed; both by
+    transfer_lp_<x>.csv (lp), transfer_ii_<x>.csv (ii) or, for the sealed test pass, its transfer_sealed_<x>.csv (sealed; all by
     src/recertify.py)."""
     kind = kind or CHECKS
     if path is None or kind == "gs":
@@ -393,6 +395,10 @@ def rq1_misses(data: Dict[str, pd.DataFrame]) -> None:
 
 # ---------------------------------------------------------------- RQ2: the sequential study
 
+# P6: the sequential study from the other core families runs' seed libraries (configs/sequential/shift_v0_lib*.yaml)
+LIBRARIES = {"core/port_fam_history run 2": "shift_v0_lib2", "core/port_fam_history run 3": "shift_v0_lib3"}
+
+
 def sequential(study: str) -> Dict[str, pd.DataFrame]:
     episodes, checks = [], []
     for mode, setting in (("growing", "Extended"), ("frozen", "Frozen")):
@@ -426,6 +432,23 @@ def rq2_tables(seq: Dict[str, pd.DataFrame], expected: int) -> None:
         counts = [int((s.decision == d).sum()) for d in decisions]
         sizes = ", ".join(str(int(g.library_size.iloc[-1])) for _, g in s.groupby("sequence"))
         tex.append(f"{setting} & " + " & ".join(map(str, counts)) + f" & {sizes} \\\\")
+    for label, study in LIBRARIES.items():      # P6: the same sequences from the other seed libraries
+        if not (RESULTS / "sequential" / study).exists():
+            continue
+        other = sequential(study)["episodes"]
+        tex += [r"\midrule", rf"\multicolumn{{6}}{{l}}{{\emph{{Seed library: {label}}}}} \\"]
+        for setting in ("Extended", "Frozen"):
+            s = other[other.setting == setting]
+            if s.empty:
+                continue
+            for name, g in s.groupby("sequence"):
+                rows += [{"setting": setting, "library": label, "sequence": name, "decision": d,
+                          "episodes": int((g.decision == d).sum())} for d in decisions]
+                rows.append({"setting": setting, "library": label, "sequence": name, "decision": "final_library_size",
+                             "episodes": int(g.library_size.iloc[-1])})
+            counts = [int((s.decision == d).sum()) for d in decisions]
+            sizes = ", ".join(str(int(g.library_size.iloc[-1])) for _, g in s.groupby("sequence"))
+            tex.append(f"{setting} & " + " & ".join(map(str, counts)) + f" & {sizes} \\\\")
     tex.append(r"\bottomrule")
     write_table("tab_rq2-decisions", tex, rows)
 
@@ -466,7 +489,7 @@ def rq2_tables(seq: Dict[str, pd.DataFrame], expected: int) -> None:
                                   median_states=("states", "median"),
                                   timeouts=("outcome", lambda o: int((o == "timeout").sum())),
                                   inconclusive=("outcome", lambda o: int((o == "inconclusive").sum())),
-                                  gauss_seidel_fallback=("solver", lambda s: int((s.fillna("") != "interval iteration")
+                                  gauss_seidel_fallback=("solver", lambda s: int((~s.fillna("").isin(SOUND.values()))
                                                                                  .sum()))).reset_index()
     by_size.assign(split="validation").to_csv(OUT / "tables" / "rq2-cert-time-by-size.csv", index=False)
     print("wrote tables/rq2-cert-time-by-size.csv")
@@ -788,14 +811,16 @@ def rq3_tables() -> None:
     # T4c: without `closer` on random grids, Full (port_ts_noclose, the core loop before the gridworld feedback fix)
     # against the hand-written template
     b = EXP.spec["benchmarks"]["grids_noclose"]
-    full = per_list(pd.concat([outcomes(csv_path(r, "grid_20_large.csv", "determinized"), b, "Full", r.name)
-                               for r in runs_of("port_ts_noclose")]))
+    # not re-certified by src/recertify.py (outside P1's scope): the loop solver's checks, for both rows
+    full = per_list(pd.concat([outcomes(csv_path(r, "grid_20_large.csv", "determinized"), b, "Full", r.name,
+                                        kind="gs") for r in runs_of("port_ts_noclose")]))
     hand = per_list(outcomes(Comparison._csv("configs/baselines/template_grid_large.yaml"), b, "Hand", "",
-                             ["cautious"], {}))
+                             ["cautious"], {}, kind="gs"))
     pd.DataFrame([{"benchmark": "grids_noclose (grid_20_large, targets 12-19)", "configuration": n,
                    "certified_per_list": g.certified.mean(), "certified_sd": g.certified.std(ddof=1),
                    "targets_per_list": g.targets.mean(), "n_lists": len(g),
-                   "runs": g.list.str.split("/").str[0].nunique(), "loop": loop, "split": "validation"}
+                   "runs": g.list.str.split("/").str[0].nunique(), "loop": loop, "split": "validation",
+                   "checks": "gs (loop solver, exact re-check within 0.03)"}
                   for n, g, loop in (("Full (NoSP)", full, "port_ts_noclose: core loop before the Oct 17 gridworld "
                                                           "feedback fix, no strategy hint"),
                                      ("Hand (NoSP)", hand, "not generated"))]) \
@@ -883,8 +908,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--study", default="shift_v0", help="out/results/sequential/<study>")
     parser.add_argument("--episodes", type=int, default=12, help="episodes per sequence (figure axis)")
-    parser.add_argument("--checks", choices=["ii", "gs"], default="ii",
-                        help="ii: the interval-iteration verdicts of src/recertify.py; gs: the loop solver's")
+    parser.add_argument("--checks", choices=["lp", "ii", "gs"], default="lp",
+                        help="lp / ii: src/recertify.py's verdicts by linear programming / interval iteration; gs: the "
+                             "loop solver's")
     args = parser.parse_args(argv)
     CHECKS = args.checks
     EXP = experiment(RQ1_SPEC)

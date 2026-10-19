@@ -1,0 +1,81 @@
+% Abstract and introduction, drafted from the repository (code, docs/, DECISIONS.md, RQ reports) without reading paper/.
+% Target: SEAMS 2027 research track (IEEEtran, 10 pages + 2 of references, double-anonymous).
+% All results are validation results; the test set is sealed.
+% \usepackage{xcolor}
+% \newcommand{\todo}[1]{\textcolor{orange}{\textbf{TODO: #1}}}
+
+\begin{abstract}
+Self-adaptive systems often face instances of one problem that differ in size, layout or horizon, and must meet quantitative requirements on each of them.
+Probabilistic model checking can verify a policy on each instance of such a parametric family of Markov decision processes (MDPs), but synthesizing one policy per instance yields per-state tables that become costly to compute as instances grow.
+Generalized policies learned on small instances can be verified on larger ones, but their conditions over raw state variables cannot follow parameters that change with the instance, such as goal positions.
+Large language models (LLMs) can write general policies from a description of a domain, yet existing LLM-based generalized planners target deterministic domains and do not certify their policies on new instances.
+In this paper, we propose a verifier-guided approach to generalized policy synthesis in which an LLM writes one rule list over domain features for a few small instances, and a probabilistic model checker refines it with quantitative feedback and certifies it on each held-out instance.
+We evaluate the approach on grid-world navigation, Pac-Man and Mars Exploration Rovers, against learned decision trees, reinforcement learning, a search over rule lists and hand-written policies.
+Results show that, given a shortest-path feature, a single rule list certifies more held-out grid worlds than every baseline, and a library of a few rule lists covers nearly all of them.
+On Pac-Man and Mars Exploration Rovers, our approach matches the strongest baseline, and on grid-world families the verifier's feedback outperforms restarting from scratch at equal cost.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+\textbf{Motivation:}
+Self-adaptive systems adjust their behavior at run time as their environment changes, and probabilistic model checking is an established way to decide whether a candidate adaptation meets quantitative requirements~\cite{TODO-PMC-at-runtime-for-self-adaptive-systems}.
+Often, the environment keeps the structure of the problem and changes only its parameters, as when a mobile robot moves to a larger site with its goals elsewhere or a game agent must survive for more moves.
+Each change yields a new instance of the same problem, on which the system must again guarantee its requirements.
+
+We study this setting as a \textit{parametric family of Markov decision processes (MDPs)}, i.e., MDP instances that share their dynamics, actions and requirements but differ in parameters such as size, layout or horizon~\cite{TODO-parameterized-MDPs-1-2-3-Go}.
+Each requirement is a threshold on the probability of a temporal property, e.g., that an agent visits its goals in order without colliding.
+A representative family is \textit{stochastic grid-world navigation}, a common proxy for robot path planning~\cite{TODO-gridworld-as-proxy-for-navigation}, in which an agent visits goals in a given order on an $n \times n$ grid, avoiding static obstacles and a patrolling moving obstacle, while each move may slip sideways.
+In the families we consider, goal and door positions scale with $n$, so instances differ in their state spaces as well as their parameters.
+
+Adapting with guarantees across such a family raises two difficulties.
+A single policy must capture a strategy that works on every instance, which requires stating it over the concepts of the family, such as the next goal or the patrol of the moving obstacle, rather than over the cells of one grid.
+Moreover, the policy must meet its requirements on each instance where it is deployed, and in a stochastic environment only model checking it on that instance, not running it a few times, can show this.
+\textit{Obtaining one symbolic policy for a whole family, with a probabilistic guarantee on every instance where it is used, remains a central problem.}
+
+\textbf{Problem Statement:}
+Probabilistic model checkers such as PRISM~\cite{TODO-PRISM} and Storm~\cite{TODO-Storm} compute optimal policies and their exact values for a given MDP, and methods for families of MDPs extend this to policies that satisfy requirements across a finite set of instances~\cite{TODO-Policies-Grow-on-Trees,TODO-SMPMC,TODO-PAYNT}.
+While these methods provide exact guarantees, they assume instances that share one state space and search a hand-written design space, such as a program sketch, for per-state tables or trees.
+They therefore cannot carry a policy to instances of a different size.
+
+Generalized policies address this by learning a policy on small instances and applying it to larger ones, e.g., decision lists for stochastic planning domains, evaluated by simulation~\cite{TODO-Fern-Yoon-Givan-JAIR06}.
+Closest to our setting, 1--2--3--Go!~\cite{TODO-1-2-3-Go-VMCAI25} learns decision trees from the optimal policies of small instances of a parameterized MDP and computes their value exactly on each larger instance.
+However, its predicates compare raw state variables with constants, so a tree cannot follow a goal whose position scales with the grid size.
+Moreover, it targets a single reachability objective and does not revise a tree that fails.
+
+Recently, large language models (LLMs) have been used to write generalized policies for planning domains as programs or rules, refined with feedback from plan validators or proofs on training tasks~\cite{TODO-Silver-generalized-planning-LLMs,TODO-Stein-strategy-refinement,TODO-Prompt-Prove-Patch,TODO-GenePlan}.
+These approaches use the knowledge of the LLM to state a policy in the concepts of the domain.
+However, they target deterministic domains with goal-reachability objectives, and they test generalization on larger tasks rather than certify it.
+Where LLMs have been combined with probabilistic model checking, the verification concerns one instance: an LLM acting as a per-state policy~\cite{TODO-Gross-verifying-memoryless-LLM-decisions}, LLM-generated plans checked qualitatively~\cite{TODO-VeriPlan}, or per-state grid-world policies refined with feedback from PRISM~\cite{TODO-LLM-gridworld-PMC-FSE-Companion-2026}.
+LLM-based approaches thus lack mechanisms to ensure that a policy written for some instances of a family satisfies quantitative probabilistic requirements on the others.
+
+To adapt with guarantees across a family, an approach must produce one symbolic policy stated over the parameters of the family, improve it from quantitative verification results, and certify it on each instance where it is deployed, including instances larger than those it was written for.
+
+\textbf{Contributions:}
+In this paper, we propose \textit{verifier-guided generalized policy synthesis}, an approach in which an LLM writes one policy for a parametric family of MDPs and a probabilistic model checker refines and certifies it.
+Given a PRISM model with instance parameters, its requirements, a description of the domain and a vocabulary of instance constants and domain features, the approach outputs a \textit{rule list}, i.e., an ordered list of condition--action rules over this vocabulary in which the first matching rule decides.
+A rule may leave several actions open, and a rule list is \textit{certified} on an instance when every requirement holds in the worst case over all policies it allows.
+For example, the following rule list (excerpt) was written for the $6 \times 6$ to $8 \times 8$ members of a grid-world family with rooms:
+\begin{quote}
+\small
+$r_1$: \texttt{g3} $\rightarrow$ \texttt{any}\\
+$r_2$: \texttt{!wall \& closer \& !risky \& !obstacle \& !early} $\rightarrow$ \texttt{any}\\
+\ldots\\
+$r_8$: \texttt{true} $\rightarrow$ \texttt{any}
+\end{quote}
+Rule~$r_2$ allows every move that stays on free cells, approaches the next goal along a shortest path, and cannot run into the moving obstacle, a goal not yet due, or, by slipping, the patrol path.
+Since the rules name no cell, the list can be certified on every larger member of the family.
+Our specific contributions are as follows:
+(1)~We define rule lists over instance constants and domain features for parametric families of MDPs, and their certification in the worst case over every policy they allow, which remains valid however their open choices are resolved.
+(2)~We propose a refinement loop in which the LLM writes one rule list for several training instances and the model checker verifies it on each of them.
+As a key novelty compared to LLM-based generalized planning, the feedback is quantitative, locating the states from which the worst case loses probability, with the deciding rule and the risk of each action there.
+(3)~We conduct an empirical evaluation with Claude Haiku 5.5 on random grid worlds, three parameterized grid-world families, Pac-Man~\cite{TODO-QVBS} and Mars Exploration Rovers~\cite{TODO-MER-model}.
+We assess (a) how many held-out instances one frozen rule list certifies and (b) how many a library of rule lists covers.
+We also (c) compare against learned decision trees~\cite{TODO-1-2-3-Go-VMCAI25}, reinforcement learning~\cite{TODO-PPO}, a search over rule lists and hand-written policies, and (d) compare the verifier's feedback with restarting from scratch at equal cost.
+
+\textbf{Novelty and significance:}
+To the best of our knowledge, this paper is the first to refine LLM-written generalized policies for MDPs with quantitative model-checking feedback and to certify them on held-out instances of a family, including larger ones.
+The approach bridges natural language and quantitative verification.
+The LLM states a strategy over the concepts of the domain, the model checker reports where that strategy loses probability, and certification turns generalization from an empirical observation into a guarantee on each instance checked.
+For self-adaptive systems, this enables a library of frozen rule lists.
+When the system meets a new instance, it checks the stored lists on that instance and switches to one that is certified, instead of synthesizing a policy from scratch.

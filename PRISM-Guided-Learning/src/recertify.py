@@ -1,18 +1,21 @@
 """Re-certify frozen controllers with the exact solvers on every check (the paper's certification rule).
 
 `src/transfer.py` and `src/run_baseline.py` check held-out targets with the loop's solver and re-check only near a
-threshold, so they cannot say when a verdict is inconclusive. This applies `sequential.certify`'s rule to every
-(controller, target) pair: interval iteration at `prism.exact_epsilon`, falling back to Gauss-Seidel at
-`prism.exact_fallback_epsilon`; certified iff interval iteration converged and the smallest margin over the
-requirements is > epsilon; inconclusive when it is within +-epsilon, or when only the fallback finished and the margin
-is >= -epsilon; failed otherwise. A check where neither solver finishes, or whose model cannot be built, is
-"not certifiable within limits", with the reason. It changes nothing in the loop or the other checkers.
+threshold, so they cannot say when a verdict is inconclusive. This applies the certification rule
+(`core.verifier.exact_verdict`, as `sequential.certify`) to every (controller, target) pair: the exact solver
+(`prism.exact_method`: PRISM's linear programming by default, or interval iteration at `prism.exact_epsilon`), falling
+back to Gauss-Seidel at `prism.exact_fallback_epsilon`; certified iff the exact solver finished and the smallest margin
+over the requirements is beyond its band (`prism.lp_tolerance` for linear programming, `prism.exact_epsilon` for
+interval iteration); inconclusive within the band, or when only the fallback finished and the margin is >= -band;
+failed otherwise. A check where neither solver finishes, or whose model cannot be built, is "not certifiable within
+limits", with the reason. It changes nothing in the loop or the other checkers.
 
 Usage (from PRISM-Guided-Learning/):
     python src/recertify.py run <run dir> --rules determinized [--targets 12-19] [--data D] [--workers 2]
-        [--prefix transfer_ii] [--unseal]
+        [--prefix transfer_lp] [--unseal]
     python src/recertify.py baseline configs/baselines/<name>.yaml [--rules final|open] [--set key=value ...]
-        [--workers 2] [--prefix transfer_ii] [--unseal]
+        [--workers 2] [--prefix transfer_lp] [--unseal]
+The prefix defaults to transfer_lp (linear programming) or transfer_ii (`prism.exact_method: intervaliter`).
 `run` writes <run dir>/<prefix>_<dataset stem><rules suffix>.csv (suffixes as src/transfer.py's); `baseline` refits
 the baseline as src/run_baseline.py does and writes out/results/baselines/<name>/<prefix>_<dataset stem>[_open].csv.
 Rows of an existing CSV for targets not checked again are kept. Columns: source, target, trained, outcome
@@ -38,38 +41,31 @@ from config import load_config, load_file, load_run_config
 from core.domain import load_domain
 from core.prism import PrismCall, PrismError, PrismRunner, run_call, run_now
 from core.rules import RuleError, open_ties
-from core.verifier import PolicyVerifier
+from core.verifier import SOUND, PolicyVerifier, exact_solvers, exact_verdict
 from run_baseline import BASELINES_PATH, BaselineConfig
 from transfer import RULES, guard_sealed, merge, parse_ids, training_instances
 
 MODEL_TIME = re.compile(r"Time for model construction:\s*([\d.]+)")
-II = "interval iteration"
 
 
-def verdict(margins: Dict[str, float], solver: str, eps: float) -> str:
-    """sequential.certify's rule on one check's margins."""
-    smallest = min(margins.values())
-    if solver != II or abs(smallest) <= eps:
-        return "inconclusive" if smallest >= -eps else "failed"
-    return "certified" if smallest > eps else "failed"
+def prefix_of(cfg) -> str:
+    """The output prefix for `cfg`'s exact solver."""
+    return "transfer_lp" if cfg.prism.exact_method == "lp" else "transfer_ii"
 
 
-def summarize(row: dict, spec, worst: Dict[str, float], solver: str, eps: float) -> dict:
+def summarize(row: dict, spec, worst: Dict[str, float], solver: str, prism) -> dict:
     margins = {r.name: r.margin(worst[r.name]) for r in spec.requirements}
     binding = min(margins, key=margins.get)
-    outcome = verdict(margins, solver, eps)
+    outcome = exact_verdict(margins, solver, prism)
     return {**row, "outcome": outcome, "certified": outcome == "certified", "solver": solver,
-            "fallback": solver != II, "margin": margins[binding], "binding": binding,
+            "fallback": solver not in SOUND.values(), "margin": margins[binding], "binding": binding,
             **{f"worst_{k}": worst[k] for k in margins}}
 
 
 def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]:
     """Every source rule list on one target, by the exact solvers through the rule-list model."""
-    eps = float(cfg.prism.exact_epsilon)
     exact = replace(cfg.prism, method="", max_iters=cfg.prism.exact_max_iters)
-    solvers = [(II, ["-intervaliter", "-topological", "-epsilon", cfg.prism.exact_epsilon]),
-               (f"Gauss-Seidel {cfg.prism.exact_fallback_epsilon}",
-                ["-gaussseidel", "-epsilon", cfg.prism.exact_fallback_epsilon])]
+    solvers = exact_solvers(cfg.prism)
     rows = []
     try:
         verifier = PolicyVerifier(domain, instance, cfg, PrismRunner(cfg.prism))
@@ -101,7 +97,7 @@ def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]
                          "error": " | ".join(errors)})
             continue
         stdout = getattr(v.result, "stdout", "") or ""
-        rows.append({**summarize(row, spec, v.worst, solver, eps), "seconds": seconds,
+        rows.append({**summarize(row, spec, v.worst, solver, cfg.prism), "seconds": seconds,
                      "model_seconds": sum(float(x) for x in MODEL_TIME.findall(stdout)),
                      "states": len(v.result.states), "error": " | ".join(errors)})
     return rows
@@ -110,7 +106,6 @@ def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]
 def certify_explicit(domain, cfg, instance, policies_of) -> List[dict]:
     """Per-state policies on one target, through the target's explicit model restricted to each policy (as
     ExplicitMDP.certify), with the exact solvers and the same verdict rule. `policies_of(mdp)` -> {source: policy}."""
-    eps = float(cfg.prism.exact_epsilon)
     try:
         mdp = ExplicitMDP(domain, instance, cfg)
     except Exception as e:      # the bare model cannot be built (memory, timeout, size)
@@ -124,7 +119,8 @@ def certify_explicit(domain, cfg, instance, policies_of) -> List[dict]:
         model = mdp.under(policy)
         model = model.part(model.reachable())
         if model.S == 1:        # PRISM cannot import a one-state model; its values are exact in numpy
-            worst, solver, stdout, errors = {r.name: model.value(r, worst=True) for r in reqs}, II, "", []
+            worst, solver, stdout, errors = ({r.name: model.value(r, worst=True) for r in reqs},
+                                             SOUND[cfg.prism.exact_method], "", [])
         else:
             worst, solver, stdout, errors = prism_worst(mdp, model)
         seconds = time.time() - start
@@ -132,7 +128,7 @@ def certify_explicit(domain, cfg, instance, policies_of) -> List[dict]:
             rows.append({**row, "outcome": "not_certifiable", "certified": False, "seconds": seconds,
                          "states": model.S, "error": " | ".join(errors)})
             continue
-        rows.append({**summarize(row, mdp.spec, worst, solver, eps), "seconds": seconds,
+        rows.append({**summarize(row, mdp.spec, worst, solver, cfg.prism), "seconds": seconds,
                      "model_seconds": sum(float(x) for x in MODEL_TIME.findall(stdout)), "states": model.S,
                      "error": " | ".join(errors)})
     del mdp
@@ -144,8 +140,7 @@ def prism_worst(mdp: ExplicitMDP, model) -> Tuple[Optional[Dict[str, float]], Op
     reqs = mdp.spec.requirements
     names = sorted({n for r in reqs for n in re.findall(r'"([^"]+)"', r.formula)})
     cfg = mdp.config.prism
-    solvers = [(II, ["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon]),
-               (f"Gauss-Seidel {cfg.exact_fallback_epsilon}", ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon])]
+    solvers = exact_solvers(cfg)
     errors = []
     with tempfile.TemporaryDirectory(prefix="recertify_") as tmp:
         files = model.write(Path(tmp) / "model", names)
@@ -203,7 +198,7 @@ def run_cmd(args) -> None:
     df = pd.DataFrame(rows)
     trained = training_instances(args.run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
     df["trained"] = [t in trained.get(int(s), []) for s, t in zip(df.source, df.target)]
-    write(df, args.run_dir / f"{args.prefix}_{Path(dataset).stem}{suffix}.csv")
+    write(df, args.run_dir / f"{args.prefix or prefix_of(cfg)}_{Path(dataset).stem}{suffix}.csv")
 
 
 def baseline_cmd(args) -> None:
@@ -242,7 +237,7 @@ def baseline_cmd(args) -> None:
     df["method"] = settings.method
     suffix = "_open" if args.rules == "open" else ""
     out_dir = BASELINES_PATH / args.config.stem
-    write(df, out_dir / f"{args.prefix}_{Path(target_dataset).stem}{suffix}.csv")
+    write(df, out_dir / f"{args.prefix or prefix_of(cfg)}_{Path(target_dataset).stem}{suffix}.csv")
     (out_dir / "sizes.json").write_text(json.dumps(controller_sizes(baseline), indent=1), encoding="utf-8")
 
 
@@ -274,7 +269,8 @@ def main(argv=None):
     b.add_argument("--set", action="append", default=[], help="Baseline config override key=value")
     for p in (r, b):
         p.add_argument("--workers", type=int, default=2)
-        p.add_argument("--prefix", default="transfer_ii", help="Output file prefix (transfer_sealed for the test pass)")
+        p.add_argument("--prefix", default=None, help="Output file prefix (default transfer_lp, or transfer_ii for "
+                       "prism.exact_method=intervaliter; transfer_sealed for the test pass)")
         p.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
         p.add_argument("--source-targets", default=None,
                        help="JSON, source -> its own target ids (e.g. each family's list on its family only)")

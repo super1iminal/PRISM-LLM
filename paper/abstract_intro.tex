@@ -1,0 +1,98 @@
+% Abstract and introduction, SEAMS 2027 research track (IEEEtran, 10 pages + 2 of references, double-anonymous).
+% Reframed after Marsha's review (Oct 18): certified controller reuse and replacement as the adaptation mechanism,
+% her four contributions, abstract after her draft. Numbers behind the qualitative claims are validation results
+% (out/results/experiments/rq1_comparison/REPORT.md); the test set stays sealed through SEAMS.
+
+\begin{abstract}
+Self-adaptive systems must keep meeting quantitative requirements as their operating environments change.
+When the environment is uncertain, e.g., when a robot's moves can slip, these requirements bound probabilities, such as that of reaching a goal without a collision.
+A central adaptation decision is whether the current controller remains suitable, another available controller can be reused, or a new controller must be constructed.
+This decision is hard when changes alter the size and structure of the environment, since synthesizing a controller for every instance is costly, while controllers that generalize from training instances carry no guarantee on a new one.
+We propose a verifier-guided framework for adaptation through controller reuse and generation across families of stochastic environments modeled as Markov decision processes.
+A large language model (LLM) writes \textit{generalized rule lists}, i.e., ordered condition--action rules over instance-independent features, and refines them with quantitative feedback from probabilistic model checking on a few training instances.
+At run time, the adaptation manager checks the current controller and the alternatives in its library against the requirements on the instance at hand.
+It retains or selects a rule list only when certification shows that every behavior the rules allow satisfies the requirements on the instance's model.
+If no stored rule list is certified, the framework invokes generation and adds any newly certified rule list to the library.
+We evaluate controller reuse on held-out instances of grid-world navigation, Pac-Man and Mars Exploration Rovers against decision trees learned from optimal strategies, reinforcement learning and hand-written controllers.
+The generated rule lists certify more held-out grid-world instances than the baselines and match the best baseline on the other two domains\todo{grid worlds without the shortest-path feature are the exception (hand-written template 6.00 vs.\ 3.25)}.
+These results support reusable controllers as a basis for adaptation, with probabilistic guarantees checked on each environment before deployment.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+\textbf{Motivation:}
+Self-adaptive systems adjust their behavior at run time to keep meeting their requirements as their environment changes, typically through a monitor--analyze--plan--execute loop over shared knowledge (MAPE-K)~\cite{TODO-Kephart2003-MAPE-K}.
+Where the environment is uncertain, e.g., a robot's moves can slip or other agents move unpredictably, requirements are quantitative, e.g., a bound on the probability of reaching a goal without a collision.
+Probabilistic model checking at run time can then establish whether a configuration of the system meets them~\cite{TODO-Calinescu2012-CACM-runtime-QV,TODO-Calinescu2018-ENTRUST}.
+More recently, large language models (LLMs) have been explored as planners within such loops~\cite{TODO-Li2024-LLMs-in-SAS,TODO-Li2025-GenAI-SAS-roadmap}, but checking their output against quantitative requirements is less explored.
+
+A central adaptation decision is whether the current controller remains suitable, another available controller can be reused, or a new controller must be constructed.
+The decision is hard when the environment changes in size and structure, e.g., for a robot deployed in buildings whose maps differ, or for an agent playing games of different lengths.
+Each environment can be modeled as an \textit{instance} of a parametric Markov decision process (MDP), whose parameters change not only probabilities but also the state space itself~\cite{TODO-Azeem2025-123Go}.
+Grid-world navigation and benchmark families such as Pac-Man~\cite{TODO-QVBS} and Mars Exploration Rovers~\cite{TODO-MER-model-source} serve as tractable proxies for this setting, in which a controller must meet probabilistic requirements on instances it was not built for.
+
+Adapting across such a family with guarantees raises \textit{two problems}.
+The first is that synthesizing a strategy for each instance becomes expensive as instances grow, and the strategy applies only to the instance it was computed for.
+Beyond this, a controller learned once and reused on the next instance carries no guarantee there.
+\textit{An adaptation manager therefore needs controllers that carry over across instances, a check of each one on the instance at hand before it is reused, and a way to obtain a new controller when none passes.}
+
+\textbf{Problem Statement:}
+Probabilistic model checkers such as PRISM~\cite{TODO-PRISM} and Storm~\cite{TODO-Storm} synthesize strategies that meet quantitative requirements on a given MDP, and permissive strategies allow several actions per state while keeping these guarantees~\cite{TODO-Draeger2015-permissive}.
+Methods for families of MDPs go further and synthesize one robust policy for a finite family~\cite{TODO-Andriushchenko2024-PoliciesGrowOnTrees,TODO-Heck2026-SMPMC}.
+These approaches give exact guarantees, but they assume that all members share one state space, so they do not cover families whose instances grow.
+
+Generalized policies aim to carry over from small instances to larger ones.
+1--2--3--Go!~\cite{TODO-Azeem2025-123Go} learns decision trees from the optimal strategies of small instances of a parametric MDP and computes their value exactly on each larger instance.
+However, its trees are built over raw state variables for a single reachability objective, so they fail where the right decision depends on the instance's parameters.
+Relational decision lists for stochastic planning~\cite{TODO-Fern2006-decision-lists} and policies trained by reinforcement learning across levels~\cite{TODO-RL-generalization-across-levels} also generalize across instances, but they are evaluated by simulation, without thresholds or verification.
+
+LLMs have recently been used to write generalized plans as programs for planning domains~\cite{TODO-Silver2024-GenPlan-LLM,TODO-Stein2026-strategy-refinement,TODO-Drexler2026-PromptProvePatch,TODO-Murray2026-GenePlan}, refined with feedback from validating them on training tasks.
+These approaches target deterministic domains, where running a policy on an instance is enough to verify it, and they test rather than certify their policies on new instances.
+Approaches that check LLM output by probabilistic model checking use the LLM as the policy itself~\cite{TODO-Gross2025-verifying-LLM-decisions}, use the checker qualitatively~\cite{TODO-Lee2025-VeriPlan}, or feed its results back to the LLM for a single round~\cite{TODO-Gross2024-counterfactual-LLM}.
+Prior work~\cite{TODO-predecessor-LLMTrust2026} combined LLM-written per-state policies with PRISM for single grid-world instances, but each policy applies only to the instance it was written for.
+To adapt across a family of environments with guarantees, a manager needs controllers that are written once in instance-independent terms, certified by model checking on each instance before they are reused, and generated anew where none is certified.
+
+\textbf{Contributions:}
+In this paper, we propose a \textit{verifier-guided framework for adaptation through controller reuse and generation}.
+Its controllers are \textit{rule lists}, i.e., ordered lists of condition--action rules in the domain's instance-independent vocabulary (\autoref{fig:intro-rules}), which an LLM writes and refines with feedback from a probabilistic model checker.
+The framework handles unseen instances of a known family whose models and vocabulary are supplied.
+Our specific contributions are as follows:
+(1) An adaptation mechanism that decides when to retain, replace or generate a controller.
+The manager uses certification on the instance at hand to retain the current controller, select an alternative from its library, or invoke generation when the library holds no certified controller, and we describe extending the library as a proposed mechanism\todo{until the sequential study exercises it}.
+(2) A formal representation and certification criterion for reusable symbolic controllers.
+We define generalized rule lists over instance-independent features, their compilation into restrictions of an MDP, and the condition under which every controller that follows a rule list meets the requirements on a checked instance.
+The underlying guarantee builds on permissive strategies~\cite{TODO-Draeger2015-permissive}, and the contribution is the representation and its use across instances.
+(3) A method for generating and repairing reusable controllers with quantitative verification feedback.
+Beyond pass or fail, the LLM receives the requirements' margins, the states where the worst case fails, the rules responsible and the features of each action, and candidate selection and local repair complete the method.
+(4) An empirical assessment of certified coverage, reuse and adaptation cost on grid-world navigation, Pac-Man and Mars Exploration Rovers, against decision trees learned from optimal strategies, reinforcement learning and hand-written controllers, including a sequential study of library extension\todo{study not run yet}.
+On the grid-world families, rule lists refined with feedback also certify more held-out instances than independent restarts of the LLM at equal cost.
+
+\begin{figure}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}r>{\raggedright\arraybackslash}Xl@{}}
+\toprule
+\# & Condition & Action \\
+\midrule
+1 & \texttt{g3} & \texttt{any} \\
+2 & \texttt{!wall \& closer \& !risky \& !obstacle \& !early} & \texttt{any} \\
+3 & \texttt{!wall \& !obstacle \& !early \& !risky \& !patrol} & \texttt{any} \\
+4 & \texttt{!wall \& closer \& !obstacle \& !early \& !patrol} & \texttt{any} \\
+5 & \texttt{!wall \& !obstacle \& !early \& !risky} & \texttt{any} \\
+6 & \texttt{wall \& !obstacle \& !early \& !risky} & \texttt{any} \\
+7 & \texttt{!wall \& !obstacle \& !early} & \texttt{any} \\
+8 & \texttt{true} & \texttt{any} \\
+\bottomrule
+\end{tabularx}
+\caption{A rule list written by Claude Haiku~5.5 for three members (6$\times$6 to 8$\times$8) of the rooms family of grid worlds. Conditions use goal flags, e.g., \texttt{g3} holds once the third goal is reached, and features of each move, e.g., \texttt{closer} holds if the move gets closer to the next goal and \texttt{risky} if a slip of the move could land on a hazard. A rule with action \texttt{any} allows every move for which its condition holds, and the first rule that allows some move decides.}
+\label{fig:intro-rules}
+\end{figure}
+
+\textbf{Novelty and significance:}
+The novelty lies in combining three ingredients, namely reusable symbolic controllers, quantitative verification feedback for stochastic models, and certification as the gate for reuse on newly encountered instances.
+Each has a close predecessor.
+1--2--3--Go!~\cite{TODO-Azeem2025-123Go} carries symbolic controllers across the instances of a parametric MDP, Prompt, Prove, Patch~\cite{TODO-Drexler2026-PromptProvePatch} refines LLM-written general policies with deterministic verification, and Gross et al.~\cite{TODO-Gross2025-verifying-LLM-decisions} verify LLM policies probabilistically on a single model.
+\autoref{sec:related} compares these and other approaches by what triggers adaptation, what artifact they generate or update, whether it is reused across instances, what guarantee holds and where, and what domain knowledge they require\todo{add this comparison table to Related Work}.
+For self-adaptive systems, the combination means that a controller is reused only where its guarantee has been checked, and replaced where it has not.

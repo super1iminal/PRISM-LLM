@@ -35,7 +35,7 @@ from config import Config
 from core.domain import Domain, Instance, Requirement
 from core.prism import Choice, PrismCall, PrismError, PrismRunner, run_call
 from core.rules import Var, Vocabulary, _Scope, atomic_rules, evaluate
-from core.verifier import PolicyVerifier, forced
+from core.verifier import PolicyVerifier, exact_solvers, forced
 
 TOL = 1e-12
 MAX_ITERS = 1_000_000
@@ -359,8 +359,8 @@ class ExplicitMDP(Model):
 
     def certify(self, policies: Dict[str, np.ndarray]) -> List[dict]:
         """Each named policy certified by PRISM on this instance: rows in src/transfer.py's format. The model under
-        the policy (its reachable part) goes to PRISM as explicit files, checked with interval iteration
-        (`prism.exact_epsilon`), or Gauss-Seidel at `prism.exact_fallback_epsilon` where that does not converge."""
+        the policy (its reachable part) goes to PRISM as explicit files, checked with the exact solver
+        (`prism.exact_method`), or Gauss-Seidel at `prism.exact_fallback_epsilon` where that fails."""
         rows = []
         reqs = self.spec.requirements
         for source, policy in policies.items():
@@ -393,8 +393,7 @@ class ExplicitMDP(Model):
             raise NotImplementedError("reward requirements")
         names = sorted({n for r in reqs for n in re.findall(r'"([^"]+)"', r.formula)})
         cfg = self.config.prism
-        solvers = [["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon],
-                   ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon]]
+        solvers = [args for _, args in exact_solvers(cfg)]
         with tempfile.TemporaryDirectory(prefix="certify_") as tmp:
             files = model.write(Path(tmp) / "model", names)
             props = Path(tmp) / "props.props"

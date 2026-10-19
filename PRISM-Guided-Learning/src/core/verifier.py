@@ -10,6 +10,35 @@ from core.prism import Choice, PrismError, PrismResult, PrismRunner, PrismSteps,
 from core.rules import SymbolicPolicy, Value
 
 
+SOUND = {"lp": "linear programming", "intervaliter": "interval iteration"}   # prism.exact_method -> solver name
+
+
+def exact_solvers(cfg) -> List[Tuple[str, List[str]]]:
+    """The exact check's solvers in order, as (name, PRISM arguments), for PRISM config `cfg`: `exact_method`
+    (linear programming, or interval iteration at `exact_epsilon`), then Gauss-Seidel at `exact_fallback_epsilon`
+    (no error bound) where it fails."""
+    first = ["-lp"] if cfg.exact_method == "lp" else ["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon]
+    return [(SOUND[cfg.exact_method], first),
+            (f"Gauss-Seidel {cfg.exact_fallback_epsilon}", ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon])]
+
+
+def exact_band(cfg, solver: Optional[str] = None) -> float:
+    """How close to a threshold a value from `solver` (default: `exact_method`'s) decides nothing: `lp_tolerance`
+    for linear programming, which has no error bound, and interval iteration's precision for it."""
+    method = {name: m for m, name in SOUND.items()}.get(solver, cfg.exact_method)
+    return float(cfg.lp_tolerance) if method == "lp" else float(cfg.exact_epsilon)
+
+
+def exact_verdict(margins: Dict[str, float], solver: Optional[str], cfg) -> str:
+    """The certification rule on one check's requirement margins: certified iff a sound solver (`SOUND`) gave
+    every margin beyond its band (`exact_band`); inconclusive within the band, or from the fallback with no margin
+    below minus the band; failed otherwise."""
+    band, smallest = exact_band(cfg, solver), min(margins.values())
+    if solver not in SOUND.values() or abs(smallest) <= band:
+        return "inconclusive" if smallest >= -band else "failed"
+    return "certified" if smallest > band else "failed"
+
+
 def forced(choices: List[Choice], actions: Set[str]) -> bool:
     """Whether the policy cannot change anything in a state with these choices: among the choices labelled with a
     policy action (in `actions`), fewer than two distinct successor distributions."""
@@ -96,20 +125,19 @@ class PolicyVerifier:
         return run_now(self.verify_exact_steps(policy))
 
     def verify_exact_steps(self, policy: SymbolicPolicy) -> PrismSteps[Tuple[Optional[Verification], Optional[str]]]:
-        """Model check `policy` with solvers whose answers hold to `prism.exact_epsilon`: interval
-        iteration, or Gauss-Seidel at `prism.exact_fallback_epsilon` where interval iteration does not
-        converge. Returns the verification and the solver used, or (None, None) if neither finishes.
+        """Model check `policy` with the exact solver (`prism.exact_method`: linear programming, or interval
+        iteration), or Gauss-Seidel at `prism.exact_fallback_epsilon` where it fails (`exact_solvers`). Returns
+        the verification and the solver used, or (None, None) if neither finishes.
 
         The loop's solver stops when an iteration changes little, which bounds nothing: on chains that
         leak probability slowly it stops early, and values PRISM derives as 1 - another probability
-        (`G` properties, the worst case of LTL properties) then come out too high.
+        (`G` properties, the worst case of LTL properties) then come out too high. Interval iteration bounds the
+        error but can stall on such chains (the crossing family's moving obstacle: no convergence in 10^8
+        iterations); linear programming solves the model directly.
         """
         cfg = self.prism_config
         exact = replace(cfg, method="", max_iters=cfg.exact_max_iters)
-        solvers = [("interval iteration", ["-intervaliter", "-topological", "-epsilon", cfg.exact_epsilon]),
-                   (f"Gauss-Seidel {cfg.exact_fallback_epsilon}",
-                    ["-gaussseidel", "-epsilon", cfg.exact_fallback_epsilon])]
-        for name, args in solvers:
+        for name, args in exact_solvers(cfg):
             try:
                 runner = PrismRunner(exact, extra_args=args, prism_path=self.runner.prism_path)
                 return (yield from self.verify_steps(policy, analysis=False, runner=runner)), name
