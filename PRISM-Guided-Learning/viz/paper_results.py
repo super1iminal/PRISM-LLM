@@ -223,7 +223,17 @@ def rq1_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
             opened = baseline_csv(config, "open", other)
             permissive.append(outcomes(opened if checked(opened, kind).exists() else baseline_csv(config, dataset=other),
                                        bench, approach, "", src["sources"], src["source_groups"], kind=kind))
+            if approach == "RL" and name in RL_SEEDS:     # P8: more PPO seeds per training set on the grid worlds
+                for seed in RL_SEEDS[name]:
+                    extra = config.replace(".yaml", f"_seed{seed}.yaml")
+                    for part in (frozen, permissive):     # one action per state: both columns coincide
+                        part.append(outcomes(baseline_csv(extra, dataset=other), bench, approach, f"seed{seed}",
+                                             src["sources"], src["source_groups"], kind=kind))
     return {"frozen": pd.concat(frozen, ignore_index=True), "permissive": pd.concat(permissive, ignore_index=True)}
+
+
+# P8: PPO on the grid worlds with these seeds besides seed 0 (configs/baselines/ppo_features_*_seed<k>.yaml)
+RL_SEEDS = {"grids": [1, 2], "families": [1, 2]}
 
 
 def llm_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
@@ -662,7 +672,9 @@ def controller_sizes() -> None:
 # $ per M prompt and output tokens, as OpenRouter lists them on 2026-10-19 (provider pinned)
 PRICES = {"anthropic/claude-haiku-5.5": (0.10, 0.50), "anthropic/claude-sonnet-5.5": (2.00, 10.00),
           "openai/gpt-6-luna": (0.10, 0.50)}
-OTHER_LLMS = {"Sonnet 5.5": "_sonnet", "GPT-6 Luna": "_luna"}     # condition suffixes of the other LLMs' core runs
+# Condition suffixes of the other LLMs' core runs, e.g. {"Sonnet 5.5": "_sonnet"}. Empty for now (Asher, Oct 19): the
+# Sonnet 5.5 runs (ablations/port_*_sonnet) are incomplete and out of the tables; GPT-6 Luna never ran (strict schema).
+OTHER_LLMS: Dict[str, str] = {}
 
 
 def generation_cost(study: str) -> None:
@@ -748,6 +760,17 @@ def calls_per_set(run: Path) -> float:
     return sum(it.get("llm_calls") or 0 for r in records.values() for it in r.get("iterations", [])) / len(records)
 
 
+def oneshot_csv(run: Path, dataset: str) -> Path:
+    """src/oneshot.py's checks of a run (named as a transfer CSV, so `checked` maps it to the current rule's file)."""
+    return run / f"transfer_{Path(dataset).stem}_oneshot.csv"
+
+
+def oneshot_calls(run: Path) -> float:
+    """LLM calls per training set of OneShot's answer: its round's calls (1, plus any re-asks)."""
+    data = json.loads((run / "oneshot.json").read_text(encoding="utf-8"))
+    return float(np.mean([e.get("llm_calls") or 1 for e in data.values()]))
+
+
 def rq3_tables() -> None:
     rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Training pass rate (\%) & LLM calls per set \\"]
     for bench, title in RQ3_BENCHES.items():
@@ -757,16 +780,19 @@ def rq3_tables() -> None:
         frozen = "final" if bench == "pacman" else "determinized"     # Pac-Man: the narrowed lists, as in T1
         configs = {"Full": (runs_of(b.base), frozen, False),
                    "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], frozen, False),
-                   "NoRepair": (runs_of(b.base), "norepair_determinized", True)}
+                   "NoRepair": (runs_of(b.base), "norepair_determinized", True),
+                   "OneShot": (runs_of(b.base), "oneshot", False)}
         block = []
         for name, (runs, rules, norepair) in configs.items():
-            if not runs or not all(checked(csv_path(r, dataset, rules)).exists() for r in runs):
+            path_of = (lambda r: oneshot_csv(r, dataset)) if rules == "oneshot" else                 (lambda r, rules=rules: csv_path(r, dataset, rules))
+            if not runs or not all(checked(path_of(r)).exists() for r in runs):
                 continue
-            cov = pd.concat([outcomes(csv_path(r, dataset, rules), b, name, r.name) for r in runs])
+            cov = pd.concat([outcomes(path_of(r), b, name, r.name) for r in runs])
             cov = per_list(cov)
-            passed = [x for r in runs for x in members_passed(r, norepair)]
+            # OneShot's list was never checked on the training members as the loop ends: no pass rate
+            passed = [] if rules == "oneshot" else [x for r in runs for x in members_passed(r, norepair)]
             c, p = stats(cov.coverage), stats(passed)
-            calls = [calls_per_set(r) for r in runs]
+            calls = [oneshot_calls(r) if rules == "oneshot" else calls_per_set(r) for r in runs]
             rows += [{"bench": bench, "configuration": name, "metric": m, "value": v, "split": "validation",
                       "runs": len(runs)}
                      for m, v in (("coverage_mean", c["mean"]), ("coverage_sd", c["sd"]), ("coverage_n", c["n"]),

@@ -30,7 +30,9 @@ PRISM-Guided-Learning/
                        held-out checks
     transfer.py        a run's frozen rules, certified on held-out instances (the loop's solver)
     recertify.py       every check again with the exact solvers (the paper's certification rule)
-    determinize.py     a run's `any` rules fixed in the order its pick chose
+    determinize.py     a run's `any` rules fixed by an order search on its training members (a run with the pick
+                       already writes the pick's own order to determinized.json; this overwrites it)
+    oneshot.py         the LLM's first answer of a run, frozen by the pick's rule and certified (no selection, repair)
     run_baseline.py    a baseline, fitted and certified
     run_experiment.py  plans, launches and reports an experiment (configs/experiments/)
     sequential.py      the sequential adaptation study (configs/sequential/);  sequential_report.py: its report
