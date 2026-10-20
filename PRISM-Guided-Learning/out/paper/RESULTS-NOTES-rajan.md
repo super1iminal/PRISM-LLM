@@ -206,12 +206,22 @@ committed before any episode ran (rule 7).
 
 ## Blocked
 
-- **Item 3, Gemini 3.8 Flash on MER** (`port_mer_gemini`, `port_mer_n_gemini`; Fir run of Oct 20). Every call failed
-  with HTTP 400 from Google AI Studio: "Request contains an invalid argument" (24 calls per condition, 0 tokens). The
-  families, grids and Pac-Man requests have the same schema shape and worked. MER's differs in its 28-action enum.
-  - This is the model's first failure on MER.
-  - Next: one smoke test of `port_mer_gemini` with a config-only adapter (`inline_refs`, or `drop:title`). After a
-    second failure the model is dropped for MER, with this reason.
+- **Item 3, Gemini 3.8 Flash on MER: cause found and fixed by config (Oct 20); rerun on Fir.**
+  - Failure: every call of `port_mer_gemini` and `port_mer_n_gemini` failed with HTTP 400 from Google AI Studio,
+    "Request contains an invalid argument" (24 calls per condition, 0 tokens).
+  - Diagnosis, one request per variant (rejected requests cost nothing):
+    - the families prompt with the MER schema is rejected, so the schema is the cause;
+    - with `$ref` inlined, rejected; without `maxLength`, rejected; without titles and descriptions, rejected;
+    - with only 5 of the 28 actions, accepted;
+    - with all 28 actions and no `maxItems: 64` on the rules array, accepted.
+  - Fix: `llm.openrouter.schema_adapter: [drop:maxItems]` on the two Gemini MER conditions only. Haiku's and the
+    other Gemini conditions' requests are unchanged.
+  - Rule 1(b): the 64-rule limit is still enforced, by the planner's validation of every answer
+    (`tests/test_openrouter.py`).
+  - Smoke test, local, Oct 20: `port_mer_gemini` with 1 chain × 2 rounds passed. 1 call; the answer parsed, no
+    re-ask, the training set was solved in round 1, final rules written; $0.065. `port_mer_n_gemini` sends the
+    identical schema.
+  - Diagnosis and smoke spend: about $0.08.
 - **Item 6, growing mode** crashed at the first deferral: `sequential.py` sorted the closest list's training instances
   by grid size `n`, which Pac-Man instances lack (`None`). Fixed on Oct 20: instances without a size keep their order.
   Grid worlds are unchanged. Rerun with `checklist.sh item6 growing`; the frozen runs are unaffected.
