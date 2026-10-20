@@ -296,6 +296,34 @@ def share(value) -> str:
     return "--" if value is None or pd.isna(value) else f"${100 * value:.1f}$"
 
 
+# Benchmarks the sealed table leaves out, and why (RESULTS-NOTES, Missing)
+SEALED_LEFT_OUT = {"pacman": "models at horizons 50 and 100 cannot be built within 4 GB and 900 s"}
+
+
+def rq1_sealed_table(data: Dict[str, pd.DataFrame]) -> None:
+    """T1 on the sealed test targets (P2), in the validation table's layout, with the number of controllers (n) per
+    cell: a cell is only what has been checked so far, and a benchmark or controller with no sealed checks is left
+    out (Pac-Man's models at horizons 50 and 100 cannot be built, RESULTS-NOTES)."""
+    benches = [b for b in RQ1_BENCHES if b not in SEALED_LEFT_OUT]
+    table = coverage_table(data, benches, APPROACHES).assign(split="sealed test", checks="sealed")
+    long = table.melt(id_vars=["bench", "approach", "split", "checks"], var_name="metric").dropna(subset=["value"])
+    tex = [r"\toprule", r"Controller & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) & $n$ \\"]
+    for bench, title in RQ1_BENCHES.items():
+        b = table[table.bench == bench]
+        if b.empty:
+            continue
+        best = {k: b[f"{k}_mean"].max() for k in ("permissive", "frozen")}
+        tex += [r"\midrule", rf"\multicolumn{{6}}{{l}}{{\emph{{{title}}}}} \\"]
+        for _, r in b.iterrows():
+            cells = [pct(r.get(f"{k}_mean"), r.get(f"{k}_sd"), count(r.get(f"{k}_n")),
+                         bold=not pd.isna(r.get(f"{k}_mean")) and np.isclose(r[f"{k}_mean"], best[k]))
+                     for k in ("permissive", "frozen")]
+            tex.append(f"{r.approach} & {cells[0]} & {cells[1]} & {share(r.get('inconclusive_share'))} & "
+                       f"{share(r.timeout_share)} & {count(r.get('frozen_n'))} \\\\")
+    tex.append(r"\bottomrule")
+    write_table("tab_rq1-coverage-sealed", tex, long.to_dict("records"))
+
+
 def rq1_tables(data: Dict[str, pd.DataFrame], llms: Dict[str, pd.DataFrame]) -> None:
     table = coverage_table(data, list(RQ1_BENCHES) + list(EXTRA_BENCHES), APPROACHES)
     table["llm"] = np.where(table.approach == "Full", "anthropic/claude-haiku-5.5", "")
@@ -856,33 +884,35 @@ def rq3_tables() -> None:
     print("wrote tables/tab_rq3-nosp.csv")
 
 
-def rq3_budget_figure(bench: str = "mer") -> None:
-    """F3: certified coverage of the held-out targets against LLM calls spent per training set, for Full and Restart
-    (src/budget_transfer.py's chain curves: per round budget R, the pick over every chain cut to its first R rounds,
-    `any` resolved). One point per R: the runs' mean calls and mean coverage, the band their range. The dotted line
-    is Restart's mean total spend; the star, Full's value there (each run's last R within that many calls)."""
+# Budget-curve panels: benchmark -> (replay file per run, what checked it). MER's replay predates the fixed rule.
+BUDGET_PANELS = {"mer": ("budget_transfer_chains.csv", "loop solver"), "families": ("budget_ii_rounds.csv", "fixed rule")}
+
+
+def _budget_arm(bench, runs: List[Path], name: str) -> Optional[pd.DataFrame]:
+    """Per (run, training set, round budget R): LLM calls spent and held-out targets certified, from each run's replay
+    file (BUDGET_PANELS); None unless every run has one."""
     b = EXP.spec["benchmarks"][bench]
-    arms = {"Full": runs_of(b.base), "Restart": runs_of(RESTARTS[bench], "ablations")}
-    tables = {}
-    for name, runs in arms.items():
-        per_run = []
-        for r in runs:
-            path = r / "budget_transfer_chains.csv"
-            if not path.exists():
-                return print(f"skipped fig_rq3-budget: no {path.relative_to(ROOT)}")
-            df = pd.read_csv(path)
-            df = df[df.target.isin(held_out(b)) & ~df.trained.astype(bool)]
-            df["certified"] = df.certified.fillna(False).astype(bool)
-            per_run.append(df.groupby(["source", "round"]).agg(
-                calls=("llm_calls", "first"), certified=("certified", "sum"), targets=("target", "size"),
-                solved=("solved", "first"), picked_from=("picked_from", "first")).reset_index().assign(run=r.name))
-        tables[name] = pd.concat(per_run, ignore_index=True)
-    rows = []
-    for name, t in tables.items():
-        rows += [{"arm": name, "run": r.run, "source": r.source, "round": r.round, "llm_calls": r.calls,
-                  "certified": r.certified, "targets": r.targets, "coverage": r.certified / r.targets,
-                  "solved_training": r.solved, "picked_from": r.picked_from, "bench": bench, "split": "validation"}
-                 for r in t.itertuples(index=False)]
+    file = BUDGET_PANELS[bench][0]
+    if not runs or not all((r / file).exists() for r in runs):
+        return None
+    per_run = []
+    for r in runs:
+        df = pd.read_csv(r / file)
+        df = df[df.target.isin(held_out(b)) & ~df.trained.astype(bool)]
+        df["certified"] = df.certified.fillna(False).astype(bool)
+        per_run.append(df.groupby(["source", "round"]).agg(
+            calls=("llm_calls", "first"), certified=("certified", "sum"), targets=("target", "size"),
+            solved=("solved", "first"), picked_from=("picked_from", "first")).reset_index().assign(run=r.name, arm=name))
+    return pd.concat(per_run, ignore_index=True)
+
+
+def rq3_budget_figure() -> None:
+    """F3: certified coverage of the held-out targets against LLM calls spent per training set, one panel per
+    benchmark in BUDGET_PANELS: Full and, where its replays exist, Restart (per round budget R, the run's pick with
+    repair over every chain cut to its first R rounds, `any` resolved; src/budget_transfer.py chain mode or
+    src/budget_ii.py). One point per R: the runs' mean calls and mean coverage, the band their range. Where Restart is
+    drawn, the dotted line is its mean total spend and the star Full's value there (each run's last R within that many
+    calls). The diamond is OneShot: the first answer of chain 0, frozen, no selection or repair (1 call)."""
 
     def at(t: pd.DataFrame, budget: float) -> pd.Series:
         """Per run: the coverage of its last round within `budget` calls (mean over its training sets)."""
@@ -892,37 +922,64 @@ def rq3_budget_figure(bench: str = "mer") -> None:
             out[run] = (within.certified / within.targets).mean() if len(within) == g.source.nunique() else np.nan
         return pd.Series(out)
 
-    restart_spend = tables["Restart"].sort_values("round").groupby(["run", "source"]).calls.last().mean()
-    top = max(t.calls.max() for t in tables.values())
-    fig, ax = plt.subplots(figsize=(3.5, 2.3))
-    for name, t in tables.items():        # one point per round budget R: mean calls and coverage over runs
-        r = t.assign(coverage=t.certified / t.targets).groupby("round").agg(
-            calls=("calls", "mean"), mean=("coverage", "mean"), lo=("coverage", "min"), hi=("coverage", "max"))
-        st = STYLE[name]
-        ax.plot(r.calls, r["mean"], color=st["color"], marker=st["marker"], ls=st["ls"], lw=1.2, ms=4,
-                mfc="none" if name != "Full" else st["color"], label=name)
-        ax.fill_between(r.calls, r.lo, r.hi, color=st["color"], alpha=0.12, lw=0)
-    full_there = at(tables["Full"], restart_spend)
-    ax.axvline(restart_spend, color="#444444", ls=":", lw=0.8)
-    ax.plot([restart_spend], [full_there.mean()], marker="*", color=STYLE["Full"]["color"], ms=9, ls="none")
-    ax.annotate(f"Full at Restart's\nspend: {full_there.mean():.2f}", (restart_spend, full_there.mean()),
-                xytext=(restart_spend - 4, 0.12), ha="right", fontsize=7,
-                arrowprops=dict(arrowstyle="-", color="#444444", lw=0.6))
-    rows.append({"arm": "Full at Restart's spend", "llm_calls": restart_spend, "coverage": full_there.mean(),
-                 "coverage_min": full_there.min(), "coverage_max": full_there.max(), "runs": len(full_there),
-                 "bench": bench, "split": "validation"})
-    restart_end = at(tables["Restart"], top)
-    rows.append({"arm": "Restart at its spend", "llm_calls": restart_spend, "coverage": restart_end.mean(),
-                 "coverage_min": restart_end.min(), "coverage_max": restart_end.max(), "runs": len(restart_end),
-                 "bench": bench, "split": "validation"})
-    ax.set_xlabel("LLM calls spent (per training set)")
-    ax.set_ylabel("certified coverage (fraction)")
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_xlim(left=0)
-    ax.grid(axis="y", color="#e4e3df", lw=0.6)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    ax.legend(frameon=False, loc="upper left")
+    panels = {}
+    for bench in BUDGET_PANELS:
+        b = EXP.spec["benchmarks"][bench]
+        arms = {"Full": _budget_arm(bench, runs_of(b.base), "Full"),
+                "Restart": _budget_arm(bench, runs_of(RESTARTS[bench], "ablations"), "Restart")
+                if bench in RESTARTS else None}
+        arms = {k: v for k, v in arms.items() if v is not None}
+        if "Full" in arms:
+            panels[bench] = arms
+    if not panels:
+        return print("skipped fig_rq3-budget: no replay files")
+    rows = []
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.5 * len(panels), 2.3), squeeze=False)
+    for ax, (bench, arms) in zip(axes[0], panels.items()):
+        b = EXP.spec["benchmarks"][bench]
+        checks = BUDGET_PANELS[bench][1]
+        for name, t in arms.items():
+            rows += [{"bench": bench, "arm": name, "run": r.run, "source": r.source, "round": r.round,
+                      "llm_calls": r.calls, "certified": r.certified, "targets": r.targets,
+                      "coverage": r.certified / r.targets, "solved_training": r.solved, "picked_from": r.picked_from,
+                      "checks": checks, "split": "validation"} for r in t.itertuples(index=False)]
+            r = t.assign(coverage=t.certified / t.targets).groupby("round").agg(
+                calls=("calls", "mean"), mean=("coverage", "mean"), lo=("coverage", "min"), hi=("coverage", "max"))
+            st = STYLE[name]
+            ax.plot(r.calls, r["mean"], color=st["color"], marker=st["marker"], ls=st["ls"], lw=1.2, ms=4,
+                    mfc="none" if name != "Full" else st["color"], label=name)
+            ax.fill_between(r.calls, r.lo, r.hi, color=st["color"], alpha=0.12, lw=0)
+        if "Restart" in arms:
+            spend = arms["Restart"].sort_values("round").groupby(["run", "source"]).calls.last().mean()
+            full_there, restart_end = at(arms["Full"], spend), at(arms["Restart"], arms["Restart"].calls.max())
+            ax.axvline(spend, color="#444444", ls=":", lw=0.8)
+            ax.plot([spend], [full_there.mean()], marker="*", color=STYLE["Full"]["color"], ms=9, ls="none")
+            ax.annotate(f"Full at Restart's\nspend: {full_there.mean():.2f}", (spend, full_there.mean()),
+                        xytext=(spend * 0.6, 0.12), ha="right", fontsize=7,
+                        arrowprops=dict(arrowstyle="-", color="#444444", lw=0.6))
+            for arm, v in (("Full at Restart's spend", full_there), ("Restart at its spend", restart_end)):
+                rows.append({"bench": bench, "arm": arm, "llm_calls": spend, "coverage": v.mean(),
+                             "coverage_min": v.min(), "coverage_max": v.max(), "runs": len(v), "checks": checks,
+                             "split": "validation"})
+        cfg = load_config(b.base)
+        dataset = b.dataset or cfg.domain.dataset
+        shots = [r for r in runs_of(b.base) if checked(oneshot_csv(r, dataset)).exists()]
+        if shots:
+            cov = per_list(pd.concat([outcomes(oneshot_csv(r, dataset), b, "OneShot", r.name) for r in shots]))
+            calls = float(np.mean([oneshot_calls(r) for r in shots]))
+            ax.plot([calls], [cov.coverage.mean()], marker="D", color="#444444", ms=5, ls="none", label="OneShot")
+            rows.append({"bench": bench, "arm": "OneShot", "llm_calls": calls, "coverage": cov.coverage.mean(),
+                         "coverage_min": cov.coverage.min(), "coverage_max": cov.coverage.max(), "runs": len(shots),
+                         "checks": CHECKS, "split": "validation"})
+        ax.set_title(RQ3_BENCHES[bench] + ("" if checks == "fixed rule" else " (loop solver)"), fontsize=8)
+        ax.set_xlabel("LLM calls spent (per training set)")
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlim(left=0)
+        ax.grid(axis="y", color="#e4e3df", lw=0.6)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        ax.legend(frameon=False, loc="lower right", fontsize=7)
+    axes[0][0].set_ylabel("certified coverage (fraction)")
     fig.tight_layout()
     save_figure(fig, "fig_rq3-budget")
     pd.DataFrame(rows).to_csv(OUT / "figures" / "fig_rq3-budget.csv", index=False)
@@ -944,6 +1001,7 @@ def main(argv=None):
     EXP = experiment(RQ1_SPEC)
     data = rq1_outcomes(EXP)
     rq1_tables(data, llm_outcomes(EXP))
+    rq1_sealed_table(rq1_outcomes(EXP, sealed=True))
     rq1_size_figure(data)
     rq1_misses(data)
     rq2_tables(sequential(args.study), args.episodes)

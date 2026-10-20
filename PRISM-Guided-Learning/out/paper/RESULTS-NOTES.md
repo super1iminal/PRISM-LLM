@@ -4,7 +4,7 @@ Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `p
 
 `sections/evaluation.tex` is not in this repository, so each `.tex` file follows the columns the brief lists. Each file is a tabular body: header row and booktabs rules, with no `\begin{tabular}`.
 
-**Split.** Every number below is a **validation** result: grids 12-19 of `grid_20_large`, the 10x10-14x14 family members, Pac-Man horizons 8-30 and MER validation ids 0-8, as in `configs/experiments/rq1_comparison.yaml`. The sequential study uses validation family members and the 20 grids of `grid_20_large`. Each CSV has a `split` column. The sealed test pass (P2) is running and is not in any table yet.
+**Split.** Every number below is a **validation** result: grids 12-19 of `grid_20_large`, the 10x10-14x14 family members, Pac-Man horizons 8-30 and MER validation ids 0-8, as in `configs/experiments/rq1_comparison.yaml`. The sequential study uses validation family members and the 20 grids of `grid_20_large`. Each CSV has a `split` column. The sealed test pass (P2) has its own table, `tab:rq1-coverage-sealed` (below); it is partial while P2 runs.
 
 **Certification rule.** Every held-out check in the tables uses one rule: interval iteration at 1e-9 (capped at 10^6 iterations), PRISM's linear programming where it stalls, then Gauss–Seidel at 1e-12 (no error bound). A check is certified only if a sound solver finished and the smallest margin is beyond its band (1e-9 for interval iteration, 1e-3 for LP); inconclusive within the band or when only Gauss–Seidel finished; "not certifiable within limits" when no solver finishes (PRISM's 900 s timeout) or the model cannot be built. The checks are `src/recertify.py`'s, merged per controller into `transfer_exact_*.csv` by `python src/recertify.py combine out/results` (interval iteration's verdict where it converged, else LP's). `python viz/paper_results.py --checks gs` gives the tables from the loop solver's checks of this morning. The only exception is T4c (below).
 
@@ -66,6 +66,9 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
   - **RL is PPO over seeds.** The rechecks retrain PPO, and training does not reproduce (the retrained networks' worst cases differ from earlier ones by up to 0.82), so RL is the mean over seeds × training sets, each network certified in one recheck. Random grids 66.7 ± 17.9 %, families 61.1 ± 44.8 %, Pac-Man 50.0 %, MER 0 %.
   - MER across x and across n are two blocks; the as-in-the-paper single-instance variants are in the CSV only.
 - **T1 `tab:rq1-coverage-llm`**. Haiku 5.5 only (other LLMs dropped for now, below), equal to T1's Full rows.
+- **T1, sealed test `tab:rq1-coverage-sealed`** (`tables/tab_rq1-coverage-sealed.{tex,csv}`; P2, **partial**). T1's layout plus a column n (controllers per cell), on the sealed targets with the same rule: random grids `grid_test_large.csv` (42 grids, sizes 9-20), family members 15x15-20x20 (24 per family, each list on its own family), MER ids 9-11 (3 per benchmark). `split` = "sealed test".
+  - So far (frozen): random grids Full 91.1 ± 7.5 % (12 lists), DT-raw 1.2 %, DT-voc 57.7 %, Hand 52.4 %; families Full 89.4 ± 9.8 % (9), DT-voc 59.7 %; MER across x and n Full 100 % (3 each). No check is inconclusive or timed out.
+  - Not yet checked: the other baselines on families and MER, Restart, RL (PPO) and OneShot. Pac-Man is left out (Missing).
 - **F1 `fig:rq1-size`** (`figures/fig_rq1-size.{pdf,csv}`).
   - Panels: random grids (side length), families (side length), Pac-Man (game length = `MAX_STEPS`), MER across n (number of requests).
   - The dashed line marks the largest training size: 11, 8, 18, 3.
@@ -122,7 +125,11 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
 - **T4c** (`tables/tab_rq3-nosp.csv`). The "6.00 vs 3.25" on random grids without `closer` (`grids_noclose`: grid_20_large targets 12-19, 8 held out). **Loop solver's checks** (`checks` column): `port_ts_noclose` was not re-certified.
   - Hand (template; n = 1 list): 6 of 8.
   - Full: `port_ts_noclose`, 1 run × 4 training sets, n = 4 lists: 3.25 ± 0.96 of 8. That run is the core loop **before** the Oct 17 gridworld feedback fix, without the strategy hint, so it is not comparable with T4's Full rows.
-- **F3 `fig:rq3-budget`** (`figures/fig_rq3-budget.{pdf,csv}`). MER across x, validation targets 0-8 (6 held out), core loop. 3 runs each of Full (`core/port_mer`) and Restart (`ablations/port_mer_resample`), one training set per run. **Still the loop solver's checks; P5 redoes it under the fixed rule and adds the families panel.**
+- **F3 `fig:rq3-budget`** (`figures/fig_rq3-budget.{pdf,csv}`). One panel per benchmark, validation, core loop; the CSV has a `checks` column.
+  - **MER across x** (left): 3 runs each of Full (`core/port_mer`) and Restart (`ablations/port_mer_resample`), one training set per run, held-out targets 0-8 (6). **Still the loop solver's checks** (its title says so); P5 redoes it under the fixed rule.
+  - **Families** (right; P5, fixed rule): Full only, 3 runs × 3 training sets, each list on its own family's 20 held-out targets (`core/port_fam_history/seed_none_*/budget_ii_rounds.csv`, `src/budget_ii.py`). Mean coverage by round budget R = 1-7: 0.59, 0.83, 0.68, 0.87, 0.82, 0.86, 0.87 at 6.0-36.4 calls per training set. Not monotone in R (R = 3 dips), as on MER. Restart's replays are not done yet, so there is no Restart curve or spend marker here.
+  - **OneShot** (diamond, both panels): the first answer of chain 0, frozen, no selection or repair, at 1 call: MER 0.00, families 0.44.
+  - The K-chains replays (`budget_ii_chains.csv`, first k chains at full rounds) exist for families Full but are not plotted yet.
   - **How each point is made.** For round budget R = 1-7, every one of the run's 8 chains is cut to its first R rounds. The run's own pick with repair is rerun on what is left (as `src/equal_spend.py` does at one budget). `any` is resolved by the pick's order. The list is then certified (`src/budget_transfer.py` chain mode; under the fixed rule `src/budget_ii.py`, which also replays the first k chains, the K-chains axis).
   - x is the LLM calls of those rounds summed over chains, re-asks included. Each point is the runs' mean calls and mean coverage at one R; the band is the range over runs.
   - **Restart's spend** is 59.0 calls (its 3 runs' totals: 64, 53, 60). At 59 calls (each run's last R within 59), Full certifies 6, 6 and 3 of 6, a mean of 0.83; Restart certifies 6 of 6 in every run. Full needs its full 63.7 calls to reach 6 of 6 in all runs.
@@ -150,6 +157,7 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
 - **T3 (a), feature-computation time.** Features are computed in Python when the model is rendered, and that time is not recorded; only PRISM's model-construction time is. Smallest experiment: time `domain.model()` per check in `sequential.certify`.
 - **T4, NoSP (Full) on the core loop.** `port_ts_noclose` predates the fix. Smallest experiment: `port_ts_history` with `closer` hidden, 3 runs. Families: none.
 - **T4, PassFail and Margins.** Never run on the core loop (no config switch).
+- **Sealed test, Pac-Man (horizons 50 and 100): left out for now (Asher, 2026-10-19).** Not certifiable within limits for any controller: the model is too large to build. A rule list's induced model grows about 3.5x per 5 steps (Full run 1: 2,839 states at horizon 20, 10,054 at 25, 27,103 at 30). At horizon 50, construction was still enumerating states at 1.8-2.8 million when it failed within the 4 GB Java heap; at 100 it timed out at 900 s, for every solver. Baselines are no smaller (PPO needs the bare model). The four checks made (Full runs 1-2, frozen and no-repair) are in `transfer_sealed_pacman_transfer*.csv` as `not_certifiable`. Smallest experiment: one horizon-50 check with a larger heap and timeout, or PRISM's symbolic engine (MTBDD/hybrid); horizon 100 is likely out of reach either way.
 - Sequential studies on Pac-Man and MER, random sequences, synthesis timing, growing-mode libraries and UUV are Rajan's; they are not run here.
 
 ## Previous loop only
@@ -227,8 +235,8 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 
 ## In progress (2026-10-19 evening)
 
-- **P2** (sealed test set): every controller except PPO and OneShot, with the certification rule above (`transfer_sealed_*.csv`, `--unseal`). PPO: the sealed checks need the same networks as validation (see RL above), not yet run.
-- **P5**: families panel (Full run 1 done: `core/port_fam_history/seed_none_1/budget_ii_{rounds,chains}.csv`; runs 2-3 running); then the MER panel under the fixed rule, the Restart arms, the OneShot point and the equal-spend counts. The random-grids panel last.
+- **P2** (sealed test set): every controller except PPO, OneShot and Pac-Man (left out, see Missing), with the certification rule above (`transfer_sealed_*.csv`, `--unseal`). Done: random grids (core runs 1-3) and families (core runs 1-3), frozen, permissive and no-repair lists. Running: MER, Restart, the baselines. PPO: the sealed checks need the same networks as validation (see RL above), not yet run.
+- **P5**: families panel, Full done and drawn (F3); then the MER panel under the fixed rule, the Restart arms, the OneShot point and the equal-spend counts. The random-grids panel last.
 - **A7** (effect sizes) and **A5** (replication package): not started.
 
 ## Changed since last regeneration
