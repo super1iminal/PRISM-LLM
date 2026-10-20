@@ -62,7 +62,7 @@ def item1() -> None:
 
 def episodes_of(study: str, mode: str) -> pd.DataFrame:
     frames = []
-    for seq in sorted((SEQ / study / mode).glob("*/episodes.csv")):
+    for seq in sorted((SEQ / study / mode).glob("*/episodes.csv")):     # a sequence that died early has none
         frames.append(pd.read_csv(seq).assign(study=study, mode=mode, sequence=seq.parent.name))
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
@@ -159,6 +159,8 @@ def item6() -> None:
     # every generation attempt at lengths 25 and 30 (ids 7 and 9): its verdict and smallest margin
     attempts = []
     for seq in sorted((SEQ / "pacman_v0" / "growing").glob("*")):
+        if not (seq / "episodes.csv").exists() or not (seq / "checks.csv").exists():
+            continue
         e, c = pd.read_csv(seq / "episodes.csv"), pd.read_csv(seq / "checks.csv")
         for _, r in e[e.instance.isin([7, 9]) & e.get("generation_seconds", pd.Series(dtype=float)).notna()].iterrows():
             new = c[(c.episode == r.episode) & (c.rule_list == f"gen_t{r.episode}")]

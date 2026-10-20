@@ -205,8 +205,8 @@ def run_sequence(study: Study, seq: Sequence, mode: str, cfg, domain, instances,
         row["model_seconds"] = sum(c.get("model_seconds", 0.0) for c in mine)
         row["checks"] = len(mine)
         if decision is None and mode == "growing":
-            near = closest(mine, library)
-            base = sorted(near.training, key=lambda i: instances[i].data.get("n", 0))[:study.max_training - 1] \
+            near = closest(mine, library)          # (`n` is None where the dataset has no size column, e.g. Pac-Man)
+            base = sorted(near.training, key=lambda i: instances[i].data.get("n") or 0)[:study.max_training - 1] \
                 if near else []
             training = base + [iid]
             entry, costs = generate(study, training, f"gen_t{t}", out_dir)

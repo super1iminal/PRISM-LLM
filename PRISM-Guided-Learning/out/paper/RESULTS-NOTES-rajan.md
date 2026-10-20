@@ -200,8 +200,15 @@ committed before any episode ran (rule 7).
 
 ## Blocked
 
-Nothing at present. Item 6's blocker (`src/sequential.py` and the narrowed Pac-Man lists) is resolved by the two
-changes recorded under item 6.
+- **Item 3, Gemini 3.8 Flash on MER** (`port_mer_gemini`, `port_mer_n_gemini`; Fir run of Oct 20). Every call failed
+  with HTTP 400 from Google AI Studio: "Request contains an invalid argument" (24 calls per condition, 0 tokens). The
+  families, grids and Pac-Man requests have the same schema shape and worked. MER's differs in its 28-action enum.
+  - This is the model's first failure on MER.
+  - Next: one smoke test of `port_mer_gemini` with a config-only adapter (`inline_refs`, or `drop:title`). After a
+    second failure the model is dropped for MER, with this reason.
+- **Item 6, growing mode** crashed at the first deferral: `sequential.py` sorted the closest list's training instances
+  by grid size `n`, which Pac-Man instances lack (`None`). Fixed on Oct 20: instances without a size keep their order.
+  Grid worlds are unchanged. Rerun with `checklist.sh item6 growing`; the frozen runs are unaffected.
 
 ## Decisions (Rajan, Oct 20)
 
