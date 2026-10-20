@@ -6,7 +6,9 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$here/config.sh"
 out="$REPO_DIR/PRISM-Guided-Learning/out/cluster"
-ids=$(tail -n +2 "$out/submissions.csv" | cut -d, -f2 | paste -sd, -)
+# Job ids from submissions.csv, read as CSV (older rows can span lines: a multi-line command in their args)
+ids=$(python3 -c "import csv,sys; print(','.join(r['job_id'] for r in csv.DictReader(open(sys.argv[1])) if r['job_id'].isdigit()))" \
+      "$out/submissions.csv")
 [ -n "$ids" ] || { echo "no submissions recorded"; exit 0; }
 sacct -j "$ids" -P --units=G \
     --format=JobID,JobName,State,ExitCode,Submit,Start,End,Elapsed,Timelimit,AllocCPUS,ReqMem,MaxRSS,TotalCPU,NodeList \

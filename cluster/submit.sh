@@ -89,5 +89,6 @@ out=$(sbatch --parsable "${args[@]}" "$script" "${cmd[@]}")
 jobid=${out%%;*}
 echo "submitted $name as job $jobid  (log: $CLUSTER_OUT/slurm/$name-$jobid.out)"
 [ -f "$CLUSTER_OUT/submissions.csv" ] || echo "time,job_id,name,kind,git_commit,args" > "$CLUSTER_OUT/submissions.csv"
-echo "$(date -Is),$jobid,$name,$kind,$(git rev-parse --short HEAD 2>/dev/null),\"${args[*]} ${exps[*]:-} ${cmd[*]:-}\"" \
-    >> "$CLUSTER_OUT/submissions.csv"
+line="${args[*]} ${exps[*]:-} ${cmd[*]:-}"
+line=$(printf '%s' "$line" | tr '\n' ' ' | tr -s ' ' | sed 's/"/""/g')     # one CSV row per job, whatever the command
+echo "$(date -Is),$jobid,$name,$kind,$(git rev-parse --short HEAD 2>/dev/null),\"$line\"" >> "$CLUSTER_OUT/submissions.csv"
