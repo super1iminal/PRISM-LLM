@@ -52,3 +52,5 @@ Bare MDP, full state observed. Optimum per requirement on its own; joint = one c
 | 41 | None | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
 
 ✗ = the optimum misses the threshold: no controller meets that requirement.
+
+The four instances undecided at PRISM's 900 s timeout (25, 28, 38, 41) were rerun with 3,600 s (2026-10-20): 28 and 38 are jointly feasible; 25 and 41 stay undecided (column `timeout_s` in the CSV). Every test grid has a controller certified on it, which proves joint feasibility directly (out/paper/tables/tab_setup-feasibility.csv).
