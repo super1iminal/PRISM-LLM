@@ -222,9 +222,16 @@ committed before any episode ran (rule 7).
     re-ask, the training set was solved in round 1, final rules written; $0.065. `port_mer_n_gemini` sends the
     identical schema.
   - Diagnosis and smoke spend: about $0.08.
-- **Item 6, growing mode** crashed at the first deferral: `sequential.py` sorted the closest list's training instances
-  by grid size `n`, which Pac-Man instances lack (`None`). Fixed on Oct 20: instances without a size keep their order.
-  Grid worlds are unchanged. Rerun with `checklist.sh item6 growing`; the frozen runs are unaffected.
+- **Item 6, growing mode: fixed (Oct 20); rerun on Fir.** It crashed at the first deferral: `sequential.py` sorted
+  the closest list's training instances by grid size `n`, which Pac-Man instances lack (`None`). Instances without a
+  size now keep their order; grid worlds are unchanged. The frozen runs are unaffected.
+  - Local checks, Oct 20:
+    - the crashed path, with generation stubbed (no LLM): a 2-episode sequence starting at length 25 defers, picks
+      training `[3, 4, 5, 7]` (the closest list's horizons plus the length met), calls generation and continues;
+    - one real generation as growing mode launches it, at the hardest length: `port_pacman_narrow_core` with
+      training `[3, 4, 5, 9]` (length 30), 8 GB heap, cut to 1 chain × 1 round. It completed with final rules
+      (1 Haiku call, $0.0013), and `determinize.py` succeeded. 16 min, peak memory 10.3 GB.
+
 
 ## Decisions (Rajan, Oct 20)
 
