@@ -13,7 +13,7 @@
 #   bash cluster/checklist.sh item3-certify luna|gemini [norepair_determinized]   # rule 2 on the validation targets
 #   bash cluster/checklist.sh item4 frozen|growing   # long_v0: 2 sequences x 36 (growing: Haiku 5.5)
 #   bash cluster/checklist.sh item5                  # shift_v0 growing with seed libraries 2 and 3 (Haiku 5.5)
-#   bash cluster/checklist.sh item6 frozen|growing   # pacman_v0 (BLOCKED at this commit: see the notes)
+#   bash cluster/checklist.sh item6 frozen|growing   # pacman_v0: 3 sequences x 12 (growing: Haiku 5.5)
 #   bash cluster/checklist.sh item7 luna|gemini      # restart arm on the families (only once item 7's conditions hold)
 #   bash cluster/checklist.sh report                 # viz/rajan_results.py (Rajan's tables; Asher rebuilds his own)
 set -euo pipefail
@@ -23,7 +23,8 @@ cd "$REPO_DIR"
 what=${1:?usage: checklist.sh item1|item2|item3-smoke|item3-full|item3-certify|item4|item5|item6|item7|report}; shift
 dry=(); args=()
 for a in "$@"; do if [ "$a" = --dry ]; then dry=(--dry); else args+=("$a"); fi; done
-submit() { bash "$here/submit.sh" cmd "${dry[@]}" "$@"; }
+# AFTER (environment): a Slurm dependency for every job this call submits (cluster/queue_all.sh sets it)
+submit() { bash "$here/submit.sh" cmd "${dry[@]}" ${AFTER:+--after "$AFTER"} "$@"; }
 need_key() { [ -n "${OPENROUTER_API_KEY:-}" ] || { echo "OPENROUTER_API_KEY is not set in this shell"; exit 1; }; }
 model() {
     case ${1:-} in luna|gemini) echo "_$1" ;; *) echo "name the model: luna or gemini" >&2; exit 1 ;; esac
@@ -35,6 +36,7 @@ warn_item1() {
         echo "      Fir gives each job its own cores, so this only matters for memory bandwidth; record the overlap."
     fi
 }
+# Pac-Man work uses an 8 GB Java heap (4 GB cannot build the bare model at length 30; the run store ignores the heap).
 # Every job runs from PRISM-Guided-Learning/ (cluster/jobs/command.sbatch). PRISM's cap per job is
 # prism.max_concurrent's lock slots in the job's own TMPDIR (8 unless a command sets it), shared by all its processes.
 
@@ -51,8 +53,8 @@ item1)
             --out out/paper/tables/tab_rq2-synthesis-time.families.csv
         submit --name item1-grids --cpus 4 --mem 16 --time 6:00:00 -- python src/synthesis_time.py --only grids \
             --out out/paper/tables/tab_rq2-synthesis-time.grids.csv
-        submit --name item1-pacman --cpus 4 --mem 24 --time 6:00:00 -- python src/synthesis_time.py --only pacman \
-            --out out/paper/tables/tab_rq2-synthesis-time.pacman.csv
+        submit --name item1-pacman --cpus 4 --mem 32 --time 6:00:00 -- python src/synthesis_time.py --only pacman \
+            --java-max-mem 8g --out out/paper/tables/tab_rq2-synthesis-time.pacman.csv
     fi ;;
 item2)
     submit --name item2-random --cpus 12 --mem 64 --time 6:00:00 -- bash -c '
@@ -69,12 +71,13 @@ item3-full)
     m=$(model "${args[0]:-}"); need_key; warn_item1
     submit --name "item3-full$m" --cpus 24 --mem 120 --time 16:00:00 -- bash -c "
         for c in port_ts_history port_fam_history port_pacman_narrow_core port_mer port_mer_n; do
-            python src/run_ablation.py \${c}$m --unseeded 3 --set prism.max_concurrent=20 \
+            heap=; [ \$c = port_pacman_narrow_core ] && heap=\"--set prism.java_max_mem=8g\"   # length 30 needs 8 GB
+            python src/run_ablation.py \${c}$m --unseeded 3 --set prism.max_concurrent=20 \$heap \
                 > \"\$JOB_DIR/\${c}$m.log\" 2>&1 &
         done; wait" ;;
 item3-certify)
     m=$(model "${args[0]:-}")
-    submit --name "item3-certify$m" --cpus 12 --mem 60 --time 10:00:00 -- bash -c "
+    submit --name "item3-certify$m" --cpus 12 --mem 96 --time 10:00:00 -- bash -c "
         for c in port_ts_history port_fam_history port_pacman_narrow_core port_mer port_mer_n; do
             CONDITIONS=\$c bash ../cluster/jobs/certify_llm.sh $m ${args[*]:1} > \"\$JOB_DIR/certify_\$c.log\" 2>&1 &
         done; wait" ;;
@@ -93,9 +96,12 @@ item5)
                 > "$JOB_DIR/${lib}_$s.log" 2>&1 &
         done; done; wait' ;;
 item6)
-    echo "item 6 is blocked at this commit (out/paper/RESULTS-NOTES-rajan.md, Blocked): src/sequential.py seeds the"
-    echo "library from one run and does not apply transfer.py's narrowed-list vocabulary (shared_literals) when it"
-    echo "certifies, so every Pac-Man list would be 'unparsed'. Waiting on Asher."; exit 1 ;;
+    mode=${args[0]:?item6 frozen|growing}
+    [ "$mode" = growing ] && need_key
+    submit --name "item6-$mode" --cpus 12 --mem 128 --time 20:00:00 -- bash -c "
+        for s in r01 r02 r03; do
+            python src/sequential.py configs/sequential/pacman_v0.yaml --mode $mode --only \$s > \"\$JOB_DIR/\$s.log\" 2>&1 &
+        done; wait" ;;
 item7)
     m=$(model "${args[0]:-}"); need_key
     echo "Item 7 starts only when Asher confirms E1 shows feedback and restarts differ AND this model's Full runs on"

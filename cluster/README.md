@@ -72,6 +72,9 @@ python cluster/smoke/llm_ping.py --model anthropic/claude-haiku-5.5 --providers 
 
 ## 2. Rajan's checklist
 
+**Queue everything at once:** `bash cluster/queue_all.sh --dry` to see it, then `bash cluster/queue_all.sh`. It
+submits every item below with Slurm dependencies in the checklist's order. The table is what it does, step by step.
+
 The items, their rules and what each produces are in `PRISM-Guided-Learning/out/paper/RESULTS-NOTES-rajan.md`. Asher's
 list (E1/E2 Haiku restarts, re-certification, the sealed set, Sonnet, ...) is not run from here (checklist rule 6),
 so the earlier `campaign.sh` waves are gone. Order, as the checklist sets it:
@@ -86,7 +89,7 @@ so the earlier `campaign.sh` waves are gone. Order, as the checklist sets it:
 | 3 | `bash cluster/checklist.sh item5` | 16 cores | paid key (Haiku) |
 | 4 | `bash cluster/checklist.sh item3-certify luna` / `gemini` (after its full runs) | 12 cores | PRISM only |
 | 5 | `bash cluster/checklist.sh item7 <model>` | 8 cores | only once item 7's two conditions hold |
-| - | `bash cluster/checklist.sh item6 ...` | | blocked at this commit (see the notes) |
+| 3 | `bash cluster/checklist.sh item6 frozen`, then `item6 growing` | 12 cores, 128 GB | growing: paid key (Haiku) |
 | any | `bash cluster/checklist.sh report` | 4 cores | builds Rajan's tables (`viz/rajan_results.py`) |
 
 Add `--dry` to see the sbatch line. Every job writes its record (commit, hardware, our other running jobs) to

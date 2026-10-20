@@ -97,8 +97,7 @@ Status: **prepared, not yet run** (2026-10-19). Each item says what will run; th
 - **Models.**
   - GPT-6 Luna: `openai/gpt-6-luna`, provider pinned to `openai`, $0.10 / $0.50 per M.
   - Gemini 3.8: `google/gemini-3.8-flash`, pinned to `google-ai-studio`, $0.75 / $3.75 per M (the standard endpoint).
-  - OpenRouter lists no smaller Gemini 3.8 model on 2026-10-19, so "the small model" is taken to be Flash.
-    **Asher: confirm.**
+  - OpenRouter lists no smaller Gemini 3.8 model on 2026-10-19, so "the small model" is Flash (Rajan confirmed, Oct 20).
   - Reasoning: `llm.think: true` (OpenRouter `reasoning.enabled`, the provider's default effort), the closest
     equivalent of Haiku's extended thinking.
 - **Conditions.** `configs/run/conditions/<core>_luna.yaml` and `<core>_gemini.yaml`, for the 5 core conditions. Each
@@ -139,10 +138,44 @@ Status: **prepared, not yet run** (2026-10-19). Each item says what will run; th
 - **Tables.** `tab_rq2-growing-libs.rajan.csv` (per sequence, with LLM cost) and
   `tab_rq2-growing-libs-episodes.rajan.csv`.
 
-**6. Sequences on Pac-Man.** **Blocked** (below).
-- **Sequences.** Drawn and committed regardless (rule 7): `configs/sequential/pacman_v0.yaml`, 3 sequences of 12 over
-  ids 0, 1, 2, 6, 7, 9 (lengths 8, 10, 12, 20, 25, 30). Every length occurs at least once per sequence. Drawn with
-  `src/draw_sequences.py pacman --count 3 --length 12 --seed 21003`.
+**6. Sequences on Pac-Man.** `configs/sequential/pacman_v0.yaml`, 3 sequences of 12 over ids 0, 1, 2, 6, 7, 9
+(lengths 8, 10, 12, 20, 25, 30). Every length occurs at least once per sequence, so lengths below the training lengths
+(14-18) mix with lengths above them. Drawn with `src/draw_sequences.py pacman --count 3 --length 12 --seed 21003` and
+committed before any episode ran (rule 7).
+- **Library.** The three core Pac-Man frozen lists: `seed_run` lists `core/port_pacman_narrow_core/seed_none_{1,2,3}`,
+  entries `seed1.0`, `seed2.0`, `seed3.0` (the narrowed lists as kept; `determinized.json` equals the final rules there).
+- **Runs.** Frozen mode first (PRISM only), then growing mode with Haiku 5.5 and the core Pac-Man configuration
+  (`checklist.sh item6 frozen|growing`). Output in `out/results/sequential/pacman_v0/`.
+- **Tables.** `tab_rq2-pacman-sequences.rajan.csv`, and `tab_rq2-pacman-generations.rajan.csv`: every generation
+  attempt at lengths 25 and 30, with its verdict and smallest margin.
+- **Two changes to `src/sequential.py` were needed (Rajan, Oct 20).** Before them, every Pac-Man list was `unparsed`.
+  Neither changes how a list is generated, picked, repaired or certified.
+  1. *Certification vocabulary.* With `rules.early_narrow` set, the manager's config turns on `rules.shared_literals`,
+     the same two lines `transfer.py` and `recertify.py` already have, so narrowed lists (e.g. `!(xP = 3 & yP = 4)`)
+     parse. That config is used only to certify. Generation runs `run_ablation.py` in its own process with the study's
+     condition, unchanged. Grid-world studies have `early_narrow: 0`, so they are unaffected.
+  2. *Several seed runs.* `seed_run` may be a list; each run's lists join the library as `seed<k>.<id>`. A single run
+     keeps its names (`seed0`, `seed1`, ...).
+- **Java heap 8 GB for Pac-Man (items 1, 3, 6), a deviation from "4 GB per process".**
+  - With 4 GB, PRISM runs out of Java heap building the bare length-30 model (8.3M states) at about 6.6-7.0M states.
+    That happened with Java 21 and 25 and with either garbage collector.
+  - The verifier needs that model for its forced states, so every length-30 check came out `timeout`, where Asher's
+    verdict is `failed`.
+  - With 8 GB the model builds in 162 s (PRISM's resident memory about 8 GB). The check of `seed1.0` at length 30 then
+    gives Asher's verdict exactly: failed, interval iteration, margin -0.1748, 27,103 states (182 s).
+  - The heap is not part of a run's identity and changes no computed value.
+  - Where it is set: `pacman_v0.yaml`'s `generation_set`, `synthesis_time.py --java-max-mem 8g` for Pac-Man, and the
+    Pac-Man condition's `--set` in item 3's runs. Grid worlds and MER keep 4 GB.
+- **Checks of the change.**
+  - `tests/test_sequential.py`: entry names and training sets for one and three seed runs; the narrowed lists parse
+    with the certification vocabulary and are rejected without it.
+  - Regression: shift_v0 s1 in frozen mode, rerun after the change, reproduces Asher's `episodes.csv` decisions and
+    `checks.csv` verdicts (below).
+  - Validation, pacman_v0 r01 in frozen mode, locally:
+    - episodes 0-9 match RQ1: lengths 8, 10, 12 and 20 certified by interval iteration, all three lists identical at
+      20 (margin +0.0015);
+    - length 25 deferred: every list fails by -0.130 (Asher's T1b);
+    - length 30 needed the 8 GB heap above.
 
 **7. Restart arm on the families, one extra LLM.**
 - **Prepared, not to start yet:** `port_fam_history_luna_resample.yaml` and `port_fam_history_gemini_resample.yaml`.
@@ -167,27 +200,17 @@ Status: **prepared, not yet run** (2026-10-19). Each item says what will run; th
 
 ## Blocked
 
-- **Item 6: `src/sequential.py` cannot run the Pac-Man study at this commit.** Two separate problems; per rules 1 and
-  2, neither is patched here.
-  1. *Narrowed lists do not parse.* `sequential.py` builds the certification vocabulary from the study's condition, but
-     does not turn on `rules.shared_literals` for narrowed lists, as `transfer.py` and `recertify.py` do when
-     `rules.early_narrow` is set. The three core Pac-Man lists all contain a narrowing such as
-     `!(xP = 3 & yP = 4)`, rejected as "number 3 is not allowed". Every check would be `unparsed`, so every episode
-     would be deferred.
-     - The same copy of the config also drives generation, where the core condition does not set `shared_literals`.
-       So it cannot be set in the study file without changing generation.
-     - Proposed fix (Asher's call), in `sequential.main`: the same two lines as `transfer.py`, applied to the
-       certification config only.
-  2. *The library seeds from one run.* `seed_run` is a single run directory, while item 6's library is the three core
-     Pac-Man runs' lists (one list each). Options:
-     - a list-valued `seed_run` in `sequential.py`;
-     - or a seed directory assembled from the three runs' `determinized.json` and `outputs/`.
-  - Generation in growing mode (the core Pac-Man condition on the closest list's training horizons 14-18 plus the
-    length met) needs no change.
-- **Item 3, Gemini "small model".** See item 3: only `google/gemini-3.8-flash` is listed.
-- **Fir and "nothing else on the machine" (item 1).** Without `EXCLUSIVE=1`, other users' jobs may share item 1's
-  node. Its cores and memory are its own, but memory bandwidth and caches are shared. The job records say which mode
-  ran.
+Nothing at present. Item 6's blocker (`src/sequential.py` and the narrowed Pac-Man lists) is resolved by the two
+changes recorded under item 6.
+
+## Decisions (Rajan, Oct 20)
+
+- Gemini 3.8 = `google/gemini-3.8-flash`.
+- Item 1 runs non-exclusive: three jobs, each with 4 dedicated cores and one PRISM process at a time. Other users' jobs
+  may share the node, sharing memory bandwidth and caches but not cores or memory. Each job's `meta.json` records its
+  node and our other running jobs.
+- Everything is queued at once by `cluster/queue_all.sh`, ordered by Slurm dependencies: item 1 first and alone among
+  our jobs, then the rest. Item 7 waits for Asher.
 
 ## Missing (until run)
 

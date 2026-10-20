@@ -150,6 +150,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--only", nargs="+", choices=["families", "grids", "pacman"], default=["families", "grids", "pacman"])
     p.add_argument("--limit", type=int, default=None, help="at most N instances per dataset (a smoke test)")
+    p.add_argument("--java-max-mem", default=None, help="PRISM's Java heap (default: the run's, 4g); Pac-Man needs 8g "
+                                                        "to build the bare model at length 30")
     p.add_argument("--out", type=Path, default=PROJECT_ROOT / "out" / "paper" / "tables" / "tab_rq2-synthesis-time.csv")
     a = p.parse_args()
     a.out.parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +159,8 @@ def main():
     if a.out.exists():
         old = pd.read_csv(a.out)
         done = {(r.domain, int(r.instance), str(r.method)) for r in old.itertuples()}
-    meta = {**hardware(), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "argv": sys.argv[1:]}
+    meta = {**hardware(), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "argv": sys.argv[1:],
+            "java_max_mem": a.java_max_mem or "the run's (4g)"}
     a.out.with_suffix(".meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     asher = asher_verdicts()
 
@@ -174,6 +177,8 @@ def main():
     for domain_name, dataset, ids, run_dir, lists in jobs:
         cfg = load_run_config(run_dir)
         cfg = replace(cfg, domain=replace(cfg.domain, dataset=dataset))
+        if a.java_max_mem:
+            cfg = replace(cfg, prism=replace(cfg.prism, java_max_mem=a.java_max_mem))
         if cfg.rules.early_narrow:          # narrowings name places with numbers (as transfer.py, recertify.py)
             cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))
         domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)

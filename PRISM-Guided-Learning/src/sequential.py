@@ -30,7 +30,7 @@ import sys
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import yaml
@@ -61,7 +61,7 @@ class Study:
     name: str
     condition: str                       # run condition for generation (configs/run/conditions/)
     dataset: str                         # every instance id below refers to this dataset
-    seed_run: str                        # run dir whose determinized rule lists seed the library
+    seed_run: Union[str, List[str]]      # run dir(s) whose determinized rule lists seed the library
     sequences: List[Sequence]
     generation_set: List[str] = field(default_factory=list)   # extra overrides for generation runs
     max_training: int = 4                # training instances per generation run, the instance met included
@@ -82,9 +82,16 @@ def load_study(path: Path) -> Study:
 
 
 def seed_library(study: Study) -> List[Entry]:
-    run_dir = PROJECT_ROOT / study.seed_run
-    rules, training = determinized_rules(run_dir), training_instances(run_dir)
-    return [Entry(f"seed{sid}", rules[sid], training[sid]) for sid in sorted(rules)]
+    """The library's seed entries: every determinized rule list of the seed run, named seed<sample id>; with several
+    seed runs (a list), every list of each, named seed<k>.<sample id> for the k-th run (1-based)."""
+    runs = [study.seed_run] if isinstance(study.seed_run, str) else list(study.seed_run)
+    entries = []
+    for k, run in enumerate(runs, 1):
+        run_dir = PROJECT_ROOT / run
+        rules, training = determinized_rules(run_dir), training_instances(run_dir)
+        prefix = "seed" if len(runs) == 1 else f"seed{k}."
+        entries += [Entry(f"{prefix}{sid}", rules[sid], training[sid]) for sid in sorted(rules)]
+    return entries
 
 
 def certify(domain, cfg, runner, instance, entry: Entry) -> dict:
@@ -232,6 +239,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     study = load_study(args.study)
     cfg = load_config(study.condition, [f"domain.dataset={study.dataset}"] + list(study.generation_set))
+    if cfg.rules.early_narrow:   # narrowings name places with numbers (as transfer.py and recertify.py); this config only
+        cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))   # certifies: generation has its own process
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = {int(i.id): i for i in domain.load_instances(study.dataset)}
     rows = pd.read_csv(PROJECT_ROOT / "domains" / cfg.domain.name / "data" / study.dataset)

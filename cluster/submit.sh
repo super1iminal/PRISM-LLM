@@ -5,6 +5,7 @@
 #   bash cluster/submit.sh timing                                  # smoke test 3 (certification timing, no LLM)
 #   bash cluster/submit.sh exp <file.yaml>... --parallel N --time H:MM:SS [--flags "--run --check"] [--name X]
 #   bash cluster/submit.sh cmd --cpus C --mem G --time H:MM:SS [--name X] [--exclusive] -- <command...>  (--mem 0: all)
+# --after takes job ids (afterany) or a full Slurm dependency such as afterok:123:456.
 # Every job mails its state changes to $NOTIFY_EMAIL (config.sh; an ntfy.sh topic). Common options: --dry (print the sbatch command only), --force (allow a second LLM launcher), --after JOBID.
 #
 # exp: experiment files are relative to PRISM-Guided-Learning/ (e.g. configs/experiments/rq1_comparison.yaml).
@@ -41,7 +42,10 @@ while [ $# -gt 0 ]; do
 done
 
 args=(--account="$FIR_ACCOUNT" --output="$CLUSTER_OUT/slurm/%x-%j.out" --chdir="$REPO_DIR")
-[ -n "$after" ] && args+=(--dependency="afterany:$after")
+# --after: a Slurm dependency ("afterok:123:456", "afterany:123") or bare job ids ("123" or "123:456": afterany)
+if [ -n "$after" ]; then
+    [[ $after == *after* ]] && args+=(--dependency="$after") || args+=(--dependency="afterany:$after")
+fi
 [ $exclusive = 1 ] && args+=(--exclusive)
 [ -n "$NOTIFY_EMAIL" ] && args+=(--mail-user="$NOTIFY_EMAIL" --mail-type="$NOTIFY_TYPES")
 case $kind in
