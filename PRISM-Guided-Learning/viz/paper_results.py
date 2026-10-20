@@ -799,6 +799,41 @@ def oneshot_calls(run: Path) -> float:
     return float(np.mean([e.get("llm_calls") or 1 for e in data.values()]))
 
 
+def rq3_sealed_table() -> None:
+    """T4 on the sealed test targets (P2): certified coverage per list of Full, Restart and NoRepair, with the number
+    of lists (a configuration whose runs are not all checked is left out). Training pass rates and LLM calls are the
+    validation table's (they do not depend on the targets). Pac-Man is left out (SEALED_LEFT_OUT)."""
+    rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Inconclusive (\%) & $n$ \\"]
+    for bench, title in RQ3_BENCHES.items():
+        if bench in SEALED_LEFT_OUT:
+            continue
+        b = EXP.spec["benchmarks"][bench]
+        cfg = load_config(b.base)
+        dataset = SEALED[bench].get("dataset") or b.dataset or cfg.domain.dataset
+        sb = sealed_bench(b)
+        configs = {"Full": (runs_of(b.base), "determinized"),
+                   "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], "determinized"),
+                   "NoRepair": (runs_of(b.base), "norepair_determinized")}
+        block = []
+        for name, (runs, rules) in configs.items():
+            if not runs or not all(checked(csv_path(r, dataset, rules), "sealed").exists() for r in runs):
+                continue
+            cov = per_list(pd.concat([outcomes(csv_path(r, dataset, rules), sb, name, r.name, kind="sealed")
+                                      for r in runs]))
+            c = stats(cov.coverage)
+            rows += [{"bench": bench, "configuration": name, "metric": m, "value": v, "split": "sealed test",
+                      "runs": len(runs)}
+                     for m, v in (("coverage_mean", c["mean"]), ("coverage_sd", c["sd"]), ("coverage_n", c["n"]),
+                                  ("certified_per_list", cov.certified.mean()), ("targets_per_list", cov.targets.mean()),
+                                  ("inconclusive_share", cov.inconclusive.mean()), ("timeout_share", cov.timeout.mean()))]
+            block.append(f"{name} & {pct(c['mean'], c['sd'], c['n'])} & {share(cov.inconclusive.mean())} & "
+                         f"{c['n']} \\\\")
+        if block:
+            tex += [r"\midrule", rf"\multicolumn{{4}}{{l}}{{\emph{{{title}}}}} \\"] + block
+    tex.append(r"\bottomrule")
+    write_table("tab_rq3-ablation-sealed", tex, rows)
+
+
 def rq3_tables() -> None:
     rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Training pass rate (\%) & LLM calls per set \\"]
     for bench, title in RQ3_BENCHES.items():
@@ -1009,6 +1044,7 @@ def main(argv=None):
     generation_cost(args.study)
     controller_sizes()
     rq3_tables()
+    rq3_sealed_table()
     rq3_budget_figure()
 
 

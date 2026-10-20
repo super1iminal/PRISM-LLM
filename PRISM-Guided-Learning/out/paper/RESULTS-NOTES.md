@@ -4,7 +4,7 @@ Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `p
 
 `sections/evaluation.tex` is not in this repository, so each `.tex` file follows the columns the brief lists. Each file is a tabular body: header row and booktabs rules, with no `\begin{tabular}`.
 
-**Split.** Every number below is a **validation** result: grids 12-19 of `grid_20_large`, the 10x10-14x14 family members, Pac-Man horizons 8-30 and MER validation ids 0-8, as in `configs/experiments/rq1_comparison.yaml`. The sequential study uses validation family members and the 20 grids of `grid_20_large`. Each CSV has a `split` column. The sealed test pass (P2) has its own table, `tab:rq1-coverage-sealed` (below); it is partial while P2 runs.
+**Split.** Every number below is a **validation** result: grids 12-19 of `grid_20_large`, the 10x10-14x14 family members, Pac-Man horizons 8-30 and MER validation ids 0-8, as in `configs/experiments/rq1_comparison.yaml`. The sequential study uses validation family members and the 20 grids of `grid_20_large`. Each CSV has a `split` column. The sealed test pass (P2) has its own tables, `tab:rq1-coverage-sealed` and `tab:rq3-ablation-sealed` (below).
 
 **Certification rule.** Every held-out check in the tables uses one rule: interval iteration at 1e-9 (capped at 10^6 iterations), PRISM's linear programming where it stalls, then Gauss–Seidel at 1e-12 (no error bound). A check is certified only if a sound solver finished and the smallest margin is beyond its band (1e-9 for interval iteration, 1e-3 for LP); inconclusive within the band or when only Gauss–Seidel finished; "not certifiable within limits" when no solver finishes (PRISM's 900 s timeout) or the model cannot be built. The checks are `src/recertify.py`'s, merged per controller into `transfer_exact_*.csv` by `python src/recertify.py combine out/results` (interval iteration's verdict where it converged, else LP's). `python viz/paper_results.py --checks gs` gives the tables from the loop solver's checks of this morning. The only exception is T4c (below).
 
@@ -66,9 +66,10 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
   - **RL is PPO over seeds.** The rechecks retrain PPO, and training does not reproduce (the retrained networks' worst cases differ from earlier ones by up to 0.82), so RL is the mean over seeds × training sets, each network certified in one recheck. Random grids 66.7 ± 17.9 %, families 61.1 ± 44.8 %, Pac-Man 50.0 %, MER 0 %.
   - MER across x and across n are two blocks; the as-in-the-paper single-instance variants are in the CSV only.
 - **T1 `tab:rq1-coverage-llm`**. Haiku 5.5 only (other LLMs dropped for now, below), equal to T1's Full rows.
-- **T1, sealed test `tab:rq1-coverage-sealed`** (`tables/tab_rq1-coverage-sealed.{tex,csv}`; P2, **partial**). T1's layout plus a column n (controllers per cell), on the sealed targets with the same rule: random grids `grid_test_large.csv` (42 grids, sizes 9-20), family members 15x15-20x20 (24 per family, each list on its own family), MER ids 9-11 (3 per benchmark). `split` = "sealed test".
-  - So far (frozen): random grids Full 91.1 ± 7.5 % (12 lists), DT-raw 1.2 %, DT-voc 57.7 %, Hand 52.4 %; families Full 89.4 ± 9.8 % (9), DT-voc 59.7 %; MER across x and n Full 100 % (3 each). No check is inconclusive or timed out.
-  - Not yet checked: the other baselines on families and MER, Restart, RL (PPO) and OneShot. Pac-Man is left out (Missing).
+- **T1, sealed test `tab:rq1-coverage-sealed`** (`tables/tab_rq1-coverage-sealed.{tex,csv}`; P2). T1's layout plus a column n (controllers per cell), on the sealed targets with the same rule: random grids `grid_test_large.csv` (42 grids, sizes 9-20), family members 15x15-20x20 (24 per family, each list on its own family), MER ids 9-11 (3 per benchmark). `split` = "sealed test". No check is inconclusive or timed out.
+  - Frozen: random grids Full 91.1 ± 7.5 % (validation 92.7), DT-raw 1.2 %, DT-voc 57.7 %, Hand 52.4 %; families Full 89.4 ± 9.8 % (87.2), DT-raw 0 %, DT-voc 59.7 %, Hand 29.2 %; MER across x Full and DT-raw 100 %, DT-voc 33.3 %; across n Full and DT-raw 100 %, DT-voc 0 %.
+  - Not checked: RL (PPO; the sealed checks need the validation networks, which are not stored) and OneShot. Pac-Man is left out (Missing).
+- **T4, sealed test `tab:rq3-ablation-sealed`** (`tables/tab_rq3-ablation-sealed.{tex,csv}`; P2). Coverage per list of Full, Restart and NoRepair on the same sealed targets, with n; training pass rates and LLM calls are T4's. Random grids: Full 91.1 ± 7.5 %, Restart 77.0 ± 12.0 %, NoRepair 85.7 ± 5.9 %; families: 89.4 ± 9.8, 75.5 ± 28.9, 71.8 ± 36.0 %; MER across x 100 % each; across n Full and NoRepair 100 %. No inconclusive checks. Pac-Man is left out.
 - **F1 `fig:rq1-size`** (`figures/fig_rq1-size.{pdf,csv}`).
   - Panels: random grids (side length), families (side length), Pac-Man (game length = `MAX_STEPS`), MER across n (number of requests).
   - The dashed line marks the largest training size: 11, 8, 18, 3.
@@ -235,7 +236,7 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 
 ## In progress (2026-10-19 evening)
 
-- **P2** (sealed test set): every controller except PPO, OneShot and Pac-Man (left out, see Missing), with the certification rule above (`transfer_sealed_*.csv`, `--unseal`). Done: random grids (core runs 1-3) and families (core runs 1-3), frozen, permissive and no-repair lists. Running: MER, Restart, the baselines. PPO: the sealed checks need the same networks as validation (see RL above), not yet run.
+- **P2** (sealed test set): done for every controller except RL (PPO), OneShot and Pac-Man (left out, see Missing): `transfer_sealed_*.csv`, `--unseal`, the certification rule above. PPO needs the validation networks, which are not stored.
 - **P5**: families panel, Full done and drawn (F3); then the MER panel under the fixed rule, the Restart arms, the OneShot point and the equal-spend counts. The random-grids panel last.
 - **A7** (effect sizes) and **A5** (replication package): not started.
 
