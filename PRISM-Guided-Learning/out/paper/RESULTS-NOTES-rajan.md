@@ -6,7 +6,13 @@ names the checklist gives. Rows Asher merges into his own tables carry `.rajan` 
 coverage is counted exactly as in T1/T4. **Every number is a validation result.** No sealed instance is read or built:
 `src/transfer.py`'s guard refuses them, and every pool below is validation-only.
 
-Status: **prepared, not yet run** (2026-10-19). Each item says what will run; the results replace these lines.
+Status (Fir run of Oct 19-20, 2026; branch `fir-harness`, Slurm job records in `out/cluster/jobs/`):
+- **Done:** items 1, 2, 4 and 5; item 3 for GPT-6 Luna (all 5 conditions) and for Gemini 3.8 Flash on random grids,
+  families and Pac-Man; item 6 in frozen mode. Their runs, checks and tables are committed.
+- **Not done:** Gemini on both MER benchmarks failed every call (Blocked), and item 6's growing mode crashed (fixed,
+  to rerun). Their failed outputs are not committed.
+- **Not started:** item 7 waits on Asher; item 8 is last.
+- Item 1 verdict check: 228 of the list checks have an Asher verdict for the same list and instance, and none differs.
 
 ## Setup
 
