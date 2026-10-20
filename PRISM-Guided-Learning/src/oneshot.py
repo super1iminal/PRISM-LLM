@@ -22,7 +22,7 @@ from core.domain import load_domain
 from core.pick import evaluator, resolved
 from core.rules import fixed_order
 from core.training import training_sets
-from recertify import certify_rules, own_targets, prefix_of, write
+from recertify import certify_rules, own_targets, prefix_of, with_prism, write
 from transfer import guard_sealed, parse_ids, training_instances
 
 
@@ -59,25 +59,30 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--targets", required=True)
+    parser.add_argument("--data", default=None, help="Target dataset (default: the run's own)")
     parser.add_argument("--source-targets", default=None, help="JSON, sample id -> its own target ids")
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--prefix", default=None, help="Output file prefix (transfer_sealed for the test pass)")
+    parser.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
+    parser.add_argument("--prism", action="append", default=[], help="PRISM setting override key=value")
     args = parser.parse_args(argv)
     lists = first_answers(args.run_dir)
     (args.run_dir / "oneshot.json").write_text(json.dumps(lists, indent=1), encoding="utf-8")
-    cfg = load_run_config(args.run_dir)
+    cfg = with_prism(load_run_config(args.run_dir), args.prism)
     if cfg.rules.early_narrow:          # parsed as src/transfer.py parses the run's lists (places with numbers)
         cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
-    targets = [t for t in domain.load_instances(cfg.domain.dataset) if int(t.id) in set(parse_ids(args.targets))]
-    guard_sealed(cfg.domain.dataset, [int(t.id) for t in targets])
+    dataset = args.data or cfg.domain.dataset
+    targets = [t for t in domain.load_instances(dataset) if int(t.id) in set(parse_ids(args.targets))]
+    guard_sealed(dataset, [int(t.id) for t in targets], args.unseal)
     sources = {s: [tuple(r) for r in e["rules"]] for s, e in lists.items()}
     only = own_targets(args.source_targets)
     with ThreadPoolExecutor(args.workers) as pool:
         rows = [r for part in pool.map(lambda t: certify_rules(domain, cfg, t, only(sources, t)), targets) for r in part]
     df = pd.DataFrame(rows)
-    trained = training_instances(args.run_dir)
+    trained = training_instances(args.run_dir) if Path(dataset).name == Path(cfg.domain.dataset).name else {}
     df["trained"] = [t in trained.get(int(s), []) for s, t in zip(df.source, df.target)]
-    write(df, args.run_dir / f"{prefix_of(cfg)}_{Path(cfg.domain.dataset).stem}_oneshot.csv")
+    write(df, args.run_dir / f"{args.prefix or prefix_of(cfg)}_{Path(dataset).stem}_oneshot.csv")
 
 
 if __name__ == "__main__":

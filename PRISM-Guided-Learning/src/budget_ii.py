@@ -26,7 +26,7 @@ from core.domain import load_domain
 from core.planner import SymbolicPlanner
 from core.rules import fixed_order
 from core.training import training_sets
-from recertify import certify_rules, own_targets
+from recertify import certify_rules, own_targets, with_prism
 from transfer import guard_sealed, parse_ids, training_instances
 
 OUT = {"rounds": "budget_ii_rounds.csv", "chains": "budget_ii_chains.csv"}
@@ -71,12 +71,14 @@ def picks(run_dir: Path, axis: str) -> List[dict]:
     return out
 
 
-def table(run_dir: Path, axis: str, targets: str, price, workers: int, source_targets=None) -> pd.DataFrame:
-    cfg = load_run_config(run_dir)
+def table(run_dir: Path, axis: str, targets: str, price, workers: int, source_targets=None, unseal: bool = False,
+          name: str = "budget_ii", prism=()) -> pd.DataFrame:
+    """One axis's replay of `run_dir`, certified on `targets`; written to <run dir>/<name>_<axis>.csv."""
+    cfg = with_prism(load_run_config(run_dir), list(prism))
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = {int(t.id): t for t in domain.load_instances(cfg.domain.dataset)}
     wanted = [i for i in parse_ids(targets) if i in instances]
-    guard_sealed(cfg.domain.dataset, wanted)
+    guard_sealed(cfg.domain.dataset, wanted, unseal)
     rows_of = picks(run_dir, axis)
     lists: Dict[str, list] = {rules_hash(p["rules"]): p["rules"] for p in rows_of}
     own = own_targets(source_targets)       # by training set: a hash is checked where any of its sets' targets are
@@ -102,8 +104,9 @@ def table(run_dir: Path, axis: str, targets: str, price, workers: int, source_ta
             rows.append({**{k: v for k, v in p.items() if k != "rules"}, "rules_hash": h, "num_rules": len(p["rules"]),
                          "dollars": dollars, "target": t, "trained": t in trained.get(p["source"], []), **c})
     df = pd.DataFrame(rows)
-    df.to_csv(run_dir / OUT[axis], index=False)
-    print(f"{run_dir / OUT[axis]}: {len(lists)} lists, {len(df)} rows, {df.outcome.value_counts().to_dict()}",
+    out = run_dir / f"{name}_{axis}.csv"
+    df.to_csv(out, index=False)
+    print(f"{out}: {len(lists)} lists, {len(df)} rows, {df.outcome.value_counts().to_dict()}",
           flush=True)
     return df
 
@@ -116,9 +119,14 @@ def main(argv=None):
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--price", type=float, nargs=2, default=None, metavar=("IN", "OUT"))
     parser.add_argument("--source-targets", default=None, help='JSON, training set -> its own target ids')
+    parser.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
+    parser.add_argument("--name", default="budget_ii", help="Output name: <run dir>/<name>_<axis>.csv "
+                        "(budget_ii_sealed for the test pass)")
+    parser.add_argument("--prism", action="append", default=[], help="PRISM setting override key=value")
     args = parser.parse_args(argv)
     for axis in args.axis:
-        table(args.run_dir, axis, args.targets, args.price, args.workers, args.source_targets)
+        table(args.run_dir, axis, args.targets, args.price, args.workers, args.source_targets, args.unseal,
+              args.name, args.prism)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,21 @@ Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `p
 
 Every table holds only core-loop runs except where a line says otherwise.
 
+## Night of 2026-10-20: RL, OneShot and feasibility on the test set (summary for Asher)
+
+Five items, in Asher's priority order. No LLM calls. PRISM at up to 12 processes overnight (`--prism max_concurrent=12` on these jobs only; no config changed).
+
+1. **RL (PPO) retrained, networks kept** (`out/results/baselines/<config>/nets.pt`; `src/recertify.py baseline --nets` fits once and reloads, so validation and test check the same networks). 3 seeds per training set, 2M steps on the grid worlds and 1M on Pac-Man and MER, as before. Per-instance results: `transfer_exact_*.csv` (validation) and `transfer_sealed_*.csv` (test) in each baseline directory.
+   - Test: random grids **77.0 ± 12.7 %** (12 networks; per set and seed 21-39 of 42), families **61.8 ± 47.9 %** (6 networks so far: seed 1's test check is still running), MER across x and n **0 %** (stall, as on validation). Pac-Man has no test result (item 4).
+   - Validation, refreshed with the same networks: random grids 69.8 ± 18.8 % (was 66.7), families 61.7 ± 45.6 % (was 61.1), Pac-Man 50.0 %, MER 0 %. Seed 0 reproduced the original seed-0 networks exactly on both grid worlds (random grids 3/6/6/7 of 8; families 19/0/19 of 20); seeds 1-2 differ from the earlier ones.
+   - Per family (test): RL rooms 91.7 %, crossing 0.0 %, adjacent 93.8 %; Full 100.0 / 83.3 / 84.7 %; DT-voc 0.0 / 83.3 / 95.8 %; Hand 0.0 / 0.0 / 87.5 % (`tab_rq1-by-family.csv`, validation and test). Per size: `fig_rq1-size.csv` (validation and test points; the figure now draws the test sizes dotted, shaded beyond the largest validation size).
+2. **OneShot on the test set** (`transfer_sealed_<dataset>_oneshot.csv` per core run; `tab:rq3-ablation-sealed`): random grids **76.2 ± 4.7 %**, families **43.1 ± 43.1 %**, MER across x **0 %**, across n **33.3 ± 57.7 %**, i.e. as on validation (74.0, 43.9, 0, 33.3). Same lists, `any` resolved as selection resolves it.
+3. **Every test instance is solvable** (`tab_setup-feasibility.csv`). Constructively: each of the 42 test grids, 72 test family members and 3 + 3 MER instances has at least one controller certified on it under the certification rule, and a certified controller meets every threshold at once. PRISM's multi-objective query on the bare MDP (`src/ceilings.py`): test grids 38 of 42 jointly feasible, 4 undecided at the 900 s timeout (ids 25, 28 at 13x13, 38, 41 at 20x20; a rerun with 3,600 s is running). **The query is not reliable here:** it answers "not jointly feasible" for family test member 41 (rooms 16x16, seed 1), which Full certifies in all three runs (margins 0.15-0.20), so its "false" is contradicted by a witness (also for the unused 6x6 member 1). Family test members: the query is still running (16 of 72 done). Recommendation: back the paper's claim with the witnesses, not the query.
+4. **Pac-Man length 50: not buildable.** One check of Full run 1's list with a 16 GB Java heap and 90 min per solver: PRISM's explicit engine ran out of heap after enumerating 13.8 million reachable states (the count was flattening, so the model has about 14 million). Pac-Man stays validation-only. PRISM's symbolic engines were not tried: the engine is fixed in `core/prism.py`, which is core code.
+5. **Families budget replay on the test members** (`core/port_fam_history/seed_none_*/budget_ii_sealed_rounds.csv`; `fig_rq3-budget` gets a "families (test)" panel when all three runs are done): run 1 done (coverage 0.82 at R = 1, 0.88 at R = 7; not monotone, as on validation); runs 2 and 3 running.
+
+Still running at the time of this commit: RL families seed 1 (test check), item 3's family query and the grid rerun, item 5's runs 2-3. They go into a later commit.
+
 ## Restart and OneShot (validation, fixed rule)
 
 Certified coverage of the held-out targets per list, mean ± sd over lists (`tab_rq3-ablation`), with LLM calls per training set.
@@ -68,7 +83,7 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
 - **T1 `tab:rq1-coverage-llm`**. Haiku 5.5 only (other LLMs dropped for now, below), equal to T1's Full rows.
 - **T1, sealed test `tab:rq1-coverage-sealed`** (`tables/tab_rq1-coverage-sealed.{tex,csv}`; P2). T1's layout plus a column n (controllers per cell), on the sealed targets with the same rule: random grids `grid_test_large.csv` (42 grids, sizes 9-20), family members 15x15-20x20 (24 per family, each list on its own family), MER ids 9-11 (3 per benchmark). `split` = "sealed test". No check is inconclusive or timed out.
   - Frozen: random grids Full 91.1 ± 7.5 % (validation 92.7), DT-raw 1.2 %, DT-voc 57.7 %, Hand 52.4 %; families Full 89.4 ± 9.8 % (87.2), DT-raw 0 %, DT-voc 59.7 %, Hand 29.2 %; MER across x Full and DT-raw 100 %, DT-voc 33.3 %; across n Full and DT-raw 100 %, DT-voc 0 %.
-  - Not checked: RL (PPO; the sealed checks need the validation networks, which are not stored) and OneShot. Pac-Man is left out (Missing).
+  - RL (PPO): random grids 77.0 ± 12.7 % (12 networks), families 61.8 ± 47.9 % (6 of 9 networks so far), MER 0 %; the same stored networks as validation. Pac-Man is left out (Missing).
 - **T4, sealed test `tab:rq3-ablation-sealed`** (`tables/tab_rq3-ablation-sealed.{tex,csv}`; P2). Coverage per list of Full, Restart and NoRepair on the same sealed targets, with n; training pass rates and LLM calls are T4's. Random grids: Full 91.1 ± 7.5 %, Restart 77.0 ± 12.0 %, NoRepair 85.7 ± 5.9 %; families: 89.4 ± 9.8, 75.5 ± 28.9, 71.8 ± 36.0 %; MER across x 100 % each; across n Full and NoRepair 100 %. No inconclusive checks. Pac-Man is left out.
 - **F1 `fig:rq1-size`** (`figures/fig_rq1-size.{pdf,csv}`).
   - Panels: random grids (side length), families (side length), Pac-Man (game length = `MAX_STEPS`), MER across n (number of requests).
@@ -222,7 +237,7 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
   - Network: MLP 2×64 tanh with policy and value heads; Adam 3e-4; rollouts 128 × 32 environments; GAE λ = 0.95; grad-norm clip 0.5.
   - γ = 0.99 on gridworld (shaped reward: +1 per goal in order, −1 and end on an early goal or collision, −0.01 per step); γ = 1 on the explicit models (undiscounted requirement).
   - Budget: 2M environment steps per policy on gridworld, one policy per training set and seed (seeds 0-2; the torch seed of training set j is seed + j); 1M steps × 3 seeds on Pac-Man and MER.
-  - The frozen policy takes its most likely action. Networks are not stored: each re-certification retrains them.
+  - The frozen policy takes its most likely action. Since 2026-10-20 the networks are stored (`out/results/baselines/<config>/nets.pt`) and validation and test checks load the same ones; earlier re-certifications retrained them, and retraining does not always reproduce a network.
 - **Hand rule lists**:
   - The gridworld template (`domains/gridworld/data/template_policy.py`) was committed on 2026-10-08, before the first transfer runs (Oct 14), but after earlier per-grid LLM rule sets existed.
   - The Pac-Man maze rules were committed on 2026-10-14 with the transfer search.
@@ -245,7 +260,7 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 Against this morning's tables (loop solver's checks), moves of more than 0.5 points:
 
 - **T4, families NoRepair: 68.3 → 67.8 %.** One check (run 2, crossing list, target 95) is inconclusive: LP's margin is 0.00038, inside its 1e-3 band; the loop solver had it certified.
-- **T1, RL: random grids 68.8 → 66.7 %, families 63.3 → 61.1 %.** RL is now the mean over seeds 0-2 of retrained networks, not one seed's earlier network (see T1).
+- **T1, RL: random grids 68.8 → 66.7 → 69.8 %, families 63.3 → 61.1 → 61.7 %.** RL is the mean over seeds 0-2. The last values are the networks retrained on 2026-10-20 and kept (`nets.pt`), which the test checks use too.
 - **T2, seed library of core run 3 (new block):** 28 → 30 of 36 served when rerun under the certification rule (2 timeouts and 5 inconclusive checks under interval iteration alone had deferred episodes). The library of run 2 is unchanged (31 of 36).
 - **Unchanged:** every Full row of T1 and T4 (random grids 92.7 %, families 87.2 %, Pac-Man 66.7 %, MER 100 %), the permissive column, and every DT and Hand row. Interval iteration alone had left the crossing-family lists of core runs 2 and 3 inconclusive (families would have read 69.4 %); linear programming settles all 72 of those checks.
 - **New rows:** Restart on random grids, families and Pac-Man; OneShot everywhere (both above).
