@@ -1,6 +1,6 @@
 # Results notes for the SEAMS evaluation section
 
-Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `python viz/paper_results.py`). The script only reads existing results and makes no LLM or PRISM calls. Tables are in `out/paper/tables/`, figures in `out/paper/figures/`. File names use `_` where the LaTeX labels use `:` (`tab_rq1-coverage.tex` is `tab:rq1-coverage`).
+Built on 2026-10-21 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `python viz/paper_results.py`). The script only reads existing results and makes no LLM or PRISM calls. Tables are in `out/paper/tables/`, figures in `out/paper/figures/`. File names use `_` where the LaTeX labels use `:` (`tab_rq1-coverage.tex` is `tab:rq1-coverage`).
 
 `sections/evaluation.tex` is not in this repository, so each `.tex` file follows the columns the brief lists. Each file is a tabular body: header row and booktabs rules, with no `\begin{tabular}`.
 
@@ -8,12 +8,26 @@ Built on 2026-10-19 by `viz/paper_results.py` (from `PRISM-Guided-Learning/`: `p
 
 **Certification rule.** Every held-out check in the tables uses one rule: interval iteration at 1e-9 (capped at 10^6 iterations), PRISM's linear programming where it stalls, then Gauss–Seidel at 1e-12 (no error bound). A check is certified only if a sound solver finished and the smallest margin is beyond its band (1e-9 for interval iteration, 1e-3 for LP); inconclusive within the band or when only Gauss–Seidel finished; "not certifiable within limits" when no solver finishes (PRISM's 900 s timeout) or the model cannot be built. The checks are `src/recertify.py`'s, merged per controller into `transfer_exact_*.csv` by `python src/recertify.py combine out/results` (interval iteration's verdict where it converged, else LP's). `python viz/paper_results.py --checks gs` gives the tables from the loop solver's checks of this morning. The only exception is T4c (below).
 
+**Correction (Oct 21): the rule's linear-programming stage never ran.** PRISM 4.10.1 answers `-lp` with "Switching to MDP solution method Gauss-Seidel" for every property here (gridworld `Pmin`, Pac-Man `Pmax`), so every check labelled "linear programming" was really Gauss–Seidel at PRISM's default precision, with no error bound. Interval iteration decided 7,921 of the 9,258 held-out checks (86 %). The rest fell back. 1,347 of them (families 970, random grids 339, Pac-Man 20, RQ2 18) were settled again (`out/results/exact_recheck/rechecks.csv`, which the tables read):
+- 1,296 by a direct solve on PRISM's own exported model. Each requirement's LTL formula becomes a deterministic monitor; the product is solved by graph precomputation and policy iteration with sparse direct solves, with a rigorous error bound (residual × expected time to absorption) that separates every value from its threshold.
+- 51 where that bound was too wide (ill-conditioned, slowly leaking chains) by Storm 2.0.0 `--exact`: rational arithmetic on the same products.
+- Checked against PRISM's own exact engine (`-exact`) on 231 checks: equal to 8e-14 (direct solve) and to every digit (Storm).
+
+Result: 1,328 verdicts unchanged, 17 certified → failed, 4 failed → certified, 1 inconclusive → certified. No re-checked margin lies within 0.0049 of its threshold. A check with no re-check verdict counts as inconclusive (only Gauss–Seidel finished); one such check remains (Pac-Man, below).
+
 **Loop version.** "Core loop" means the rebuilt loop of Oct 16 (the `port_*` conditions) as configured in the RQ1 cells:
 - random grids and families with the Oct 17 gridworld feedback fix (`feedback.history`, `feedback.words`, `prompt.compact`, strategy `prompt.hint`): `port_ts_history`, `port_fam_history`;
 - Pac-Man with verifier narrowing: `port_pacman_narrow_core`;
 - MER: `port_mer`, `port_mer_n` (the fix's keys are gridworld-only).
 
 Every table holds only core-loop runs except where a line says otherwise.
+
+## Oct 21: Pac-Man test lengths, narrowing, re-check (summary for Asher)
+
+1. **Pac-Man at lengths 50 and 100, every controller** (`transfer_sealed_pacman_transfer*.csv`, ids 10 and 11). No controller is certified at either length: the worst-case crash probability is 0.88–1.0 against the 0.56 bound. Full comes closest (margin −0.320 at 50 and −0.426 at 100, all 3 runs); NoRepair −0.361 / −0.431, OneShot −0.38 to −0.39 / −0.44, Restart −0.32 to −0.39 / −0.43 to −0.44, DT-raw −0.42 to −0.44, DT-voc −0.43 to −0.44, Hand (maze rules) −0.43 to −0.44, RL −0.35 to −0.43 at 50. RL at 100 is not certifiable within limits: its certification needs the bare game, which PRISM cannot build at a 22 GB heap. Length 50 is solvable (best achievable crash probability 0.5511 on the bare game, 28.6M states); whether 100 is, is unknown (the bare game runs out of memory at 39.2M states). One check rests on Gauss–Seidel alone: Restart run 3 at 100 (margin −0.426, 14.1M states), counted as inconclusive.
+2. **Without narrowing** (`tab_pacman-narrowing.csv`; `<run>/unnarrowed.json` and `*_unnarrowed.csv`): the three core lists with the loop's `& !(xP = 3 & yP = 4)` removed certify 3 of 6 validation lengths per run, against 4 of 6 narrowed, and none of the two test lengths either way. The unnarrowed list builds the same model as the NoRepair list (identical states and margins at 50 and 100).
+3. **Re-check of every fallback check**: see "Correction (Oct 21)" above. The two RQ2 checks the paper reports (`shift_v0` s3, list `seed2` on grid 183, episode 4, once per setting) are confirmed exactly: Gauss–Seidel gave margin −0.5445885624 after 192 s; the exact value is −0.544588562452.
+4. **Two tooling facts.** (a) On Windows, PRISM's `prism.bat` drops `-javamaxmem`, so every PRISM process ran with Java's default heap (a quarter of RAM, about 8 GB), whatever `prism.java_max_mem` said (`CLAUDE.md` gotcha). The Oct 20 Pac-Man failures were this heap limit together with the bare-model side analysis; tonight's checks set the heap through `JAVA_TOOL_OPTIONS`. (b) `src/recertify.py` now certifies through the composed model only (`check_policy`), skipping the bare-model analysis the loop's feedback needs, which certification does not.
 
 ## Night of 2026-10-20: RL, OneShot and feasibility on the test set (summary for Asher)
 
@@ -25,7 +39,7 @@ Five items, in Asher's priority order. No LLM calls. PRISM at up to 12 processes
    - Per family (test): RL rooms 90.3 %, crossing 13.9 %, adjacent 90.3 %; Full 100.0 / 83.3 / 84.7 %; DT-voc 0.0 / 83.3 / 95.8 %; Hand 0.0 / 0.0 / 87.5 % (`tab_rq1-by-family.csv`, validation and test). Per size: `fig_rq1-size.csv` (validation and test points; the figure now draws the test sizes dotted, shaded beyond the largest validation size).
 2. **OneShot on the test set** (`transfer_sealed_<dataset>_oneshot.csv` per core run; `tab:rq3-ablation-sealed`): random grids **76.2 ± 4.7 %**, families **43.1 ± 43.1 %**, MER across x **0 %**, across n **33.3 ± 57.7 %**, i.e. as on validation (74.0, 43.9, 0, 33.3). Same lists, `any` resolved as selection resolves it.
 3. **Every test instance is solvable** (`tab_setup-feasibility.csv`). Constructively: each of the 42 test grids, 72 test family members and 3 + 3 MER instances has at least one controller certified on it under the certification rule, and a certified controller meets every threshold at once. PRISM's multi-objective query on the bare MDP (`src/ceilings.py`): test grids 40 of 42 jointly feasible; 2 undecided even at a 3,600 s timeout (ids 25, 13x13, and 41, 20x20; 28 and 38 were undecided at 900 s and feasible at 3,600 s). **The query is not reliable here:** it answers "not jointly feasible" for family test member 41 (rooms 16x16, seed 1), which Full certifies in all three runs (margins 0.15-0.20), so its "false" is contradicted by a witness (also for the unused 6x6 member 1). Family test members (`out/results/ceilings/gridworld_families_v0_test.csv`, 3,600 s timeout): 65 of 72 jointly feasible, 6 undecided at the timeout (rooms 45, 53, 58; crossing 99, 104; adjacent 177, all 15x15 to 20x20) and member 41 "false", which the witnesses contradict. Recommendation: back the paper's claim with the witnesses, not the query.
-4. **Pac-Man length 50: not buildable.** One check of Full run 1's list with a 16 GB Java heap and 90 min per solver: PRISM's explicit engine ran out of heap after enumerating 13.8 million reachable states (the count was flattening, so the model has about 14 million). Pac-Man stays validation-only. PRISM's symbolic engines were not tried: the engine is fixed in `core/prism.py`, which is core code.
+4. **Pac-Man length 50: CORRECTED (2026-10-20 afternoon) — the rule lists' models are buildable; the earlier "not buildable" was wrong.** The overnight check and the earlier sealed-test records failed in a side analysis, not in certification: `PolicyVerifier.verify_steps` also runs `forced_states_steps`, which builds the *bare* game model (no policy) to find the states where the policy has no choice (used by the loop's feedback, not by certification). That bare model has about 14 million states at length 50 (8.3M at 30) and exhausts a 16 GB heap. The model a rule list induces is far smaller. Full run 1's list, built directly with PRISM's explicit engine: 2,839 states at length 20, 27,103 at 30 (both as in the validation checks), 428,048 at 45, **808,920 at 50 (15 s)**, 6.2M at 75 and **14.1M at 100 (251 s, 12 GB heap)**. Done on Oct 21 (item 1 above). The "16 GB heap" of that night was in fact Java's default of about 8 GB (Oct 21, item 4).
 5. **Families budget replay on the test members** (`core/port_fam_history/seed_none_*/budget_ii_sealed_rounds.csv`; the "families (test)" panel of `fig_rq3-budget`): all three runs, the same re-picks as the validation replay, certified on the 72 test members. Mean coverage by round budget R = 1-7: 0.60, 0.80, 0.71, 0.88, 0.83, 0.87, 0.89 (validation: 0.59, 0.83, 0.68, 0.87, 0.82, 0.86, 0.87), at 6.0 to 36.4 calls per training set; OneShot 0.43 (validation 0.44). The same dip at R = 3 on both.
 
 All five items are done.
@@ -37,7 +51,7 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
 | | Full | Restart | OneShot | NoRepair |
 |---|---|---|---|---|
 | Random grids | 92.7 ± 11.3 (55.8 calls) | 79.2 ± 9.7 (56.0) | 74.0 ± 3.6 (1.0) | 86.5 ± 6.4 |
-| Families | 87.2 ± 12.0 (36.4) | 73.3 ± 26.9 (42.0) | 43.9 ± 35.8 (1.0) | 67.8 ± 39.5 |
+| Families | 87.2 ± 12.0 (36.4) | 71.7 ± 26.9 (42.0) | 43.9 ± 35.8 (1.0) | 68.3 ± 39.1 |
 | Pac-Man | 66.7 ± 0.0 (49.3) | 33.3 ± 28.9 (59.0) | 38.9 ± 9.6 (1.0) | 50.0 ± 0.0 |
 | MER across x | 100 ± 0 (63.7) | 100 ± 0 (59.0) | 0 ± 0 (1.0) | 100 ± 0 |
 | MER across n | 100 ± 0 (60.0) | -- (saturated, not run) | 33.3 ± 57.7 (1.0) | 100 ± 0 |
@@ -77,14 +91,14 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
   - Permissive = the list as kept, `any` open: worst case over every completion. Frozen = `any` resolved by the order the pick chose on the training members (`*_determinized`). For Pac-Man, Full's frozen controller is the narrowed lists as kept, which are already resolved.
   - For baselines, the permissive column uses their ties-open checks where they exist (only the maze rules). Otherwise the controller has one action per state and both columns coincide.
   - Bold marks the best mean per block and column. Ties are all bolded: Pac-Man Full = DT-raw at 4/6; MER Full = DT-raw at 6/6.
-  - Inconclusive and timeout columns: shares of the frozen checks. Full, DT and Hand: 0 everywhere. RL: random grids 1.0 % inconclusive and 2.1 % not certifiable within limits; families as in the CSV.
-  - **RL is PPO over seeds.** The rechecks retrain PPO, and training does not reproduce (the retrained networks' worst cases differ from earlier ones by up to 0.82), so RL is the mean over seeds × training sets, each network certified in one recheck. Random grids 66.7 ± 17.9 %, families 61.1 ± 44.8 %, Pac-Man 50.0 %, MER 0 %.
+  - Inconclusive and timeout columns: shares of the frozen checks. 0 everywhere on validation.
+  - **RL is PPO over seeds** (0-2 per training set), with the networks stored on 2026-10-20, which validation and test both use. Random grids 70.8 ± 17.1 %, families 61.1 ± 46.4 %, Pac-Man 50.0 %, MER 0 %.
   - MER across x and across n are two blocks; the as-in-the-paper single-instance variants are in the CSV only.
 - **T1 `tab:rq1-coverage-llm`**. Haiku 5.5 only (other LLMs dropped for now, below), equal to T1's Full rows.
-- **T1, sealed test `tab:rq1-coverage-sealed`** (`tables/tab_rq1-coverage-sealed.{tex,csv}`; P2). T1's layout plus a column n (controllers per cell), on the sealed targets with the same rule: random grids `grid_test_large.csv` (42 grids, sizes 9-20), family members 15x15-20x20 (24 per family, each list on its own family), MER ids 9-11 (3 per benchmark). `split` = "sealed test". No check is inconclusive or timed out.
-  - Frozen: random grids Full 91.1 ± 7.5 % (validation 92.7), DT-raw 1.2 %, DT-voc 57.7 %, Hand 52.4 %; families Full 89.4 ± 9.8 % (87.2), DT-raw 0 %, DT-voc 59.7 %, Hand 29.2 %; MER across x Full and DT-raw 100 %, DT-voc 33.3 %; across n Full and DT-raw 100 %, DT-voc 0 %.
-  - RL (PPO): random grids 77.0 ± 12.7 % (12 networks), families 64.8 ± 40.2 % (9 networks), MER 0 %; the same stored networks as validation. Pac-Man is left out (Missing).
-- **T4, sealed test `tab:rq3-ablation-sealed`** (`tables/tab_rq3-ablation-sealed.{tex,csv}`; P2). Coverage per list of Full, Restart and NoRepair on the same sealed targets, with n; training pass rates and LLM calls are T4's. Random grids: Full 91.1 ± 7.5 %, Restart 77.0 ± 12.0 %, NoRepair 85.7 ± 5.9 %; families: 89.4 ± 9.8, 75.5 ± 28.9, 71.8 ± 36.0 %; MER across x 100 % each; across n Full and NoRepair 100 %. No inconclusive checks. Pac-Man is left out.
+- **T1, sealed test `tab:rq1-coverage-sealed`** (`tables/tab_rq1-coverage-sealed.{tex,csv}`; P2). T1's layout plus a column n (controllers per cell), on the sealed targets with the same rule: random grids `grid_test_large.csv` (42 grids, sizes 9-20), family members 15x15-20x20 (24 per family, each list on its own family), Pac-Man lengths 50 and 100, MER ids 9-11 (3 per benchmark). `split` = "sealed test". No check is inconclusive; RL families has 1.9 % not certifiable within limits (PRISM timeouts) and RL Pac-Man 50 % (length 100, bare game too large).
+  - Frozen: random grids Full 91.3 ± 7.3 % (validation 92.7), DT-raw 1.2 %, DT-voc 57.7 %, Hand 52.4 %; families Full 89.4 ± 9.8 % (87.2), DT-raw 0 %, DT-voc 59.7 %, Hand 29.2 %; Pac-Man 0 % for every controller (Oct 21, item 1); MER across x Full and DT-raw 100 %, DT-voc 33.3 %; across n Full and DT-raw 100 %, DT-voc 0 %.
+  - RL (PPO): random grids 77.0 ± 12.7 % (12 networks), families 60.2 ± 45.3 % (9 networks), Pac-Man 0 %, MER 0 %; the same stored networks as validation.
+- **T4, sealed test `tab:rq3-ablation-sealed`** (`tables/tab_rq3-ablation-sealed.{tex,csv}`; P2). Coverage per list of Full, Restart, NoRepair and OneShot on the same sealed targets, with n; training pass rates and LLM calls are T4's. Random grids: Full 91.3 ± 7.3 %, Restart 77.0 ± 12.0 %, NoRepair 85.7 ± 5.9 %, OneShot 76.2 ± 4.7 %; families: 89.4 ± 9.8, 75.0 ± 28.6, 71.8 ± 36.0, 43.1 ± 43.1 %; Pac-Man 0 % for all four (Restart: 1 of 6 checks inconclusive, see Missing); MER across x 100 % except OneShot 0 %; across n Full and NoRepair 100 %, OneShot 33.3 %.
 - **F1 `fig:rq1-size`** (`figures/fig_rq1-size.{pdf,csv}`).
   - Panels: random grids (side length), families (side length), Pac-Man (game length = `MAX_STEPS`), MER across n (number of requests).
   - The dashed line marks the largest training size: 11, 8, 18, 3.
@@ -123,9 +137,9 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
   - (c) Library search: the episode's certifications before any generation (the current list plus the stored ones). Not applicable for retain.
   - (d) Generation: `run_ablation.py` plus `determinize.py` wall time. It includes the loop's verification, the pick and repair, and LLM latency.
   - LLM calls and tokens (prompt + output) per generation.
-  - The **Defer** row of the extended setting contains the two failed generations (generation columns). Its long certification (192 s) is a Gauss–Seidel fallback check on grid 183.
+  - The **Defer** row of the extended setting contains the two failed generations (generation columns). Its long certification (192 s) is a Gauss–Seidel fallback check on grid 183; the exact re-check confirms it (failed, margin −0.544588562452).
   - Extended sequences ran two at a time (s2 and s3 in one process, overlapping s1), so times include contention.
-- **`rq2-cert-time-by-size.csv`**. Certification time per instance size (side lengths 9-13 occur in the sequences), with number of checks, model-construction time, states, timeouts, inconclusive outcomes and Gauss–Seidel fallbacks. Over all 118 checks: **0 timeouts and 0 inconclusive**. 2 checks fell back to Gauss–Seidel: the same list on grid 183, once per setting, failing by 0.54 both times, so the verdict stands. Median certification time grows from 3.2 s (9x9) to 4.1 s (13x13).
+- **`rq2-cert-time-by-size.csv`**. Certification time per instance size (side lengths 9-13 occur in the sequences), with number of checks, model-construction time, states, timeouts, inconclusive outcomes and Gauss–Seidel fallbacks. Over all 118 checks: **0 timeouts and 0 inconclusive**. 2 checks fell back to Gauss–Seidel: the same list on grid 183, once per setting, failing by 0.54 both times; the exact re-check gives the same verdict and margin (−0.544588562452). The study's other 16 "linear programming" checks (frozen libraries of runs 2 and 3) were Gauss–Seidel too; the re-check confirms all 16 verdicts, so no decision changes. Median certification time grows from 3.2 s (9x9) to 4.1 s (13x13).
 - **`tab_rq2-generation-cost.csv`** (P4; per training set: `-per-set`). Median and range per condition of wall-clock minutes, LLM and PRISM seconds, LLM calls, tokens and dollars. LLM and PRISM seconds are summed over every round of every chain; chains run concurrently, so they overlap each other and can exceed the wall clock. Median per training set: random grids 19.4 min, 56 calls, $0.093; families 11.5 min, 42 calls, $0.063; Pac-Man 21.1 min, 49 calls, $0.098; MER across x 56.1 min, 66 calls, $0.349; across n 53.9 min, 60 calls, $0.370. The sequential study's 5 generations cost $0.36 in total ($0.070, 10.9 min and 42 calls each, median).
 - **F2 `fig:rq2-extension`** (`figures/fig_rq2-extension.{pdf,csv}`). Cumulative generations summed over the 3 sequences, against position (1-12); extended vs frozen; one panel (grid worlds). Per-sequence curves are in the CSV.
 - **T4 `tab:rq3-ablation`** (`tables/tab_rq3-ablation.{tex,csv}`). Validation, core loop. The numbers are in "Restart and OneShot" above.
@@ -174,7 +188,8 @@ Certified coverage of the held-out targets per list, mean ± sd over lists (`tab
 - **T3 (a), feature-computation time.** Features are computed in Python when the model is rendered, and that time is not recorded; only PRISM's model-construction time is. Smallest experiment: time `domain.model()` per check in `sequential.certify`.
 - **T4, NoSP (Full) on the core loop.** `port_ts_noclose` predates the fix. Smallest experiment: `port_ts_history` with `closer` hidden, 3 runs. Families: none.
 - **T4, PassFail and Margins.** Never run on the core loop (no config switch).
-- **Sealed test, Pac-Man (horizons 50 and 100): left out for now (Asher, 2026-10-19).** Not certifiable within limits for any controller: the model is too large to build. A rule list's induced model grows about 3.5x per 5 steps (Full run 1: 2,839 states at horizon 20, 10,054 at 25, 27,103 at 30). At horizon 50, construction was still enumerating states at 1.8-2.8 million when it failed within the 4 GB Java heap; at 100 it timed out at 900 s, for every solver. Baselines are no smaller (PPO needs the bare model). The four checks made (Full runs 1-2, frozen and no-repair) are in `transfer_sealed_pacman_transfer*.csv` as `not_certifiable`. Smallest experiment: one horizon-50 check with a larger heap and timeout, or PRISM's symbolic engine (MTBDD/hybrid); horizon 100 is likely out of reach either way.
+- **Sealed test, Pac-Man Restart run 3 at length 100:** interval iteration stalled and only Gauss–Seidel finished (margin −0.426, 14.1M states), so it counts as inconclusive. Too large for the re-check's direct solve or Storm in memory here. Smallest experiment: interval iteration with a much larger iteration cap on that one check.
+- **Sealed test, Pac-Man RL at length 100 and solvability at 100:** both need the bare game, which does not fit a 22 GB heap (39.2M states reached). Smallest experiment: PRISM's symbolic engine (MTBDD) on the bare game.
 - Sequential studies on Pac-Man and MER, random sequences, synthesis timing, growing-mode libraries and UUV are Rajan's; they are not run here.
 
 ## Previous loop only
@@ -189,9 +204,9 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 
 ## Setup facts
 
-- **PRISM**: 4.10.1, explicit engine by default (`PrismRunner`), 4 GB Java heap per process, at most 8 concurrent PRISM processes for this work.
+- **PRISM**: 4.10.1, explicit engine by default (`PrismRunner`), at most 8 concurrent PRISM processes for this work. Java heap: the configured 4 GB never applied (Windows' `prism.bat` drops `-javamaxmem`); every process ran at Java's default, about 8 GB, except the Oct 21 Pac-Man checks (22 GB via `JAVA_TOOL_OPTIONS`).
   - **Inside the loop** ("fast"): Gauss–Seidel value iteration (`prism.method: gaussseidel`, PRISM's default convergence criterion), falling back to modified policy iteration. This is *not* plain value iteration, which fails on periodic chains.
-  - **Exact checks** (final check of each run's lists, every held-out check in the tables, the sequential study): the certification rule above (`prism.exact_methods: [intervaliter, lp]`, `prism.ii_max_iters`, `prism.lp_tolerance`, `prism.exact_fallback_epsilon`).
+  - **Exact checks** (final check of each run's lists, every held-out check in the tables, the sequential study): the certification rule above (`prism.exact_methods: [intervaliter, lp]`, `prism.ii_max_iters`, `prism.lp_tolerance`, `prism.exact_fallback_epsilon`). Its LP stage ran as Gauss–Seidel; those checks are replaced by the Oct 21 re-check (direct solves with an error bound, Storm 2.0.0 `--exact`).
   - **Timeout**: 900 s per PRISM call (`prism.timeout_s`).
   - **Repair's "fast exact checker"** (`Domain.fast_checker`): a numpy model of the instance giving each requirement's worst-case value of a rule list. Gridworld: `baselines/gridworld_check.GridChecker`; MER and Pac-Man: the PRISM-exported explicit model in `baselines/explicit_mdp.RuleChecker`. Picked lists are re-checked with PRISM.
 - **Loop** (core configs):
@@ -226,7 +241,7 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 - **How held-out instances were generated and checked solvable**:
   - Random grids: `datagen.py` with a BFS check of the ordered goal path. PRISM's joint multi-objective query confirms all 20 `grid_20_large` grids are jointly feasible (`out/results/ceilings/`).
   - Families: `families.py`; each kept family is jointly solvable at every size checked (`docs/experiments.md`).
-  - Pac-Man: optimum 0.5511 ≤ threshold 0.56 at every horizon up to 30.
+  - Pac-Man: optimum 0.5511 ≤ threshold 0.56 at every horizon up to 30, and at 50 (test); unknown at 100 (the bare game does not fit in memory).
   - MER: thresholds are the per-instance optimum −5%, so each is achievable.
 - **Validation vs sealed test**: sealed (`configs/transfer/default.yaml`): `grid_test_large.csv`; family members 15x15-20x20 (ids 36-59, 96-119, 156-179); Pac-Man horizons 50 and 100; MER ids 9-11.
 - **Hardware**: AMD Ryzen 7 9800X3D (8 cores, 16 threads), 31 GB RAM, Windows 11.
@@ -250,18 +265,19 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
 - **E4, a third LLM** (blocked, then dropped): `openai/gpt-6-luna` (provider `openai`, $0.10 / $0.50 per M) and the fallback `openai/gpt-5-mini` both fail every call with HTTP 400: "Invalid schema for response_format 'answer': 'additionalProperties' is required to be supplied and to be false". OpenAI's strict structured output needs `additionalProperties: false` in the loop's JSON schema (`core/planner.py` `rule_schema`), a code change.
 - **E5, PassFail**: skipped: not a config switch (`planner.feedback` is `blame | table | failures`; `table` is the results table, closer to Margins).
 
-## In progress (2026-10-19 evening)
+## Open
 
-- **P2** (sealed test set): done for every controller except RL (PPO), OneShot and Pac-Man (left out, see Missing): `transfer_sealed_*.csv`, `--unseal`, the certification rule above. PPO needs the validation networks, which are not stored.
-- **P5**: families panel, Full done and drawn (F3); then the MER panel under the fixed rule, the Restart arms, the OneShot point and the equal-spend counts. The random-grids panel last.
+- **P5**: the MER panel of F3 is still the loop solver's checks; the Restart arms on families, the K-chains axis and the random-grids panel are not drawn.
 - **A7** (effect sizes) and **A5** (replication package): not started.
 
-## Changed since last regeneration
+## Changed since last regeneration (Oct 21, against the Oct 20 commit)
 
-Against this morning's tables (loop solver's checks), moves of more than 0.5 points:
+Every change comes from the re-check (above) or the new Pac-Man test cells:
 
-- **T4, families NoRepair: 68.3 → 67.8 %.** One check (run 2, crossing list, target 95) is inconclusive: LP's margin is 0.00038, inside its 1e-3 band; the loop solver had it certified.
-- **T1, RL: random grids 68.8 → 66.7 → 69.8 %, families 63.3 → 61.1 → 61.7 %.** RL is the mean over seeds 0-2. The last values are the networks retrained on 2026-10-20 and kept (`nets.pt`), which the test checks use too.
-- **T2, seed library of core run 3 (new block):** 28 → 30 of 36 served when rerun under the certification rule (2 timeouts and 5 inconclusive checks under interval iteration alone had deferred episodes). The library of run 2 is unchanged (31 of 36).
-- **Unchanged:** every Full row of T1 and T4 (random grids 92.7 %, families 87.2 %, Pac-Man 66.7 %, MER 100 %), the permissive column, and every DT and Hand row. Interval iteration alone had left the crossing-family lists of core runs 2 and 3 inconclusive (families would have read 69.4 %); linear programming settles all 72 of those checks.
-- **New rows:** Restart on random grids, families and Pac-Man; OneShot everywhere (both above).
+- **T1 validation, RL:** random grids 69.8 → 70.8 %, families 61.7 → 61.1 %.
+- **T1 sealed:** random grids Full 91.1 → 91.3 % (core run 2, list 3 on test grid 6: failed → certified); families RL 64.8 → 60.2 %.
+- **T4 validation, families:** Restart 73.3 → 71.7 %; NoRepair 67.8 → 68.3 % (its one inconclusive check, run 2 list 1 on target 95, is certified by 3.7e-4).
+- **T4 sealed, families:** Restart 75.5 → 75.0 %.
+- **New:** the Pac-Man test cells of T1 and T4 (0 % everywhere) and `tab_pacman-narrowing.csv`; Pac-Man in `tab_setup-feasibility.csv` (no test instance witnessed by a certified controller).
+- **Unchanged:** every other Full row (validation random grids 92.7 %, families 87.2 %, Pac-Man 66.7 %, MER 100 %; sealed families 89.4 %, MER 100 %), every DT and Hand row, and T2/T3 (the RQ2 decisions; all 18 of its fallback checks are confirmed).
+- **Removed:** three stale Pac-Man check files from the 8 GB-heap attempts (`transfer_sealed50_pacman_transfer.csv`; `transfer_sealed_pacman_transfer_norepair.csv` of runs 1-2, NoRepair with `any` open, which no table reads).

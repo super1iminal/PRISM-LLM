@@ -108,7 +108,7 @@ def runs_of(name: str, root: str = "core") -> List[Path]:
 
 # ---------------------------------------------------------------- RQ1: per (controller, held-out target) outcomes
 
-CHECKS = "exact"   # exact: src/recertify.py's verdicts, interval iteration with linear programming where it stalls
+CHECKS = "exact"   # exact: src/recertify.py's verdicts (interval iteration; where it stalls, RECHECKS' verdicts)
                    # (transfer_exact_*.csv, `recertify.py combine`; Asher, Oct 19); ii / lp: one method each; gs: the
                    # loop solver's
 
@@ -145,6 +145,37 @@ def baseline_csv(config: str, rules: str = "final", dataset: Optional[str] = Non
     return path.with_name(f"transfer_{Path(dataset).stem}{suffix}.csv")
 
 
+# Direct-solve re-check of every check interval iteration did not decide (Oct 21): PRISM 4.10.1 runs Gauss-Seidel
+# where `-lp` is asked for, so the rule's "linear programming" verdicts had no error bound. One row per such check.
+RECHECKS = RESULTS / "exact_recheck" / "rechecks.csv"
+_rechecks: Optional[Dict] = None
+
+
+def apply_rechecks(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """`df` (a recertify.py CSV at `path`) with each check interval iteration did not decide given the direct-solve
+    verdict of RECHECKS, or made inconclusive where there is none (only Gauss-Seidel finished)."""
+    global _rechecks
+    if "solver" not in df or "outcome" not in df:
+        return df
+    if _rechecks is None:
+        r = pd.read_csv(RECHECKS) if RECHECKS.exists() else pd.DataFrame(columns=["file", "source", "target"])
+        r = r[r.outcome.isin(["certified", "failed"])] if len(r) else r
+        _rechecks = {(f, str(s), int(t)): (o, m) for f, s, t, o, m in
+                     zip(r.file, r.source, r.target, r.get("outcome", []), r.get("margin", []))}
+    file = path.resolve().relative_to(ROOT).as_posix()
+    df = df.copy()
+    fallback = df.solver.notna() & (df.solver != "interval iteration") & df.outcome.isin(
+        ["certified", "failed", "inconclusive"])
+    for i in df.index[fallback]:
+        verdict = _rechecks.get((file, str(df.at[i, "source"]), int(df.at[i, "target"])))
+        df.at[i, "outcome"], df.at[i, "solver"] = (verdict[0], "direct solve") if verdict else ("inconclusive",
+                                                                                               df.at[i, "solver"])
+        if verdict:
+            df.at[i, "margin"] = verdict[1]
+    df["certified"] = df.outcome == "certified"
+    return df
+
+
 def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[List[str]] = None,
              source_groups: Optional[Dict[str, str]] = None, kind: Optional[str] = None) -> pd.DataFrame:
     """One row per (rule list or controller, held-out target) of a transfer CSV (`path` as src/transfer.py names it;
@@ -156,7 +187,7 @@ def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[
         if path is not None:
             print(f"  missing: {path.relative_to(ROOT)}")
         return pd.DataFrame()
-    df = pd.read_csv(path)
+    df = apply_rechecks(pd.read_csv(path), path)
     df["source"] = df.source.astype(str)
     if sources is not None:
         df = df[df.source.isin(sources)]
@@ -298,14 +329,15 @@ def share(value) -> str:
     return "--" if value is None or pd.isna(value) else f"${100 * value:.1f}$"
 
 
-# Benchmarks the sealed table leaves out, and why (RESULTS-NOTES, Missing)
-SEALED_LEFT_OUT = {"pacman": "models at horizons 50 and 100 cannot be built within 4 GB and 900 s"}
+# Benchmarks the sealed table leaves out, and why (RESULTS-NOTES, Missing). Pac-Man was until Oct 21: its rule-list
+# models at lengths 50 and 100 build (0.8M and 14M states); the side analysis of the bare game did not.
+SEALED_LEFT_OUT: Dict[str, str] = {}
 
 
 def rq1_sealed_table(data: Dict[str, pd.DataFrame]) -> None:
     """T1 on the sealed test targets (P2), in the validation table's layout, with the number of controllers (n) per
     cell: a cell is only what has been checked so far, and a benchmark or controller with no sealed checks is left
-    out (Pac-Man's models at horizons 50 and 100 cannot be built, RESULTS-NOTES)."""
+    out."""
     benches = [b for b in RQ1_BENCHES if b not in SEALED_LEFT_OUT]
     table = coverage_table(data, benches, APPROACHES).assign(split="sealed test", checks="sealed")
     long = table.melt(id_vars=["bench", "approach", "split", "checks"], var_name="metric").dropna(subset=["value"])
@@ -435,6 +467,7 @@ def rq1_size_figure(data: Dict[str, pd.DataFrame], sealed: Optional[Dict[str, pd
 # results where src/ceilings.py (or a subset run of its query) wrote them
 FEASIBILITY = {"grids": ("grid_test_large.csv", "0-41", "gridworld_grid_test_large.csv"),
                "families": ("families_v0.csv", "36-59,96-119,156-179", "gridworld_families_v0_test.csv"),
+               "pacman": ("pacman_transfer.csv", "10-11", None),
                "mer": ("mer_transfer.csv", "9-11", None), "mer_n": ("mer_n_transfer.csv", "9-11", None)}
 
 
@@ -451,7 +484,7 @@ def solvability() -> None:
         witnesses: Dict[int, set] = {i: set() for i in wanted}
         files = [f for f in RESULTS.rglob(f"transfer_sealed_{stem}*.csv") if "_sonnet" not in str(f)]
         for f in files:
-            df = pd.read_csv(f)
+            df = apply_rechecks(pd.read_csv(f), f)
             if "outcome" not in df:
                 continue
             ok = df[(df.outcome == "certified") & df.target.isin(wanted)]
@@ -890,7 +923,7 @@ def oneshot_calls(run: Path) -> float:
 def rq3_sealed_table() -> None:
     """T4 on the sealed test targets (P2): certified coverage per list of Full, Restart, NoRepair and OneShot, with the number
     of lists (a configuration whose runs are not all checked is left out). Training pass rates and LLM calls are the
-    validation table's (they do not depend on the targets). Pac-Man is left out (SEALED_LEFT_OUT)."""
+    validation table's (they do not depend on the targets)."""
     rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Inconclusive (\%) & $n$ \\"]
     for bench, title in RQ3_BENCHES.items():
         if bench in SEALED_LEFT_OUT:
@@ -899,8 +932,9 @@ def rq3_sealed_table() -> None:
         cfg = load_config(b.base)
         dataset = SEALED[bench].get("dataset") or b.dataset or cfg.domain.dataset
         sb = sealed_bench(b)
-        configs = {"Full": (runs_of(b.base), "determinized"),
-                   "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], "determinized"),
+        frozen = "final" if bench == "pacman" else "determinized"     # Pac-Man: the narrowed lists, as in T1
+        configs = {"Full": (runs_of(b.base), frozen),
+                   "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], frozen),
                    "NoRepair": (runs_of(b.base), "norepair_determinized"),
                    "OneShot": (runs_of(b.base), "oneshot")}
         block = []
@@ -921,6 +955,26 @@ def rq3_sealed_table() -> None:
             tex += [r"\midrule", rf"\multicolumn{{4}}{{l}}{{\emph{{{title}}}}} \\"] + block
     tex.append(r"\bottomrule")
     write_table("tab_rq3-ablation-sealed", tex, rows)
+
+
+def pacman_narrowing() -> None:
+    """Pac-Man's core lists with and without the narrowing the loop added (`& !(xP = 3 & yP = 4)`, removed by the
+    night-of-Oct-21 script; <run>/unnarrowed.json): certified held-out targets per list, validation and sealed test.
+    `tab_pacman-narrowing.csv`."""
+    b = EXP.spec["benchmarks"]["pacman"]
+    dataset = b.dataset or load_config(b.base).domain.dataset
+    stem = Path(dataset).stem
+    rows = []
+    for run in runs_of(b.base):
+        for split, bench, kind in (("validation", b, None), ("sealed test", sealed_bench(b), "sealed")):
+            for lists, name in (("narrowed", f"transfer_{stem}.csv"), ("unnarrowed", f"transfer_{stem}_unnarrowed.csv")):
+                cov = per_list(outcomes(run / name, bench, lists, run.name, kind=kind))
+                rows += [{"run": run.name, "split": split, "lists": lists, "list": r.list, "certified": r.certified,
+                          "targets": r.targets} for r in cov.itertuples(index=False)]
+    df = pd.DataFrame(rows)
+    df.to_csv(OUT / "tables" / "tab_pacman-narrowing.csv", index=False)
+    print(df.pivot_table(index=["split", "run"], columns="lists", values="certified", aggfunc="sum").to_string())
+    print("wrote tables/tab_pacman-narrowing.csv")
 
 
 def rq3_tables() -> None:
@@ -1147,6 +1201,7 @@ def main(argv=None):
     rq3_tables()
     rq3_sealed_table()
     rq3_budget_figure()
+    pacman_narrowing()
 
 
 if __name__ == "__main__":

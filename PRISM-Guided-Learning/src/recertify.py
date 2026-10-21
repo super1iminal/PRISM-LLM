@@ -95,7 +95,7 @@ def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]
         for name, args in solvers:
             try:
                 runner = PrismRunner(exact, extra_args=args)
-                v, solver = run_now(verifier.verify_steps(policy, analysis=False, runner=runner)), name
+                v, solver = check_policy(verifier, policy, runner), name
                 break
             except (PrismError, subprocess.TimeoutExpired) as e:
                 v, solver = None, None
@@ -105,11 +105,23 @@ def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]
             rows.append({**row, "outcome": "not_certifiable", "certified": False, "seconds": seconds,
                          "error": " | ".join(errors)})
             continue
-        stdout = getattr(v.result, "stdout", "") or ""
-        rows.append({**summarize(row, spec, v.worst, solver, cfg.prism), "seconds": seconds,
+        worst, result = v
+        stdout = getattr(result, "stdout", "") or ""
+        rows.append({**summarize(row, spec, worst, solver, cfg.prism), "seconds": seconds,
                      "model_seconds": sum(float(x) for x in MODEL_TIME.findall(stdout)),
-                     "states": len(v.result.states), "error": " | ".join(errors)})
+                     "states": len(result.states), "error": " | ".join(errors)})
     return rows
+
+
+def check_policy(verifier: PolicyVerifier, policy, runner: PrismRunner):
+    """Each requirement's worst case of `policy` on the verifier's instance, by `runner`, and PRISM's result: the
+    model check `PolicyVerifier.verify_steps` makes, without its analysis of the bare model (`forced_states_steps`,
+    which finds the states where the policy has no choice for the loop's feedback). Certification needs only the
+    composed model, and the bare model can be far larger (Pac-Man: 14M states at length 50 against 0.8M composed)."""
+    reqs = verifier.spec.requirements
+    props = verifier._properties([lambda r: r.worst_op()], vectors=False)
+    result = run_now(runner.run_steps(verifier.compose(policy), props, export_transitions=False))
+    return {r.name: result.initial_values[i] for i, r in enumerate(reqs)}, result
 
 
 def certify_explicit(domain, cfg, instance, policies_of) -> List[dict]:
