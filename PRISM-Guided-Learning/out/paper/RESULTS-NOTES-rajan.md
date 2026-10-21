@@ -6,13 +6,51 @@ names the checklist gives. Rows Asher merges into his own tables carry `.rajan` 
 coverage is counted exactly as in T1/T4. **Every number is a validation result.** No sealed instance is read or built:
 `src/transfer.py`'s guard refuses them, and every pool below is validation-only.
 
-Status (Fir run of Oct 19-20, 2026; branch `fir-harness`, Slurm job records in `out/cluster/jobs/`):
-- **Done:** items 1, 2, 4 and 5; item 3 for GPT-6 Luna (all 5 conditions) and for Gemini 3.8 Flash on random grids,
-  families and Pac-Man; item 6 in frozen mode. Their runs, checks and tables are committed.
-- **Not done:** Gemini on both MER benchmarks failed every call (Blocked), and item 6's growing mode crashed (fixed,
-  to rerun). Their failed outputs are not committed.
+Status (Fir runs of Oct 19-21, 2026; branch `fir-harness`; Slurm job records in `out/cluster/jobs/`, Slurm
+accounting in `out/cluster/sacct.csv`):
+- **Done:** items 1-6, with their runs, checks and tables committed:
+  - item 3 for both models on all 5 core conditions. Gemini's MER conditions were rerun on Oct 21 with the schema fix
+    (Blocked, resolved).
+  - item 6 in frozen and growing mode. Growing mode was rerun on Oct 21 after the fix.
 - **Not started:** item 7 waits on Asher; item 8 is last.
 - Item 1 verdict check: 228 of the list checks have an Asher verdict for the same list and instance, and none differs.
+
+## Results in brief (validation)
+
+- **Item 1.** Synthesis, the joint query on the bare MDP:
+  - grid worlds: a median of 29-327 s per instance, against 2-3 s to certify a stored list (15-100×);
+  - Pac-Man: about the same as certification up to length 20; 153 s at length 30 (8.3M states, 85×);
+  - 4 of 80 grid-world queries timed out at 900 s (family members 26, 31, 35 and 155; sizes 12-14), and 75 of the
+    rest were jointly feasible.
+- **Item 2.** The three seed libraries serve 114, 115 and 113 of 120 episodes. Library 3 switches 35 times, against
+  12 and 11.
+- **Item 3.** Frozen coverage, mean over lists:
+
+  | Benchmark | GPT-6 Luna | Gemini 3.8 Flash |
+  |---|---|---|
+  | Random grids | 86.5% | 91.7% |
+  | Families | 76.1% | 92.2% |
+  | Pac-Man | 61.1% | 66.7% |
+  | MER across x and n | 100% | 100% |
+
+  - No check was inconclusive or timed out.
+  - Spend (OpenRouter's reported cost): Luna $2.91; Gemini $79.38, mostly reasoning tokens.
+- **Item 4.**
+  - Frozen mode served 35 and 33 of 36 episodes; growing mode served 35 and 36.
+  - In r02, the 3 generated lists then served 9 later episodes, but frozen mode also served each of those. So the
+    count the checklist asks for (episodes frozen mode defers and growing mode serves with an earlier-generated list)
+    is 0 in both sequences.
+  - In r01, the one generation attempted was not certified.
+- **Item 5.** Growing mode with libraries 2 and 3 served 35 of 36 episodes each, with 4 generations attempted per
+  library.
+- **Item 6.**
+  - Frozen mode, as expected from RQ1: the stored lists certify lengths 8-20, and every episode at length 25 or 30 is
+    deferred (served 9, 6 and 8 of 12).
+  - Growing mode made 13 generation attempts, all at length 25 or 30, and **none was certified**. Smallest margins:
+    -0.161 to -0.166 at length 25 (5 attempts), -0.163 to -0.277 at length 30 (8 attempts). The stored lists miss by
+    -0.130 and -0.175.
+  - So growing mode served exactly what frozen mode served. 824 Haiku calls, $1.68.
+  - Each attempt's verdict and margin: `tab_rq2-pacman-generations.rajan.csv`.
 
 ## Setup
 
@@ -206,7 +244,8 @@ committed before any episode ran (rule 7).
 
 ## Blocked
 
-- **Item 3, Gemini 3.8 Flash on MER: cause found and fixed by config (Oct 20); rerun on Fir.**
+- **Resolved: item 3, Gemini 3.8 Flash on MER.** Cause found and fixed by config (Oct 20); rerun on Fir on Oct 21:
+  6 runs, no failed call, certified.
   - Failure: every call of `port_mer_gemini` and `port_mer_n_gemini` failed with HTTP 400 from Google AI Studio,
     "Request contains an invalid argument" (24 calls per condition, 0 tokens).
   - Diagnosis, one request per variant (rejected requests cost nothing):
@@ -222,7 +261,7 @@ committed before any episode ran (rule 7).
     re-ask, the training set was solved in round 1, final rules written; $0.065. `port_mer_n_gemini` sends the
     identical schema.
   - Diagnosis and smoke spend: about $0.08.
-- **Item 6, growing mode: fixed (Oct 20); rerun on Fir.** It crashed at the first deferral: `sequential.py` sorted
+- **Resolved: item 6, growing mode.** Fixed (Oct 20); rerun on Fir on Oct 21, all 3 sequences complete. It crashed at the first deferral: `sequential.py` sorted
   the closest list's training instances by grid size `n`, which Pac-Man instances lack (`None`). Instances without a
   size now keep their order; grid worlds are unchanged. The frozen runs are unaffected.
   - Local checks, Oct 20:
