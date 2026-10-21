@@ -7,7 +7,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$here/config.sh"
 out="$REPO_DIR/PRISM-Guided-Learning/out/cluster"
 # Job ids from submissions.csv, read as CSV (older rows can span lines: a multi-line command in their args)
-ids=$(python3 -c "import csv,sys; print(','.join(r['job_id'] for r in csv.DictReader(open(sys.argv[1])) if r['job_id'].isdigit()))" \
+ids=$(python3 -c "import csv,sys; print(','.join(r['job_id'] for r in csv.DictReader(open(sys.argv[1])) if (r.get('job_id') or '').isdigit()))" \
       "$out/submissions.csv")
 [ -n "$ids" ] || { echo "no submissions recorded"; exit 0; }
 sacct -j "$ids" -P --units=G \
