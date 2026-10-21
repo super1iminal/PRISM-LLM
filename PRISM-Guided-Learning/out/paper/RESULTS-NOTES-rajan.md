@@ -6,12 +6,12 @@ names the checklist gives. Rows Asher merges into his own tables carry `.rajan` 
 coverage is counted exactly as in T1/T4. **Every number is a validation result.** No sealed instance is read or built:
 `src/transfer.py`'s guard refuses them, and every pool below is validation-only.
 
-Status (Fir runs of Oct 19-21, 2026; branch `fir-harness`; Slurm job records in `out/cluster/jobs/`, Slurm
+Status (Fir runs of Oct 19-20, 2026, Pacific time; branch `fir-harness`; Slurm job records in `out/cluster/jobs/`, Slurm
 accounting in `out/cluster/sacct.csv`):
 - **Done:** items 1-6, with their runs, checks and tables committed:
-  - item 3 for both models on all 5 core conditions. Gemini's MER conditions were rerun on Oct 21 with the schema fix
+  - item 3 for both models on all 5 core conditions. Gemini's MER conditions were rerun on Oct 20 with the schema fix
     (Blocked, resolved).
-  - item 6 in frozen and growing mode. Growing mode was rerun on Oct 21 after the fix.
+  - item 6 in frozen and growing mode. Growing mode was rerun on Oct 20 after the fix.
 - **Not started:** item 7 waits on Asher; item 8 is last.
 - Item 1 verdict check: 228 of the list checks have an Asher verdict for the same list and instance, and none differs.
 
@@ -244,7 +244,7 @@ committed before any episode ran (rule 7).
 
 ## Blocked
 
-- **Resolved: item 3, Gemini 3.8 Flash on MER.** Cause found and fixed by config (Oct 20); rerun on Fir on Oct 21:
+- **Resolved: item 3, Gemini 3.8 Flash on MER.** Cause found and fixed by config (Oct 20); rerun on Fir on the afternoon of Oct 20:
   6 runs, no failed call, certified.
   - Failure: every call of `port_mer_gemini` and `port_mer_n_gemini` failed with HTTP 400 from Google AI Studio,
     "Request contains an invalid argument" (24 calls per condition, 0 tokens).
@@ -261,7 +261,7 @@ committed before any episode ran (rule 7).
     re-ask, the training set was solved in round 1, final rules written; $0.065. `port_mer_n_gemini` sends the
     identical schema.
   - Diagnosis and smoke spend: about $0.08.
-- **Resolved: item 6, growing mode.** Fixed (Oct 20); rerun on Fir on Oct 21, all 3 sequences complete. It crashed at the first deferral: `sequential.py` sorted
+- **Resolved: item 6, growing mode.** Fixed (Oct 20); rerun on Fir on the afternoon of Oct 20, all 3 sequences complete. It crashed at the first deferral: `sequential.py` sorted
   the closest list's training instances by grid size `n`, which Pac-Man instances lack (`None`). Instances without a
   size now keep their order; grid worlds are unchanged. The frozen runs are unaffected.
   - Local checks, Oct 20:
