@@ -289,9 +289,78 @@ def item3_ablation(exp) -> None:
         note("items 3/7: no NoRepair or Restart checks of the other LLMs yet")
 
 
+# ---------------------------------------------------------------- item 8: the UUV family's coverage block
+
+UUV_DATA = "uuv_family_v0"
+UUV_TRAIN = {0, 6, 10}                    # domains/uuv/data/uuv_family_v0.csv split == train
+UUV_METHODS = [                           # (row, kind, where): kind run = core runs, baseline = a baseline config
+    ("Full (Haiku 5.5)", "run", "ablations/port_uuv"),
+    ("DT-raw", "baseline", "uuv_tree_raw"),
+    ("DT-voc", "baseline", "uuv_tree_features"),
+    ("RL", "baseline", "uuv_ppo_features"),
+    ("Hand", "baseline", "uuv_hand"),
+]
+
+
+def uuv_checks(kind: str, where: str, frozen: bool) -> pd.DataFrame:
+    """Every (list, held-out target) check of one method under rule 2 (transfer_exact_*.csv), one row each."""
+    frames = []
+    if kind == "run":
+        suffix = "_determinized" if frozen else ""
+        for run in pr.runs_of(where.split("/")[1], where.split("/")[0]):
+            path = run / f"transfer_exact_{UUV_DATA}{suffix}.csv"
+            if path.exists():
+                frames.append(pd.read_csv(path).assign(list=lambda d, r=run.name: r + "/" + d.source.astype(str)))
+    else:
+        path = RESULTS / "baselines" / where / f"transfer_exact_{UUV_DATA}.csv"
+        if path.exists():
+            frames.append(pd.read_csv(path).assign(list=lambda d: d.source.astype(str)))
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    return df[~df.target.isin(UUV_TRAIN)]
+
+
+def item8() -> None:
+    rows, tex = [], [r"\toprule", r"Controller & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) \\",
+                     r"\midrule", r"\multicolumn{5}{l}{\emph{UUV family (27 held-out members)}} \\"]
+    for name, kind, where in UUV_METHODS:
+        entry = {"bench": "uuv", "approach": name, "split": "validation", "checks": "exact"}
+        for label, frozen in (("frozen", True), ("permissive", False)):
+            if kind == "baseline" and not frozen:
+                continue                   # one action per state (trees, PPO) or as written (Hand): frozen = permissive
+            df = uuv_checks(kind, where, frozen)
+            if df.empty:
+                continue
+            per = df.groupby("list").agg(coverage=("certified", "mean"), targets=("target", "count"),
+                                         certified=("certified", "sum"))
+            st = pr.stats(per.coverage)
+            entry.update({f"{label}_mean": st["mean"], f"{label}_sd": st["sd"], f"{label}_n": st["n"],
+                          f"{label}_certified_per_list": per.certified.mean(),
+                          f"{label}_targets_per_list": per.targets.mean()})
+            if frozen:
+                entry.update(inconclusive_share=(df.outcome == "inconclusive").mean(),
+                             timeout_share=(df.outcome == "not_certifiable").mean(),
+                             failing_on=df[df.outcome != "certified"].binding.value_counts().to_dict())
+        if kind == "baseline" and "frozen_mean" in entry:
+            entry.update({k.replace("frozen", "permissive"): v for k, v in entry.items() if k.startswith("frozen")})
+        if "frozen_mean" not in entry:
+            note(f"item 8: no checks for {name} yet")
+            continue
+        rows.append(entry)
+        tex.append(f"{name} & {pr.pct(entry.get('permissive_mean'), entry.get('permissive_sd'), pr.count(entry.get('permissive_n')))}"
+                   f" & {pr.pct(entry['frozen_mean'], entry['frozen_sd'], pr.count(entry['frozen_n']))}"
+                   f" & {pr.share(entry.get('inconclusive_share'))} & {pr.share(entry.get('timeout_share'))} \\\\")
+    if rows:
+        pr.write_table("tab_rq1-coverage-uuv", tex + [r"\bottomrule"], rows)
+        for r in rows:
+            print(f"  {r['approach']:18s} frozen {100 * r['frozen_mean']:.1f}% (n={r['frozen_n']}), "
+                  f"{r['frozen_certified_per_list']:.2f} of {r['frozen_targets_per_list']:.0f} per list")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--items", nargs="+", type=int, default=[1, 2, 3, 4, 5, 6, 7])
+    p.add_argument("--items", nargs="+", type=int, default=[1, 2, 3, 4, 5, 6, 7, 8])
     a = p.parse_args(argv)
     TABLES.mkdir(parents=True, exist_ok=True)
     exp = None
@@ -300,7 +369,7 @@ def main(argv=None):
         pr.EXP = exp
     for item in a.items:
         print(f"== item {item}")
-        {1: item1, 2: item2, 4: item4, 5: item5, 6: item6}.get(item, lambda: None)()
+        {1: item1, 2: item2, 4: item4, 5: item5, 6: item6, 8: item8}.get(item, lambda: None)()
         if item == 3:
             item3(exp)
         if item in (3, 7) and item == max(i for i in a.items if i in (3, 7)):
