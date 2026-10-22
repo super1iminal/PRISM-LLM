@@ -95,7 +95,7 @@ def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]
         for name, args in solvers:
             try:
                 runner = PrismRunner(exact, extra_args=args)
-                v, solver = run_now(verifier.verify_steps(policy, analysis=False, runner=runner)), name
+                v, solver = check_policy(verifier, policy, runner), name
                 break
             except (PrismError, subprocess.TimeoutExpired) as e:
                 v, solver = None, None
@@ -105,11 +105,23 @@ def certify_rules(domain, cfg, instance, sources: Dict[str, list]) -> List[dict]
             rows.append({**row, "outcome": "not_certifiable", "certified": False, "seconds": seconds,
                          "error": " | ".join(errors)})
             continue
-        stdout = getattr(v.result, "stdout", "") or ""
-        rows.append({**summarize(row, spec, v.worst, solver, cfg.prism), "seconds": seconds,
+        worst, result = v
+        stdout = getattr(result, "stdout", "") or ""
+        rows.append({**summarize(row, spec, worst, solver, cfg.prism), "seconds": seconds,
                      "model_seconds": sum(float(x) for x in MODEL_TIME.findall(stdout)),
-                     "states": len(v.result.states), "error": " | ".join(errors)})
+                     "states": len(result.states), "error": " | ".join(errors)})
     return rows
+
+
+def check_policy(verifier: PolicyVerifier, policy, runner: PrismRunner):
+    """Each requirement's worst case of `policy` on the verifier's instance, by `runner`, and PRISM's result: the
+    model check `PolicyVerifier.verify_steps` makes, without its analysis of the bare model (`forced_states_steps`,
+    which finds the states where the policy has no choice for the loop's feedback). Certification needs only the
+    composed model, and the bare model can be far larger (Pac-Man: 14M states at length 50 against 0.8M composed)."""
+    reqs = verifier.spec.requirements
+    props = verifier._properties([lambda r: r.worst_op()], vectors=False)
+    result = run_now(runner.run_steps(verifier.compose(policy), props, export_transitions=False))
+    return {r.name: result.initial_values[i] for i, r in enumerate(reqs)}, result
 
 
 def certify_explicit(domain, cfg, instance, policies_of) -> List[dict]:
@@ -185,7 +197,7 @@ def write(df: pd.DataFrame, out: Path) -> None:
 
 
 def run_cmd(args) -> None:
-    cfg = load_run_config(args.run_dir)
+    cfg = with_prism(load_run_config(args.run_dir), args.prism)
     if cfg.rules.early_narrow:   # narrowings name places with numbers (as transfer.py)
         cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
@@ -210,17 +222,52 @@ def run_cmd(args) -> None:
     write(df, args.run_dir / f"{args.prefix or prefix_of(cfg)}_{Path(dataset).stem}{suffix}.csv")
 
 
+FITTED = ("nets", "scale", "ids")      # what a fitted network baseline (baselines/ppo.py) needs to act again
+
+
+def save_fit(baseline, path: Path) -> None:
+    """The fitted networks of `baseline` (and what their observations need), for `--nets` to load them later."""
+    import torch
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({k: getattr(baseline, k) for k in FITTED if getattr(baseline, k, None) is not None}, path)
+    print(f"saved {path}", flush=True)
+
+
+def torch_load(path) -> dict:
+    import torch
+    return torch.load(path, weights_only=False)
+
+
+def with_prism(cfg, overrides: List[str]):
+    """`cfg` with PRISM settings overridden by `key=value` strings (e.g. max_concurrent=12, java_max_mem=12g)."""
+    if not overrides:
+        return cfg
+    values = {}
+    for item in overrides:
+        key, _, value = item.partition("=")
+        current = getattr(cfg.prism, key)
+        values[key] = type(current)(value) if current is not None and not isinstance(current, str) else value
+    return replace(cfg, prism=replace(cfg.prism, **values))
+
+
 def baseline_cmd(args) -> None:
     settings = load_file(args.config, BaselineConfig, args.set)
     target_dataset = settings.target_dataset or settings.dataset
     guard_sealed(target_dataset, parse_ids(settings.targets), args.unseal)
-    cfg = load_config(settings.condition)
+    cfg = with_prism(load_config(settings.condition), args.prism)
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = {int(i.id): i for i in domain.load_instances(settings.dataset)}
     train = parse_ids(settings.train) if settings.train else []
     baseline = load_method(settings.method)(domain, settings.params)
     baseline.config = cfg
-    baseline.fit([instances[i] for i in train])
+    if args.nets and Path(args.nets).exists():      # the networks of an earlier fit, so other targets use the same ones
+        for key, value in torch_load(args.nets).items():
+            setattr(baseline, key, value)
+        print(f"loaded {args.nets}", flush=True)
+    else:
+        baseline.fit([instances[i] for i in train])
+        if args.nets:
+            save_fit(baseline, Path(args.nets))
     same = Path(target_dataset).name == Path(settings.dataset).name
     pool_of = instances if same else {int(i.id): i for i in domain.load_instances(target_dataset)}
     targets = [pool_of[i] for i in parse_ids(settings.targets)]
@@ -325,11 +372,14 @@ def main(argv=None):
     b.add_argument("config", type=Path)
     b.add_argument("--rules", choices=["final", "open"], default="final")
     b.add_argument("--set", action="append", default=[], help="Baseline config override key=value")
+    b.add_argument("--nets", default=None, help="Fitted networks: loaded if the file exists, else fitted and saved there")
     for p in (r, b):
         p.add_argument("--workers", type=int, default=2)
         p.add_argument("--prefix", default=None, help="Output file prefix (default transfer_exact; transfer_sealed "
                        "for the test pass)")
         p.add_argument("--unseal", action="store_true", help="Allow sealed test targets (the test pass only)")
+        p.add_argument("--prism", action="append", default=[],
+                       help="PRISM setting override key=value (e.g. max_concurrent=12, java_max_mem=12g, timeout_s=3600)")
         p.add_argument("--source-targets", default=None,
                        help="JSON, source -> its own target ids (e.g. each family's list on its family only)")
     args = parser.parse_args(argv)

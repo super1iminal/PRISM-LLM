@@ -108,7 +108,7 @@ def runs_of(name: str, root: str = "core") -> List[Path]:
 
 # ---------------------------------------------------------------- RQ1: per (controller, held-out target) outcomes
 
-CHECKS = "exact"   # exact: src/recertify.py's verdicts, interval iteration with linear programming where it stalls
+CHECKS = "exact"   # exact: src/recertify.py's verdicts (interval iteration; where it stalls, RECHECKS' verdicts)
                    # (transfer_exact_*.csv, `recertify.py combine`; Asher, Oct 19); ii / lp: one method each; gs: the
                    # loop solver's
 
@@ -145,6 +145,37 @@ def baseline_csv(config: str, rules: str = "final", dataset: Optional[str] = Non
     return path.with_name(f"transfer_{Path(dataset).stem}{suffix}.csv")
 
 
+# Direct-solve re-check of every check interval iteration did not decide (Oct 21): PRISM 4.10.1 runs Gauss-Seidel
+# where `-lp` is asked for, so the rule's "linear programming" verdicts had no error bound. One row per such check.
+RECHECKS = RESULTS / "exact_recheck" / "rechecks.csv"
+_rechecks: Optional[Dict] = None
+
+
+def apply_rechecks(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """`df` (a recertify.py CSV at `path`) with each check interval iteration did not decide given the direct-solve
+    verdict of RECHECKS, or made inconclusive where there is none (only Gauss-Seidel finished)."""
+    global _rechecks
+    if "solver" not in df or "outcome" not in df:
+        return df
+    if _rechecks is None:
+        r = pd.read_csv(RECHECKS) if RECHECKS.exists() else pd.DataFrame(columns=["file", "source", "target"])
+        r = r[r.outcome.isin(["certified", "failed"])] if len(r) else r
+        _rechecks = {(f, str(s), int(t)): (o, m) for f, s, t, o, m in
+                     zip(r.file, r.source, r.target, r.get("outcome", []), r.get("margin", []))}
+    file = path.resolve().relative_to(ROOT).as_posix()
+    df = df.copy()
+    fallback = df.solver.notna() & (df.solver != "interval iteration") & df.outcome.isin(
+        ["certified", "failed", "inconclusive"])
+    for i in df.index[fallback]:
+        verdict = _rechecks.get((file, str(df.at[i, "source"]), int(df.at[i, "target"])))
+        df.at[i, "outcome"], df.at[i, "solver"] = (verdict[0], "direct solve") if verdict else ("inconclusive",
+                                                                                               df.at[i, "solver"])
+        if verdict:
+            df.at[i, "margin"] = verdict[1]
+    df["certified"] = df.outcome == "certified"
+    return df
+
+
 def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[List[str]] = None,
              source_groups: Optional[Dict[str, str]] = None, kind: Optional[str] = None) -> pd.DataFrame:
     """One row per (rule list or controller, held-out target) of a transfer CSV (`path` as src/transfer.py names it;
@@ -156,7 +187,7 @@ def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[
         if path is not None:
             print(f"  missing: {path.relative_to(ROOT)}")
         return pd.DataFrame()
-    df = pd.read_csv(path)
+    df = apply_rechecks(pd.read_csv(path), path)
     df["source"] = df.source.astype(str)
     if sources is not None:
         df = df[df.source.isin(sources)]
@@ -198,6 +229,8 @@ def rq1_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
     for name, bench in spec["benchmarks"].items():
         if name not in RQ1_BENCHES and (sealed or name not in EXTRA_BENCHES):
             continue
+        if sealed and name in SEALED_LEFT_OUT:
+            continue
         cfg = load_config(bench.base)
         dataset = bench.dataset or cfg.domain.dataset
         other = None
@@ -223,7 +256,17 @@ def rq1_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
             opened = baseline_csv(config, "open", other)
             permissive.append(outcomes(opened if checked(opened, kind).exists() else baseline_csv(config, dataset=other),
                                        bench, approach, "", src["sources"], src["source_groups"], kind=kind))
+            if approach == "RL" and name in RL_SEEDS:     # P8: more PPO seeds per training set on the grid worlds
+                for seed in RL_SEEDS[name]:
+                    extra = config.replace(".yaml", f"_seed{seed}.yaml")
+                    for part in (frozen, permissive):     # one action per state: both columns coincide
+                        part.append(outcomes(baseline_csv(extra, dataset=other), bench, approach, f"seed{seed}",
+                                             src["sources"], src["source_groups"], kind=kind))
     return {"frozen": pd.concat(frozen, ignore_index=True), "permissive": pd.concat(permissive, ignore_index=True)}
+
+
+# P8: PPO on the grid worlds with these seeds besides seed 0 (configs/baselines/ppo_features_*_seed<k>.yaml)
+RL_SEEDS = {"grids": [1, 2], "families": [1, 2]}
 
 
 def llm_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
@@ -286,6 +329,35 @@ def share(value) -> str:
     return "--" if value is None or pd.isna(value) else f"${100 * value:.1f}$"
 
 
+# Benchmarks the sealed table leaves out, and why (RESULTS-NOTES, Missing). Pac-Man was until Oct 21: its rule-list
+# models at lengths 50 and 100 build (0.8M and 14M states); the side analysis of the bare game did not.
+SEALED_LEFT_OUT: Dict[str, str] = {}
+
+
+def rq1_sealed_table(data: Dict[str, pd.DataFrame]) -> None:
+    """T1 on the sealed test targets (P2), in the validation table's layout, with the number of controllers (n) per
+    cell: a cell is only what has been checked so far, and a benchmark or controller with no sealed checks is left
+    out."""
+    benches = [b for b in RQ1_BENCHES if b not in SEALED_LEFT_OUT]
+    table = coverage_table(data, benches, APPROACHES).assign(split="sealed test", checks="sealed")
+    long = table.melt(id_vars=["bench", "approach", "split", "checks"], var_name="metric").dropna(subset=["value"])
+    tex = [r"\toprule", r"Controller & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) & $n$ \\"]
+    for bench, title in RQ1_BENCHES.items():
+        b = table[table.bench == bench]
+        if b.empty:
+            continue
+        best = {k: b[f"{k}_mean"].max() for k in ("permissive", "frozen")}
+        tex += [r"\midrule", rf"\multicolumn{{6}}{{l}}{{\emph{{{title}}}}} \\"]
+        for _, r in b.iterrows():
+            cells = [pct(r.get(f"{k}_mean"), r.get(f"{k}_sd"), count(r.get(f"{k}_n")),
+                         bold=not pd.isna(r.get(f"{k}_mean")) and np.isclose(r[f"{k}_mean"], best[k]))
+                     for k in ("permissive", "frozen")]
+            tex.append(f"{r.approach} & {cells[0]} & {cells[1]} & {share(r.get('inconclusive_share'))} & "
+                       f"{share(r.timeout_share)} & {count(r.get('frozen_n'))} \\\\")
+    tex.append(r"\bottomrule")
+    write_table("tab_rq1-coverage-sealed", tex, long.to_dict("records"))
+
+
 def rq1_tables(data: Dict[str, pd.DataFrame], llms: Dict[str, pd.DataFrame]) -> None:
     table = coverage_table(data, list(RQ1_BENCHES) + list(EXTRA_BENCHES), APPROACHES)
     table["llm"] = np.where(table.approach == "Full", "anthropic/claude-haiku-5.5", "")
@@ -321,34 +393,59 @@ def rq1_tables(data: Dict[str, pd.DataFrame], llms: Dict[str, pd.DataFrame]) -> 
     write_table("tab_rq1-coverage-llm", tex, long.to_dict("records"))
 
 
-def rq1_size_figure(data: Dict[str, pd.DataFrame]) -> None:
-    """Certified coverage per held-out size: Full's permissive lists (Pac-Man: its frozen lists, which have no
-    permissive form), each baseline's permissive controller (= frozen where it has one action per state)."""
-    df = pd.concat([data["permissive"], data["frozen"][(data["frozen"].bench == "pacman")
-                                                      & (data["frozen"].approach == "Full")]])
+def _size_controllers(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """The controllers the size figure draws: Full's permissive lists (Pac-Man: its frozen lists, which have no
+    permissive form) and each baseline's permissive controller (= frozen where it has one action per state)."""
+    return pd.concat([data["permissive"], data["frozen"][(data["frozen"].bench == "pacman")
+                                                         & (data["frozen"].approach == "Full")]])
+
+
+def rq1_size_figure(data: Dict[str, pd.DataFrame], sealed: Optional[Dict[str, pd.DataFrame]] = None) -> None:
+    """Certified coverage per held-out size (`_size_controllers`). With `sealed`, the sealed test targets are drawn
+    too, in the same colours with hollow markers and dotted lines, and the sizes beyond the largest validation size
+    are shaded."""
+    splits = {"validation": _size_controllers(data)}
+    if sealed is not None:
+        splits["sealed test"] = _size_controllers(sealed)
     rows = []
     fig, axes = plt.subplots(1, len(SIZE), figsize=(7.16, 2.1), sharey=True)
     for ax, (bench, (column, xlabel, largest)) in zip(axes, SIZE.items()):
-        b = df[df.bench == bench]
-        sizes = _sizes(bench, column)
-        b = b.assign(size=b.target.map(sizes))
-        span = max(b["size"].max(), largest) - min(b["size"].min(), largest)
-        for k, approach in enumerate(APPROACHES):
-            a = b[b.approach == approach]
-            if a.empty:
+        biggest_val = None
+        for split, df in splits.items():
+            b = df[df.bench == bench]
+            if b.empty:
                 continue
-            by_list = a.groupby(["size", "list"]).certified.mean().reset_index()
-            curve = by_list.groupby("size").certified.agg(["mean", "std", "count"]).reset_index()
-            st = STYLE[approach]
-            dodge = (k - 2) * 0.012 * span          # small horizontal offsets so coinciding lines stay visible
-            ax.plot(curve["size"] + dodge, curve["mean"], color=st["color"], marker=st["marker"], ls=st["ls"], lw=1.2,
-                    ms=4.5, mfc="none" if approach != "Full" else st["color"], label=approach)
-            rows += [{"bench": bench, "approach": approach, "size": s, "coverage_mean": m, "coverage_sd": sd,
-                      "n_lists": c, "targets_per_size": int(a[a["size"] == s].target.nunique()),
-                      "controller": "frozen" if (bench == "pacman" and approach == "Full") else "permissive",
-                      "split": "validation"}
-                     for s, m, sd, c in curve.itertuples(index=False)]
+            sizes = _sizes(bench, column, sealed=split != "validation")
+            b = b.assign(size=b.target.map(sizes))
+            if split == "validation":
+                biggest_val = b["size"].max()
+            span = max(b["size"].max(), largest) - min(b["size"].min(), largest)
+            for k, approach in enumerate(APPROACHES):
+                a = b[b.approach == approach]
+                if a.empty:
+                    continue
+                by_list = a.groupby(["size", "list"]).certified.mean().reset_index()
+                curve = by_list.groupby("size").certified.agg(["mean", "std", "count"]).reset_index()
+                st = STYLE[approach]
+                dodge = (k - 2) * 0.012 * span          # small horizontal offsets so coinciding lines stay visible
+                test = split != "validation"
+                ax.plot(curve["size"] + dodge, curve["mean"], color=st["color"], marker=st["marker"],
+                        ls=":" if test else st["ls"], lw=1.0 if test else 1.2, ms=4.5,
+                        mfc="none" if (approach != "Full" or test) else st["color"],
+                        alpha=0.75 if test else 1.0, label=None if test else approach)
+                rows += [{"bench": bench, "approach": approach, "size": s, "coverage_mean": m, "coverage_sd": sd,
+                          "n_lists": c, "targets_per_size": int(a[a["size"] == s].target.nunique()),
+                          "controller": "frozen" if (bench == "pacman" and approach == "Full") else "permissive",
+                          "split": split}
+                         for s, m, sd, c in curve.itertuples(index=False)]
+        if sealed is not None and biggest_val is not None:
+            right = max((r["size"] for r in rows if r["bench"] == bench), default=biggest_val)
+            if right > biggest_val:
+                ax.axvspan(biggest_val, right, color="#e4e3df", alpha=0.5, lw=0, zorder=0)
         ax.axvline(largest, color="#444444", ls=(0, (4, 3)), lw=0.8)
+        if sealed is not None and bench == "mer_n":       # test sizes reach n = 100
+            ax.set_xscale("log")
+            ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
         ax.set_xlabel(xlabel)
         ax.set_title(RQ1_BENCHES[bench], fontsize=8)
         ax.set_ylim(-0.05, 1.05)
@@ -357,16 +454,78 @@ def rq1_size_figure(data: Dict[str, pd.DataFrame]) -> None:
             ax.spines[side].set_visible(False)
     axes[0].set_ylabel("certified coverage (fraction)")
     handles, labels = axes[1].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=5, frameon=False, bbox_to_anchor=(0.5, 1.1))
+    if sealed is not None:
+        handles.append(matplotlib.lines.Line2D([], [], color="#444444", ls=":", marker="o", mfc="none", lw=1.0))
+        labels.append("test (sealed)")
+    fig.legend(handles, labels, loc="upper center", ncol=len(labels), frameon=False, bbox_to_anchor=(0.5, 1.1))
     fig.tight_layout()
     save_figure(fig, "fig_rq1-size")
     pd.DataFrame(rows).to_csv(OUT / "figures" / "fig_rq1-size.csv", index=False)
 
 
-def _sizes(bench: str, column: str) -> Dict[int, float]:
+# Sealed test instances per benchmark for the solvability table: (dataset, ids), and the multi-objective query's
+# results where src/ceilings.py (or a subset run of its query) wrote them
+FEASIBILITY = {"grids": ("grid_test_large.csv", "0-41", "gridworld_grid_test_large.csv"),
+               "families": ("families_v0.csv", "36-59,96-119,156-179", "gridworld_families_v0_test.csv"),
+               "pacman": ("pacman_transfer.csv", "10-11", None),
+               "mer": ("mer_transfer.csv", "9-11", None), "mer_n": ("mer_n_transfer.csv", "9-11", None)}
+
+
+def solvability() -> None:
+    """Setup: is every sealed test instance solvable? Two sources. (1) A witness: a controller of any method certified
+    on the instance under the certification rule meets every threshold at once, which proves joint feasibility.
+    (2) PRISM's multi-objective query on the bare MDP (src/ceilings.py), where it was run; its "false" is
+    contradicted by a witness on some instances, so it is reported but not relied on. `tab_setup-feasibility.csv`:
+    one row per instance; a summary per benchmark is printed."""
+    rows = []
+    for bench, (dataset, ids, query_csv) in FEASIBILITY.items():
+        stem = Path(dataset).stem
+        wanted = set(parse_ids(ids))
+        witnesses: Dict[int, set] = {i: set() for i in wanted}
+        files = [f for f in RESULTS.rglob(f"transfer_sealed_{stem}*.csv") if "_sonnet" not in str(f)]
+        for f in files:
+            df = apply_rechecks(pd.read_csv(f), f)
+            if "outcome" not in df:
+                continue
+            ok = df[(df.outcome == "certified") & df.target.isin(wanted)]
+            for t, s in zip(ok.target, ok.source.astype(str)):
+                witnesses[int(t)].add(f"{f.parent.relative_to(RESULTS)}/{f.name}:{s}")
+        query = {}
+        if query_csv and (RESULTS / "ceilings" / query_csv).exists():
+            q = pd.read_csv(RESULTS / "ceilings" / query_csv)
+            key = "instance" if "instance" in q else q.columns[0]
+            query = dict(zip(q[key].astype(int), q.jointly_feasible))
+        for i in sorted(wanted):
+            rows.append({"bench": bench, "dataset": dataset, "instance": i, "witnesses": len(witnesses[i]),
+                         "witnessed": bool(witnesses[i]), "joint_query": query.get(i), "split": "sealed test"})
+    df = pd.DataFrame(rows)
+    df.to_csv(OUT / "tables" / "tab_setup-feasibility.csv", index=False)
+    for bench, g in df.groupby("bench", sort=False):
+        q = g.joint_query.dropna().astype(str)
+        print(f"  solvability {bench}: {int(g.witnessed.sum())}/{len(g)} witnessed by a certified controller; "
+              f"joint query: {q.value_counts().to_dict() if len(q) else 'not run'}")
+    print("wrote tables/tab_setup-feasibility.csv")
+
+
+def rq1_by_family(data: Dict[str, pd.DataFrame], sealed: Dict[str, pd.DataFrame]) -> None:
+    """Families: certified coverage of every controller per family, validation and sealed test (frozen controllers,
+    each list on its own family). `tab_rq1-by-family.csv`."""
+    rows = []
+    for split, d in (("validation", data["frozen"]), ("sealed test", sealed["frozen"])):
+        f = d[d.bench == "families"]
+        for (approach, group), g in f.groupby(["approach", "group"]):
+            lists = g.groupby("list").certified.mean()
+            rows.append({"approach": approach, "family": group, "split": split, "coverage_mean": lists.mean(),
+                         "coverage_sd": lists.std(ddof=1) if len(lists) > 1 else np.nan, "n_lists": len(lists),
+                         "targets_per_list": g.groupby("list").size().mean()})
+    pd.DataFrame(rows).to_csv(OUT / "tables" / "tab_rq1-by-family.csv", index=False)
+    print("wrote tables/tab_rq1-by-family.csv")
+
+
+def _sizes(bench: str, column: str, sealed: bool = False) -> Dict[int, float]:
     exp_bench = EXP.spec["benchmarks"][bench]
     cfg = load_config(exp_bench.base)
-    dataset = exp_bench.dataset or cfg.domain.dataset
+    dataset = (SEALED[bench].get("dataset") if sealed else None) or exp_bench.dataset or cfg.domain.dataset
     data = pd.read_csv(ROOT / "domains" / cfg.domain.name / "data" / dataset)
     return data[column].to_dict()
 
@@ -662,7 +821,9 @@ def controller_sizes() -> None:
 # $ per M prompt and output tokens, as OpenRouter lists them on 2026-10-19 (provider pinned)
 PRICES = {"anthropic/claude-haiku-5.5": (0.10, 0.50), "anthropic/claude-sonnet-5.5": (2.00, 10.00),
           "openai/gpt-6-luna": (0.10, 0.50)}
-OTHER_LLMS = {"Sonnet 5.5": "_sonnet", "GPT-6 Luna": "_luna"}     # condition suffixes of the other LLMs' core runs
+# Condition suffixes of the other LLMs' core runs, e.g. {"Sonnet 5.5": "_sonnet"}. Empty for now (Asher, Oct 19): the
+# Sonnet 5.5 runs (ablations/port_*_sonnet) are incomplete and out of the tables; GPT-6 Luna never ran (strict schema).
+OTHER_LLMS: Dict[str, str] = {}
 
 
 def generation_cost(study: str) -> None:
@@ -748,6 +909,74 @@ def calls_per_set(run: Path) -> float:
     return sum(it.get("llm_calls") or 0 for r in records.values() for it in r.get("iterations", [])) / len(records)
 
 
+def oneshot_csv(run: Path, dataset: str) -> Path:
+    """src/oneshot.py's checks of a run (named as a transfer CSV, so `checked` maps it to the current rule's file)."""
+    return run / f"transfer_{Path(dataset).stem}_oneshot.csv"
+
+
+def oneshot_calls(run: Path) -> float:
+    """LLM calls per training set of OneShot's answer: its round's calls (1, plus any re-asks)."""
+    data = json.loads((run / "oneshot.json").read_text(encoding="utf-8"))
+    return float(np.mean([e.get("llm_calls") or 1 for e in data.values()]))
+
+
+def rq3_sealed_table() -> None:
+    """T4 on the sealed test targets (P2): certified coverage per list of Full, Restart, NoRepair and OneShot, with the number
+    of lists (a configuration whose runs are not all checked is left out). Training pass rates and LLM calls are the
+    validation table's (they do not depend on the targets)."""
+    rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Inconclusive (\%) & $n$ \\"]
+    for bench, title in RQ3_BENCHES.items():
+        if bench in SEALED_LEFT_OUT:
+            continue
+        b = EXP.spec["benchmarks"][bench]
+        cfg = load_config(b.base)
+        dataset = SEALED[bench].get("dataset") or b.dataset or cfg.domain.dataset
+        sb = sealed_bench(b)
+        frozen = "final" if bench == "pacman" else "determinized"     # Pac-Man: the narrowed lists, as in T1
+        configs = {"Full": (runs_of(b.base), frozen),
+                   "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], frozen),
+                   "NoRepair": (runs_of(b.base), "norepair_determinized"),
+                   "OneShot": (runs_of(b.base), "oneshot")}
+        block = []
+        for name, (runs, rules) in configs.items():
+            path_of = (lambda r: oneshot_csv(r, dataset)) if rules == "oneshot" else                 (lambda r, rules=rules: csv_path(r, dataset, rules))
+            if not runs or not all(checked(path_of(r), "sealed").exists() for r in runs):
+                continue
+            cov = per_list(pd.concat([outcomes(path_of(r), sb, name, r.name, kind="sealed") for r in runs]))
+            c = stats(cov.coverage)
+            rows += [{"bench": bench, "configuration": name, "metric": m, "value": v, "split": "sealed test",
+                      "runs": len(runs)}
+                     for m, v in (("coverage_mean", c["mean"]), ("coverage_sd", c["sd"]), ("coverage_n", c["n"]),
+                                  ("certified_per_list", cov.certified.mean()), ("targets_per_list", cov.targets.mean()),
+                                  ("inconclusive_share", cov.inconclusive.mean()), ("timeout_share", cov.timeout.mean()))]
+            block.append(f"{name} & {pct(c['mean'], c['sd'], c['n'])} & {share(cov.inconclusive.mean())} & "
+                         f"{c['n']} \\\\")
+        if block:
+            tex += [r"\midrule", rf"\multicolumn{{4}}{{l}}{{\emph{{{title}}}}} \\"] + block
+    tex.append(r"\bottomrule")
+    write_table("tab_rq3-ablation-sealed", tex, rows)
+
+
+def pacman_narrowing() -> None:
+    """Pac-Man's core lists with and without the narrowing the loop added (`& !(xP = 3 & yP = 4)`, removed by the
+    night-of-Oct-21 script; <run>/unnarrowed.json): certified held-out targets per list, validation and sealed test.
+    `tab_pacman-narrowing.csv`."""
+    b = EXP.spec["benchmarks"]["pacman"]
+    dataset = b.dataset or load_config(b.base).domain.dataset
+    stem = Path(dataset).stem
+    rows = []
+    for run in runs_of(b.base):
+        for split, bench, kind in (("validation", b, None), ("sealed test", sealed_bench(b), "sealed")):
+            for lists, name in (("narrowed", f"transfer_{stem}.csv"), ("unnarrowed", f"transfer_{stem}_unnarrowed.csv")):
+                cov = per_list(outcomes(run / name, bench, lists, run.name, kind=kind))
+                rows += [{"run": run.name, "split": split, "lists": lists, "list": r.list, "certified": r.certified,
+                          "targets": r.targets} for r in cov.itertuples(index=False)]
+    df = pd.DataFrame(rows)
+    df.to_csv(OUT / "tables" / "tab_pacman-narrowing.csv", index=False)
+    print(df.pivot_table(index=["split", "run"], columns="lists", values="certified", aggfunc="sum").to_string())
+    print("wrote tables/tab_pacman-narrowing.csv")
+
+
 def rq3_tables() -> None:
     rows, tex = [], [r"\toprule", r"Configuration & Certified coverage (\%) & Training pass rate (\%) & LLM calls per set \\"]
     for bench, title in RQ3_BENCHES.items():
@@ -757,16 +986,19 @@ def rq3_tables() -> None:
         frozen = "final" if bench == "pacman" else "determinized"     # Pac-Man: the narrowed lists, as in T1
         configs = {"Full": (runs_of(b.base), frozen, False),
                    "Restart": (runs_of(RESTARTS[bench], "ablations") if bench in RESTARTS else [], frozen, False),
-                   "NoRepair": (runs_of(b.base), "norepair_determinized", True)}
+                   "NoRepair": (runs_of(b.base), "norepair_determinized", True),
+                   "OneShot": (runs_of(b.base), "oneshot", False)}
         block = []
         for name, (runs, rules, norepair) in configs.items():
-            if not runs or not all(checked(csv_path(r, dataset, rules)).exists() for r in runs):
+            path_of = (lambda r: oneshot_csv(r, dataset)) if rules == "oneshot" else                 (lambda r, rules=rules: csv_path(r, dataset, rules))
+            if not runs or not all(checked(path_of(r)).exists() for r in runs):
                 continue
-            cov = pd.concat([outcomes(csv_path(r, dataset, rules), b, name, r.name) for r in runs])
+            cov = pd.concat([outcomes(path_of(r), b, name, r.name) for r in runs])
             cov = per_list(cov)
-            passed = [x for r in runs for x in members_passed(r, norepair)]
+            # OneShot's list was never checked on the training members as the loop ends: no pass rate
+            passed = [] if rules == "oneshot" else [x for r in runs for x in members_passed(r, norepair)]
             c, p = stats(cov.coverage), stats(passed)
-            calls = [calls_per_set(r) for r in runs]
+            calls = [oneshot_calls(r) if rules == "oneshot" else calls_per_set(r) for r in runs]
             rows += [{"bench": bench, "configuration": name, "metric": m, "value": v, "split": "validation",
                       "runs": len(runs)}
                      for m, v in (("coverage_mean", c["mean"]), ("coverage_sd", c["sd"]), ("coverage_n", c["n"]),
@@ -830,33 +1062,40 @@ def rq3_tables() -> None:
     print("wrote tables/tab_rq3-nosp.csv")
 
 
-def rq3_budget_figure(bench: str = "mer") -> None:
-    """F3: certified coverage of the held-out targets against LLM calls spent per training set, for Full and Restart
-    (src/budget_transfer.py's chain curves: per round budget R, the pick over every chain cut to its first R rounds,
-    `any` resolved). One point per R: the runs' mean calls and mean coverage, the band their range. The dotted line
-    is Restart's mean total spend; the star, Full's value there (each run's last R within that many calls)."""
+# Budget-curve panels: benchmark -> (replay file per run, what checked it). MER's replay predates the fixed rule.
+# Budget-curve panels: name -> (benchmark, replay file per run, what checked it, sealed test targets). MER's replay
+# predates the fixed rule. A panel is drawn only where its files exist.
+BUDGET_PANELS = {"mer": ("mer", "budget_transfer_chains.csv", "loop solver", False),
+                 "families": ("families", "budget_ii_rounds.csv", "fixed rule", False),
+                 "families_test": ("families", "budget_ii_sealed_rounds.csv", "fixed rule", True)}
+
+
+def _budget_arm(panel: str, runs: List[Path], name: str) -> Optional[pd.DataFrame]:
+    """Per (run, training set, round budget R): LLM calls spent and held-out targets certified, from each run's replay
+    file (BUDGET_PANELS); None unless every run has one."""
+    bench, file, _, sealed = BUDGET_PANELS[panel]
     b = EXP.spec["benchmarks"][bench]
-    arms = {"Full": runs_of(b.base), "Restart": runs_of(RESTARTS[bench], "ablations")}
-    tables = {}
-    for name, runs in arms.items():
-        per_run = []
-        for r in runs:
-            path = r / "budget_transfer_chains.csv"
-            if not path.exists():
-                return print(f"skipped fig_rq3-budget: no {path.relative_to(ROOT)}")
-            df = pd.read_csv(path)
-            df = df[df.target.isin(held_out(b)) & ~df.trained.astype(bool)]
-            df["certified"] = df.certified.fillna(False).astype(bool)
-            per_run.append(df.groupby(["source", "round"]).agg(
-                calls=("llm_calls", "first"), certified=("certified", "sum"), targets=("target", "size"),
-                solved=("solved", "first"), picked_from=("picked_from", "first")).reset_index().assign(run=r.name))
-        tables[name] = pd.concat(per_run, ignore_index=True)
-    rows = []
-    for name, t in tables.items():
-        rows += [{"arm": name, "run": r.run, "source": r.source, "round": r.round, "llm_calls": r.calls,
-                  "certified": r.certified, "targets": r.targets, "coverage": r.certified / r.targets,
-                  "solved_training": r.solved, "picked_from": r.picked_from, "bench": bench, "split": "validation"}
-                 for r in t.itertuples(index=False)]
+    b = sealed_bench(b) if sealed else b
+    if not runs or not all((r / file).exists() for r in runs):
+        return None
+    per_run = []
+    for r in runs:
+        df = pd.read_csv(r / file)
+        df = df[df.target.isin(held_out(b)) & ~df.trained.astype(bool)]
+        df["certified"] = df.certified.fillna(False).astype(bool)
+        per_run.append(df.groupby(["source", "round"]).agg(
+            calls=("llm_calls", "first"), certified=("certified", "sum"), targets=("target", "size"),
+            solved=("solved", "first"), picked_from=("picked_from", "first")).reset_index().assign(run=r.name, arm=name))
+    return pd.concat(per_run, ignore_index=True)
+
+
+def rq3_budget_figure() -> None:
+    """F3: certified coverage of the held-out targets against LLM calls spent per training set, one panel per
+    benchmark in BUDGET_PANELS: Full and, where its replays exist, Restart (per round budget R, the run's pick with
+    repair over every chain cut to its first R rounds, `any` resolved; src/budget_transfer.py chain mode or
+    src/budget_ii.py). One point per R: the runs' mean calls and mean coverage, the band their range. Where Restart is
+    drawn, the dotted line is its mean total spend and the star Full's value there (each run's last R within that many
+    calls). The diamond is OneShot: the first answer of chain 0, frozen, no selection or repair (1 call)."""
 
     def at(t: pd.DataFrame, budget: float) -> pd.Series:
         """Per run: the coverage of its last round within `budget` calls (mean over its training sets)."""
@@ -866,37 +1105,68 @@ def rq3_budget_figure(bench: str = "mer") -> None:
             out[run] = (within.certified / within.targets).mean() if len(within) == g.source.nunique() else np.nan
         return pd.Series(out)
 
-    restart_spend = tables["Restart"].sort_values("round").groupby(["run", "source"]).calls.last().mean()
-    top = max(t.calls.max() for t in tables.values())
-    fig, ax = plt.subplots(figsize=(3.5, 2.3))
-    for name, t in tables.items():        # one point per round budget R: mean calls and coverage over runs
-        r = t.assign(coverage=t.certified / t.targets).groupby("round").agg(
-            calls=("calls", "mean"), mean=("coverage", "mean"), lo=("coverage", "min"), hi=("coverage", "max"))
-        st = STYLE[name]
-        ax.plot(r.calls, r["mean"], color=st["color"], marker=st["marker"], ls=st["ls"], lw=1.2, ms=4,
-                mfc="none" if name != "Full" else st["color"], label=name)
-        ax.fill_between(r.calls, r.lo, r.hi, color=st["color"], alpha=0.12, lw=0)
-    full_there = at(tables["Full"], restart_spend)
-    ax.axvline(restart_spend, color="#444444", ls=":", lw=0.8)
-    ax.plot([restart_spend], [full_there.mean()], marker="*", color=STYLE["Full"]["color"], ms=9, ls="none")
-    ax.annotate(f"Full at Restart's\nspend: {full_there.mean():.2f}", (restart_spend, full_there.mean()),
-                xytext=(restart_spend - 4, 0.12), ha="right", fontsize=7,
-                arrowprops=dict(arrowstyle="-", color="#444444", lw=0.6))
-    rows.append({"arm": "Full at Restart's spend", "llm_calls": restart_spend, "coverage": full_there.mean(),
-                 "coverage_min": full_there.min(), "coverage_max": full_there.max(), "runs": len(full_there),
-                 "bench": bench, "split": "validation"})
-    restart_end = at(tables["Restart"], top)
-    rows.append({"arm": "Restart at its spend", "llm_calls": restart_spend, "coverage": restart_end.mean(),
-                 "coverage_min": restart_end.min(), "coverage_max": restart_end.max(), "runs": len(restart_end),
-                 "bench": bench, "split": "validation"})
-    ax.set_xlabel("LLM calls spent (per training set)")
-    ax.set_ylabel("certified coverage (fraction)")
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_xlim(left=0)
-    ax.grid(axis="y", color="#e4e3df", lw=0.6)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    ax.legend(frameon=False, loc="upper left")
+    panels = {}
+    for panel, (bench, _, _, _) in BUDGET_PANELS.items():
+        b = EXP.spec["benchmarks"][bench]
+        arms = {"Full": _budget_arm(panel, runs_of(b.base), "Full"),
+                "Restart": _budget_arm(panel, runs_of(RESTARTS[bench], "ablations"), "Restart")
+                if bench in RESTARTS else None}
+        arms = {k: v for k, v in arms.items() if v is not None}
+        if "Full" in arms:
+            panels[panel] = arms
+    if not panels:
+        return print("skipped fig_rq3-budget: no replay files")
+    rows = []
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.5 * len(panels), 2.3), squeeze=False)
+    for ax, (panel, arms) in zip(axes[0], panels.items()):
+        bench, _, checks, sealed = BUDGET_PANELS[panel]
+        split = "sealed test" if sealed else "validation"
+        b = EXP.spec["benchmarks"][bench]
+        for name, t in arms.items():
+            rows += [{"bench": bench, "arm": name, "run": r.run, "source": r.source, "round": r.round,
+                      "llm_calls": r.calls, "certified": r.certified, "targets": r.targets,
+                      "coverage": r.certified / r.targets, "solved_training": r.solved, "picked_from": r.picked_from,
+                      "checks": checks, "split": split, "panel": panel} for r in t.itertuples(index=False)]
+            r = t.assign(coverage=t.certified / t.targets).groupby("round").agg(
+                calls=("calls", "mean"), mean=("coverage", "mean"), lo=("coverage", "min"), hi=("coverage", "max"))
+            st = STYLE[name]
+            ax.plot(r.calls, r["mean"], color=st["color"], marker=st["marker"], ls=st["ls"], lw=1.2, ms=4,
+                    mfc="none" if name != "Full" else st["color"], label=name)
+            ax.fill_between(r.calls, r.lo, r.hi, color=st["color"], alpha=0.12, lw=0)
+        if "Restart" in arms:
+            spend = arms["Restart"].sort_values("round").groupby(["run", "source"]).calls.last().mean()
+            full_there, restart_end = at(arms["Full"], spend), at(arms["Restart"], arms["Restart"].calls.max())
+            ax.axvline(spend, color="#444444", ls=":", lw=0.8)
+            ax.plot([spend], [full_there.mean()], marker="*", color=STYLE["Full"]["color"], ms=9, ls="none")
+            ax.annotate(f"Full at Restart's\nspend: {full_there.mean():.2f}", (spend, full_there.mean()),
+                        xytext=(spend * 0.6, 0.12), ha="right", fontsize=7,
+                        arrowprops=dict(arrowstyle="-", color="#444444", lw=0.6))
+            for arm, v in (("Full at Restart's spend", full_there), ("Restart at its spend", restart_end)):
+                rows.append({"bench": bench, "arm": arm, "llm_calls": spend, "coverage": v.mean(),
+                             "coverage_min": v.min(), "coverage_max": v.max(), "runs": len(v), "checks": checks,
+                             "split": split, "panel": panel})
+        cfg = load_config(b.base)
+        dataset = (SEALED[bench].get("dataset") if sealed else None) or b.dataset or cfg.domain.dataset
+        kind, tb = ("sealed", sealed_bench(b)) if sealed else (None, b)
+        shots = [r for r in runs_of(b.base) if checked(oneshot_csv(r, dataset), kind).exists()]
+        if shots:
+            cov = per_list(pd.concat([outcomes(oneshot_csv(r, dataset), tb, "OneShot", r.name, kind=kind)
+                                      for r in shots]))
+            calls = float(np.mean([oneshot_calls(r) for r in shots]))
+            ax.plot([calls], [cov.coverage.mean()], marker="D", color="#444444", ms=5, ls="none", label="OneShot")
+            rows.append({"bench": bench, "arm": "OneShot", "llm_calls": calls, "coverage": cov.coverage.mean(),
+                         "coverage_min": cov.coverage.min(), "coverage_max": cov.coverage.max(), "runs": len(shots),
+                         "checks": CHECKS, "split": split, "panel": panel})
+        ax.set_title(RQ3_BENCHES[bench] + (" (test)" if sealed else "") +
+                     ("" if checks == "fixed rule" else " (loop solver)"), fontsize=8)
+        ax.set_xlabel("LLM calls spent (per training set)")
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlim(left=0)
+        ax.grid(axis="y", color="#e4e3df", lw=0.6)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        ax.legend(frameon=False, loc="lower right", fontsize=7)
+    axes[0][0].set_ylabel("certified coverage (fraction)")
     fig.tight_layout()
     save_figure(fig, "fig_rq3-budget")
     pd.DataFrame(rows).to_csv(OUT / "figures" / "fig_rq3-budget.csv", index=False)
@@ -918,14 +1188,20 @@ def main(argv=None):
     EXP = experiment(RQ1_SPEC)
     data = rq1_outcomes(EXP)
     rq1_tables(data, llm_outcomes(EXP))
-    rq1_size_figure(data)
+    sealed = rq1_outcomes(EXP, sealed=True)
+    rq1_sealed_table(sealed)
+    rq1_size_figure(data, sealed)
+    rq1_by_family(data, sealed)
+    solvability()
     rq1_misses(data)
     rq2_tables(sequential(args.study), args.episodes)
     rq2_episodes(args.study)
     generation_cost(args.study)
     controller_sizes()
     rq3_tables()
+    rq3_sealed_table()
     rq3_budget_figure()
+    pacman_narrowing()
 
 
 if __name__ == "__main__":
