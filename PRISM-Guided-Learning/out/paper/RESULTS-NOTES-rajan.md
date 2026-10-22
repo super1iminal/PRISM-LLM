@@ -292,7 +292,13 @@ Evidence: `out/paper/rajan/item8/`.
   - Plumbing smoke test with the free model (Nemotron, schema in the prompt, 1 chain × 2 rounds): passed. 2 calls; the
     answers use the vocabulary; rounds, pick, final and determinized lists all run.
   - **Waiting:** the Haiku 5.5 smoke test and three full runs need the paid key.
-  - **Waiting:** the Haiku 5.5 smoke test, then 3 full runs on Fir (`checklist.sh item8-full`).
+  - **Haiku 5.5 smoke test: passed** (local, Oct 22; `port_uuv` on its training set, cut to 1 chain × 2 rounds;
+    `cluster/checks/smoke_report.py`).
+    - 3 calls, all finish reason `stop`, all served by Anthropic; $0.0053.
+    - One invalid answer named the state codes as numbers (`s = 4`), which the general rule language rejects. The
+      re-ask with that error came back valid, naming the constants (`s = START_SEARCH`, `good_visib`).
+    - The final list passes 2 of the 3 training members after 2 rounds.
+  - **Next:** the 3 full runs on Fir (`checklist.sh item8-full`).
 - **Checkpoint 5, the baselines: implemented and tested** (Rajan, Oct 22: modified option A).
   - *Objective.* The trees and PPO learn "done within the deadline and no thruster failure", `F "goal"` with
     "goal" = done & t <= D & ok. It is evaluated on the product of the model with the step counter and the failure
