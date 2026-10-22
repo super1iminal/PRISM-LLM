@@ -229,8 +229,8 @@ committed before any episode ran (rule 7).
 - **Start only when both hold:** Asher confirms E1 shows a difference, and that model's Full families runs are
   certified.
 
-**8. UUV family.** In progress past the freeze (Rajan, Oct 22: continue), so not in the SEAMS draft's tables.
-Checkpoints 1-3 pass; checkpoint 4 waits on the paid key; the baselines' training targets need a decision (below).
+**8. UUV family. Complete** (past the freeze, Rajan, Oct 22: continue; so not in the SEAMS draft's tables unless
+Asher takes it). Checkpoints 1-5 pass; the coverage block is `tab_rq1-coverage-uuv.{tex,csv}`.
 Evidence: `out/paper/rajan/item8/`.
 - **Checkpoint 1 passes**, from the model alone. `domains/uuv/model.prism.j2` exposes constants that change size and
   structure:
@@ -298,7 +298,31 @@ Evidence: `out/paper/rajan/item8/`.
     - One invalid answer named the state codes as numbers (`s = 4`), which the general rule language rejects. The
       re-ask with that error came back valid, naming the constants (`s = START_SEARCH`, `good_visib`).
     - The final list passes 2 of the 3 training members after 2 rounds.
-  - **Next:** the 3 full runs on Fir (`checklist.sh item8-full`).
+  - **Full runs** (Fir, Oct 22, job `item8-full`, 30 min): 3 runs of `port_uuv`.
+    - 61-75 calls each, no failed call, $0.43 in all.
+    - Runs 1 and 3 solve their training set; run 2's list passes members 0 and 10 but not 6.
+- **Checkpoint 5 passes: the UUV block** `tab_rq1-coverage-uuv.{tex,csv}`.
+  - Validation: the 27 held-out members (ids other than 0, 6, 10), certified under rule 2 (`transfer_exact_*`).
+  - Built by `viz/rajan_results.py --items 8`.
+
+  | Controller | Frozen coverage | n | Certified per list | Misses |
+  |---|---|---|---|---|
+  | Full (Haiku 5.5) | 91.4% ± 2.1 | 3 runs | 24.67 of 27 | runs 1 and 3: w7_i12, w7_i14 (safety); run 2: w8_i10, w8_i12, w8_i14 (energy) |
+  | DT-raw | 55.6% | 1 tree | 15 of 27 | 12 members, all on safety |
+  | DT-voc | 0.0% | 1 tree | 0 of 27 | all, on safety |
+  | RL (PPO, our features) | 92.6% ± 0.0 | 3 seeds | 25 of 27 | every seed: w7_i12, w7_i14 (safety) |
+  | Hand | 100% | 1 list | 27 of 27 | none (written while building the family; a reference, not blind) |
+
+  - No check was inconclusive or timed out.
+  - Permissive equals frozen: the Haiku lists have no `any` left after the pick; the baselines are deterministic.
+  - **Sizes:** Haiku lists have 5-6 rules. The raw tree has 67 leaves (depth 9), the features tree 11 leaves. PPO is
+    a 5,252-parameter network, certified as one rule per decision state.
+  - **Context:** on all 30 members (from the gate), `always_med` certifies on 26 and `stay` on 25. The family is
+    non-trivial (each simple controller fails somewhere), but simple controllers come close, and the hardest members
+    (w7_i12, w7_i14) are where both Haiku and PPO miss.
+  - The trees learned "done within the deadline and no thruster failure". Even that objective's optimum misses the
+    safety threshold on 2 of 3 training members, which explains their safety misses.
+  - Jobs: `item8-full` (30 min) and `item8-baselines` (2 h 27 min, mostly PPO's 3 × 1M steps), both completed.
 - **Checkpoint 5, the baselines: implemented and tested** (Rajan, Oct 22: modified option A).
   - *Objective.* The trees and PPO learn "done within the deadline and no thruster failure", `F "goal"` with
     "goal" = done & t <= D & ok. It is evaluated on the product of the model with the step counter and the failure
