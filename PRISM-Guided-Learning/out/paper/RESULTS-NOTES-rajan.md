@@ -229,18 +229,35 @@ committed before any episode ran (rule 7).
 - **Start only when both hold:** Asher confirms E1 shows a difference, and that model's Full families runs are
   certified.
 
-**8. UUV family.** Not started; last item.
-- **Checkpoint 1 passes** (from the model alone). `domains/uuv/model.prism.j2` exposes constants that change size and
+**8. UUV family. Stopped at the freeze (Wed Oct 21, 23:59 Toronto) at checkpoint 2.** Not in the paper's tables; what
+was produced goes to the replication package (`out/paper/rajan/item8/`).
+- **Checkpoint 1 passes**, from the model alone. `domains/uuv/model.prism.j2` exposes constants that change size and
   structure:
   - `min_visib` / `max_visib`: the range of `water_visib`;
   - `inspect`: the range of `d_insp`;
   - `infl_tf`.
 
-  Its requirements are properties with thresholds: `no_thruster_failure`, `done_in_time` (`F<=deadline`) and
-  `energy_budget`.
-- **Checkpoint 2 is next.** `done_in_time` is step-bounded, which the LP query cannot decide (T3b). The planned check
-  is a step counter in a copy of the model, so the bound becomes reachability that `multi(...)` with LP accepts. It is
-  to be confirmed on one instance before anything else.
+  Its requirements are properties with thresholds: `no_thruster_failure` (`G`), `done_in_time` (`F<=deadline`) and
+  `energy_budget` (an expected reward until "done").
+- **Checkpoint 2, the replacement check: built and shown exact on one instance; LP result not reached.**
+  - The check is a copy of the model with a step counter (`stepcount`, +1 on every transition, saturating at
+    deadline + 1). `F<=D "done"` becomes the reachability `F ("done" & t<=D)`.
+  - Two more obstacles turned up and are handled in the same copy:
+    - PRISM's multi-objective engine takes only transition rewards, so the energy reward moves from each state to the
+      transitions leaving it;
+    - it takes only total reward (`C`), which equals reward until "done" here, because "done" is reached with
+      probability 1 under every scheduler and no energy accrues there.
+  - On North Sea (deadline 30), the copy gives exactly the original's best and worst probability of finishing on time
+    (0.8181 / 0.5164) and best and worst energy (24.784 / 44.388), at 95,215 states against 5,580.
+  - The joint query `multi(P>=0.67 [G !"thruster_failure"], P>=0.8 [F ("done" & t<=30)], R{"energy"}<=26.5 [C])`
+    (sparse engine, LP) had not finished after 25+ minutes on a desktop at the freeze.
+  - Possible speed-up, untested: replace the `G` objective with a flag that turns false on leaving a failure state, so
+    every objective is plain reachability and needs no LTL product.
+- **Not reached:** checkpoint 3 (a new family varying visibility range, deadline and inspection length, since the
+  failure-rate family is trivial (positioning Check 2), and a vocabulary), checkpoint 4 (Haiku smoke and full runs),
+  checkpoint 5 (certification of Haiku lists, trees and PPO).
+- **Smallest experiment that would supply the block:** finish checkpoint 2 on one instance, then the family and
+  vocabulary (PRISM only), then 3 Haiku runs of the core configuration on its training set.
 
 ## Blocked
 
