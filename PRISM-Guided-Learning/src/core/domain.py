@@ -169,6 +169,14 @@ class Domain:
         subtracted (`1 + 1`); `note`, a sentence for the prompt saying what is withheld and why. By default nothing."""
         return {"hide": [], "literal_sums": True, "note": ""}
 
+    def objective(self, instance: Instance) -> Optional[Tuple[str, Requirement]]:
+        """Optional single objective for the baselines that learn one requirement's optimal actions on the explicit
+        model (`baselines/explicit_mdp.py`, which handles `F` / `U` over labels only), for domains whose requirements
+        are not of that form: a PRISM model of the instance (the domain's model plus whatever the objective needs,
+        such as a step counter) and the requirement on it. The policy-visible variables stay the spec's. None: the
+        baselines take one of the spec's own requirements (the default)."""
+        return None
+
     def fast_checker(self, instance: Instance, config, vocabulary) -> Optional[Any]:
         """Optional fast exact checker of `instance` for rule lists parsed with `vocabulary` (`planner.repair`,
         `planner.pick: candidates`): its `worst(rules, order=None)` gives each requirement's worst-case value of the

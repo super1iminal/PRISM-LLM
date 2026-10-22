@@ -11,7 +11,9 @@ Objectives: the probability of `F ψ` or `φ U ψ`, where φ and ψ are boolean 
 minimized or maximized over every scheduler (all choices, including those under labels the policy does not control,
 such as Pac-Man's idle step), or over the schedulers a policy leaves. Values come from value iteration from below,
 stopped when no state changes by more than `TOL` (exact on models whose only cycles are self-loops, such as Pac-Man).
-Anything else (rewards, step bounds, `G`, conditions on variables) raises NotImplementedError.
+Anything else (rewards, step bounds, `G`, conditions on variables) raises NotImplementedError; a domain whose
+requirements are of that kind can give one objective of the supported form on a model of its own (`Domain.objective`,
+`ExplicitMDP(..., objective=True)`).
 
 A per-state policy is an array over the states: an action index per state (-1: undecided), or a probability per state
 and action (a row of zeros: undecided). It applies at decision states only. Undecided decision states keep every
@@ -203,14 +205,23 @@ class ExplicitMDP(Model):
     """One instance of a domain, as PRISM exports its model: `values` holds every state's valuation (columns
     `variables`, PRISM's order; booleans as 0 and 1), `actions` the spec's policy actions."""
 
-    def __init__(self, domain: Domain, instance: Instance, config: Config, runner: Optional[PrismRunner] = None):
+    def __init__(self, domain: Domain, instance: Instance, config: Config, runner: Optional[PrismRunner] = None,
+                 objective: bool = False):
+        """`objective`: the domain's objective model (`Domain.objective`) instead of its model, for learning that
+        objective's optimal actions; its requirement is `objective_requirement`."""
         verifier = PolicyVerifier(domain, instance, config, runner)
         self.domain, self.instance, self.config = domain, instance, config
         self.spec, self.runner = verifier.spec, verifier.runner
         self.actions = list(self.spec.actions)
+        model_text, self.objective_requirement = verifier.model, None
+        if objective:
+            found = domain.objective(instance)
+            if found is None:
+                raise ValueError(f"{type(domain).__name__} has no objective model (Domain.objective)")
+            model_text, self.objective_requirement = found
         with tempfile.TemporaryDirectory(prefix="explicit_") as tmp:
             base = Path(tmp) / "model"
-            base.with_suffix(".prism").write_text(verifier.model, encoding="utf-8")
+            base.with_suffix(".prism").write_text(model_text, encoding="utf-8")
             cmd = [self.runner.prism_path, str(base.with_suffix(".prism")), "-explicit",
                    "-exportstates", f"{base}.sta", "-exporttrans", f"{base}.tra", "-exportlabels", f"{base}.lab",
                    "-javamaxmem", self.runner.java_max_mem]

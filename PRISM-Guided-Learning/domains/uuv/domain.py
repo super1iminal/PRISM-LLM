@@ -10,11 +10,12 @@ Dataset rows (CSV): name, min_visib, max_visib, current_prob, inspect, deadline,
 safe_threshold, on_time_threshold, and optionally energy_threshold and fail_scale (every thruster-failure
 probability times this factor; default 1, the paper's values).
 """
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from core.domain import Domain, Instance
+from core.domain import Domain, Instance, Requirement
 
 INFL_TF = 10   # influence of thruster failures on losing the pipeline (same in both paper scenarios)
 
@@ -103,11 +104,36 @@ class UUV(Domain):
         })
         return d
 
+    def objective(self, instance: Instance) -> Optional[Tuple[str, Requirement]]:
+        """The baselines' objective (Rajan's checklist, item 8): finish the inspection within the deadline with no
+        thruster failure, `F "goal"` on the product of the model with a step counter `t` (+1 on every transition,
+        saturating at deadline + 1) and a flag `ok` (false once a thruster-failure state has been left), where
+        "goal" = done & t <= deadline & ok. Since "done" is reached with probability 1 under every scheduler and no
+        failure follows it, this is the probability of meeting both probability requirements on the same path."""
+        return product_model(self.model(instance), instance.data["deadline"]), Requirement(
+            name="goal", formula='F "goal"', threshold=0.0, bound=">=",
+            description="the inspection is done within the deadline and no thruster ever fails")
+
     def format_state(self, valuation: Dict[str, Any]) -> str:
         """Rule syntax, with the names of mission states and altitudes added."""
         names = {"s": {code: st for st, code in STATES.items()}, "alt": {a["code"]: a["name"] for a in ALTITUDES}}
         return " & ".join(f"{k}={v}" + (f" ({names[k][v]})" if k in names else "") for k, v in valuation.items())
 
+
+LABELS = ("step", "low", "med", "high")
+FAILURE = "(s=recover_high | s=recover_med | s=recover_low | s=recover_following)"
+
+
+def product_model(model: str, deadline: int) -> str:
+    """`model` with the module `stepcount` (counter `t`, flag `ok`; every command synchronizes on one of LABELS, so
+    every transition counts) and the label "goal" (done within `deadline` steps and no thruster failure). Rewards are
+    dropped: the objective is a probability."""
+    m = re.sub(r'rewards "[^"]+".*?endrewards\n?', "", model, flags=re.S)
+    counter = (f"\nmodule stepcount\n  t : [0..{deadline + 1}] init 0;\n  ok : bool init true;\n"
+               + "".join(f"  [{a}] true -> (t'=min(t+1, {deadline + 1})) & (ok'=ok & !{FAILURE});\n" for a in LABELS)
+               + "endmodule\n\n")
+    i = m.index('label "done"')
+    return m[:i] + counter + f'label "goal" = s=done & t<={deadline} & ok;\n' + m[i:]
 
 # ---------------------------------------------------------------- extended rule vocabulary (Rajan's checklist, item 8)
 # Written from the model and the requirements alone (model.prism.j2, spec.yaml.j2), before any held-out check: the

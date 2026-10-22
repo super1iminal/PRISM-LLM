@@ -9,10 +9,11 @@
 # Run from PRISM-Guided-Learning/ inside a job (cluster/submit.sh cmd ...). Finished checks are kept (recertify merges),
 # runs still in progress (no results parquet) are skipped. WORKERS = targets certified at once per run (default 2).
 set -uo pipefail
-suffix=${1:?usage: certify_llm.sh <suffix> [rules...]}; shift
+suffix=${1?usage: certify_llm.sh <suffix> [rules...] (suffix "" for a condition of its own, e.g. port_uuv)}; shift
 rules_arg=("$@")
 declare -A TARGETS=([port_ts_history]="12-19" [port_fam_history]="16-35,76-95,136-155"
-                    [port_pacman_narrow_core]="0-7,9" [port_mer]="0-8" [port_mer_n]="0-8")
+                    [port_pacman_narrow_core]="0-7,9" [port_mer]="0-8" [port_mer_n]="0-8"
+                    [port_uuv]="0-29")          # item 8: the UUV family's training and validation members
 declare -A DATA=([port_pacman_narrow_core]=pacman_transfer.csv [port_mer]=mer_transfer.csv
                  [port_mer_n]=mer_n_transfer.csv)
 status=0

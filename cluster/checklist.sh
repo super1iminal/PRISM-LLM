@@ -15,6 +15,8 @@
 #   bash cluster/checklist.sh item5                  # shift_v0 growing with seed libraries 2 and 3 (Haiku 5.5)
 #   bash cluster/checklist.sh item6 frozen|growing   # pacman_v0: 3 sequences x 12 (growing: Haiku 5.5)
 #   bash cluster/checklist.sh item7 luna|gemini      # restart arm on the families (only once item 7's conditions hold)
+#   bash cluster/checklist.sh item8-baselines        # UUV family: trees (raw, features), PPO, hand-written list (no LLM)
+#   bash cluster/checklist.sh item8-full             # UUV family: 3 Haiku runs of port_uuv, then their certification
 #   bash cluster/checklist.sh report                 # viz/rajan_results.py (Rajan's tables; Asher rebuilds his own)
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -109,6 +111,16 @@ item7)
     submit --name "item7$m" --cpus 8 --mem 40 --time 12:00:00 -- bash -c "
         python src/run_ablation.py port_fam_history${m}_resample --unseeded 3 &&
         CONDITIONS=port_fam_history bash ../cluster/jobs/certify_llm.sh ${m}_resample" ;;
+item8-baselines)
+    submit --name item8-baselines --cpus 8 --mem 32 --time 8:00:00 -- bash -c '
+        for b in uuv_hand uuv_tree_raw uuv_tree_features uuv_ppo_features; do
+            python src/recertify.py baseline configs/baselines/$b.yaml --workers 4 > "$JOB_DIR/$b.log" 2>&1 || exit 1
+        done' ;;
+item8-full)
+    need_key
+    submit --name item8-full --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
+        python src/run_ablation.py port_uuv --unseeded 3 &&
+        CONDITIONS=port_uuv bash ../cluster/jobs/certify_llm.sh ''" ;;
 report)
     submit --name report --cpus 4 --mem 16 --time 1:00:00 -- python viz/rajan_results.py ;;   # Asher's tables are his
 *) echo "unknown: $what"; exit 1 ;;

@@ -292,9 +292,35 @@ Evidence: `out/paper/rajan/item8/`.
   - Plumbing smoke test with the free model (Nemotron, schema in the prompt, 1 chain × 2 rounds): passed. 2 calls; the
     answers use the vocabulary; rounds, pick, final and determinized lists all run.
   - **Waiting:** the Haiku 5.5 smoke test and three full runs need the paid key.
-  - **Decision needed:** the raw-tree baseline learns a single objective's optimal actions on the explicit model
-    (`baselines/explicit_mdp.py`), which supports only `F`/`U` probabilities. UUV's three requirements are a `G`, a
-    step-bounded `F` and a reward. Which objective the trees (and PPO) learn needs choosing before checkpoint 5.
+  - **Waiting:** the Haiku 5.5 smoke test, then 3 full runs on Fir (`checklist.sh item8-full`).
+- **Checkpoint 5, the baselines: implemented and tested** (Rajan, Oct 22: modified option A).
+  - *Objective.* The trees and PPO learn "done within the deadline and no thruster failure", `F "goal"` with
+    "goal" = done & t <= D & ok. It is evaluated on the product of the model with the step counter and the failure
+    flag (`UUV.objective`, `domains/uuv/domain.py` `product_model`).
+    - On member 0, numpy's optimum (0.567032) equals PRISM's interval iteration (0.5670320).
+    - It is below both the best on-time value (0.658) and the best safety value (0.773), as it must be.
+  - *Code.* No generation, selection, repair, certification or prompt code changed:
+    - `Domain.objective` is a new optional hook, `None` by default.
+    - `ExplicitMDP(..., objective=True)` builds that model.
+    - Trees and PPO take `requirement: objective`.
+    - PPO takes `certify: rules`, so its per-state policy is certified as rules by the standard verifier.
+      `recertify.py baseline` takes the rule path for any baseline that is not explicit. The explicit-model
+      certification cannot check UUV's energy reward.
+  - *Configs.* `configs/baselines/uuv_tree_raw.yaml`, `uuv_tree_features.yaml`, `uuv_ppo_features.yaml` (1M steps,
+    seeds 0-2) and `uuv_hand.yaml` (the gate's list in the vocabulary), with condition `uuv_baseline` (extended
+    vocabulary, numbers allowed).
+  - *Tests.* `tests/test_uuv_objective.py`; the existing baseline, explicit-model, UUV and domain tests pass.
+  - *Local trial* (rule 2 on all 30 members, desktop; results deleted, the Fir job `item8-baselines` makes the
+    recorded ones):
+    - hand-written list: 30/30;
+    - raw tree (67 leaves): 15/30;
+    - features tree (11 leaves): 0/30;
+    - PPO, at a 20k-step pipeline test only: 3/3 on targets 0-2.
+    - Every tree failure is `no_thruster_failure`, including on the training members (margins -0.012 to -0.017).
+  - **This comes from the objective, not the code.** Even the optimal controller for the objective, which can see
+    `t` and `ok`, misses the safety threshold on 2 of 3 training members (member 0: 0.7703 against 0.7709). The
+    objective trades a little safety for punctuality, and energy is not in it at all.
+
 
 ## Blocked
 

@@ -222,7 +222,8 @@ class _Env:
         self.decision = np.concatenate([m.decision for m in mdps])
         stop, goal, sign = [], [], []
         for m in mdps:
-            req = next(r for r in m.spec.requirements if requirement in (None, r.name))
+            req = m.objective_requirement if requirement == "objective" else \
+                next(r for r in m.spec.requirements if requirement in (None, r.name))
             stay, psi = m.path_sets(req.formula)
             reach = m.reach(req.formula, maximize=True) > 0
             stop.append((~stay & ~psi) | ~reach | m.absorbing)
@@ -354,7 +355,11 @@ class ExplicitPPO(PPO):
       seeds: [0]
       gamma: 1.0              the requirement is an undiscounted probability
       sets: null              training sets (a mapping name -> ids, a list, or null: all training ids)
-      requirement: null       the requirement whose target the reward marks (null: the first)
+      requirement: null       the requirement whose target the reward marks (null: the first; objective: the
+                              domain's objective model and requirement, Domain.objective)
+      certify: explicit       explicit: through each target's explicit model; rules: as one rule per decision
+                              state (`rules`), certified like any rule list (requirements explicit_mdp cannot check,
+                              such as expected rewards)
     """
     explicit = True
 
@@ -367,6 +372,8 @@ class ExplicitPPO(PPO):
         self.steps, self.envs = params.get("steps", 1000000), params.get("envs", 32)
         self.seeds, self.gamma = params.get("seeds", [0]), params.get("gamma", 1.0)
         self.sets, self.requirement = params.get("sets"), params.get("requirement")
+        if params.get("certify", "explicit") == "rules":
+            self.explicit = False       # certified as rules (`rules`), e.g. for reward requirements
         self.nets: Dict[str, _Net] = {}
         self.ids: Dict[str, List[int]] = {}
         self.scale = None
@@ -387,7 +394,8 @@ class ExplicitPPO(PPO):
         from config import load_config
         by_id = {int(i.id): i for i in train}
         config = self.config or load_config()
-        mdps = {i: ExplicitMDP(self.domain, inst, config) for i, inst in by_id.items()}
+        mdps = {i: ExplicitMDP(self.domain, inst, config, objective=self.requirement == "objective")
+                for i, inst in by_id.items()}
         if self.kind == "raw":
             spec_vars = [m.spec.variables for m in mdps.values()]
             low = np.array([min(vs[j].low for vs in spec_vars) for j in range(len(spec_vars[0]))], dtype=np.float32)

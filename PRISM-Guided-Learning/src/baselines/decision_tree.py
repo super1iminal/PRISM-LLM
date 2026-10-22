@@ -153,7 +153,8 @@ class ExplicitDecisionTree(DecisionTree):
       features: null          with inputs: features, the feature names (null: every feature of the domain)
       sets: null              training sets, a mapping name -> ids or a list (set0, ...); one tree each
       max_depth: null
-      requirement: null       the requirement whose optimal actions the trees learn (null: the first)
+      requirement: null       the requirement whose optimal actions the trees learn (null: the first; objective:
+                              the domain's objective model and requirement, Domain.objective)
     """
 
     def __init__(self, domain, params):
@@ -176,8 +177,10 @@ class ExplicitDecisionTree(DecisionTree):
         for name, ids in named_sets(self.sets, list(by_id)).items():
             X, y, w, states = [], [], [], 0
             for i in ids:
-                mdp = ExplicitMDP(self.domain, by_id[i], config)
-                req = next(r for r in mdp.spec.requirements if self.requirement in (None, r.name))
+                objective = self.requirement == "objective"
+                mdp = ExplicitMDP(self.domain, by_id[i], config, objective=objective)
+                req = mdp.objective_requirement if objective else \
+                    next(r for r in mdp.spec.requirements if self.requirement in (None, r.name))
                 _, optimal = mdp.optimal_actions(req)
                 keep = np.flatnonzero(mdp.decision & ~optimal.all(axis=1))
                 x, columns = self.inputs(mdp, keep)
