@@ -1,0 +1,200 @@
+// UUV pipeline inspection, scenario "north_sea" (Paessler et al., iFM 2023, arXiv:2308.14663).
+// Plain-PRISM version of the paper's ProFeat model (github.com/remaro-network/auv_profeat,
+// branch scp-ifm_artifact, Apache-2.0). The ProFeat features become state variables:
+// follow (task: search/follow) and alt (navigation: 0 low, 1 med, 2 high). The paper's feature
+// controller is the policy: while searching, the action picks the next altitude. Requests above
+// what the visibility allows get the highest allowed altitude, so the choices per state are
+// exactly the paper's. Every other transition is forced ([step]).
+mdp
+
+const int min_visib = 1;
+const int max_visib = 10;
+const double current_prob = 0.6;
+const int inspect = 10;
+const int infl_tf = 10;
+
+const int start_search = 0;
+const int search_high = 1;
+const int search_med = 2;
+const int search_low = 3;
+const int found = 4;
+const int following = 5;
+const int recover_high = 6;
+const int recover_med = 7;
+const int recover_low = 8;
+const int recover_following = 9;
+const int done = 10;
+const int start_task = 11;
+const int lost_pipe = 12;
+
+formula med_visib = (max_visib-min_visib)/3;
+formula high_visib = 2*(max_visib-min_visib)/3;
+// Highest altitude the current water visibility allows
+formula max_alt = water_visib < med_visib ? 0 : (water_visib < high_visib ? 1 : 2);
+// The managing subsystem chooses the altitude while searching, except in state found
+formula deciding = !follow & s != found;
+// Search state of the currently active altitude
+formula search_alt = alt = 2 ? search_high : (alt = 1 ? search_med : search_low);
+formula set_low = min(0, max_alt);
+formula set_med = min(1, max_alt);
+formula set_high = min(2, max_alt);
+
+// Water visibility: drops by 1 with the current probability, else rises by 1 or stays (bounded)
+module environment
+  water_visib : [min_visib..max_visib] init round((max_visib-min_visib)/2);
+  [step] true -> current_prob : (water_visib'=max(water_visib-1, min_visib))
+      + (1-current_prob)/2 : (water_visib'=min(water_visib+1, max_visib)) + (1-current_prob)/2 : true;
+  [low] true -> current_prob : (water_visib'=max(water_visib-1, min_visib))
+      + (1-current_prob)/2 : (water_visib'=min(water_visib+1, max_visib)) + (1-current_prob)/2 : true;
+  [med] true -> current_prob : (water_visib'=max(water_visib-1, min_visib))
+      + (1-current_prob)/2 : (water_visib'=min(water_visib+1, max_visib)) + (1-current_prob)/2 : true;
+  [high] true -> current_prob : (water_visib'=max(water_visib-1, min_visib))
+      + (1-current_prob)/2 : (water_visib'=min(water_visib+1, max_visib)) + (1-current_prob)/2 : true;
+endmodule
+
+module auv
+  s : [0..12] init start_task;
+  d_insp : [0..inspect] init 0;       // meters of pipeline inspected
+  t_failed : [0..infl_tf] init 0;     // recent thruster failures while following
+  follow : bool init false;           // task feature: false = search, true = follow
+  alt : [0..2] init 0;                // navigation feature: 0 low, 1 med, 2 high
+
+  // Searching: the managed subsystem moves according to the currently active altitude, while
+  // the policy action sets the altitude for the next step.
+  [low] deciding & s=start_task -> (s'=start_search) & (alt'=set_low);
+  [low] deciding & s=start_search -> (s'=search_alt) & (alt'=set_low);
+  [low] deciding & s=search_low & alt=0 -> 0.42:(s'=found) & (alt'=set_low)
+      + 0.55:(s'=search_low) & (alt'=set_low) + 0.03:(s'=recover_low) & (alt'=set_low);
+  [low] deciding & s=search_low & alt!=0 -> (s'=search_alt) & (alt'=set_low);
+  [low] deciding & s=recover_low -> 0.5:(s'=recover_low) & (alt'=set_low) + 0.5:(s'=search_low) & (alt'=set_low);
+  [low] deciding & s=search_med & alt=1 -> 0.48:(s'=found) & (alt'=set_low)
+      + 0.5:(s'=search_med) & (alt'=set_low) + 0.02:(s'=recover_med) & (alt'=set_low);
+  [low] deciding & s=search_med & alt!=1 -> (s'=search_alt) & (alt'=set_low);
+  [low] deciding & s=recover_med -> 0.5:(s'=recover_med) & (alt'=set_low) + 0.5:(s'=search_med) & (alt'=set_low);
+  [low] deciding & s=search_high & alt=2 -> 0.59:(s'=found) & (alt'=set_low)
+      + 0.4:(s'=search_high) & (alt'=set_low) + 0.01:(s'=recover_high) & (alt'=set_low);
+  [low] deciding & s=search_high & alt!=2 -> (s'=search_alt) & (alt'=set_low);
+  [low] deciding & s=recover_high -> 0.5:(s'=recover_high) & (alt'=set_low) + 0.5:(s'=search_high) & (alt'=set_low);
+  [med] deciding & s=start_task -> (s'=start_search) & (alt'=set_med);
+  [med] deciding & s=start_search -> (s'=search_alt) & (alt'=set_med);
+  [med] deciding & s=search_low & alt=0 -> 0.42:(s'=found) & (alt'=set_med)
+      + 0.55:(s'=search_low) & (alt'=set_med) + 0.03:(s'=recover_low) & (alt'=set_med);
+  [med] deciding & s=search_low & alt!=0 -> (s'=search_alt) & (alt'=set_med);
+  [med] deciding & s=recover_low -> 0.5:(s'=recover_low) & (alt'=set_med) + 0.5:(s'=search_low) & (alt'=set_med);
+  [med] deciding & s=search_med & alt=1 -> 0.48:(s'=found) & (alt'=set_med)
+      + 0.5:(s'=search_med) & (alt'=set_med) + 0.02:(s'=recover_med) & (alt'=set_med);
+  [med] deciding & s=search_med & alt!=1 -> (s'=search_alt) & (alt'=set_med);
+  [med] deciding & s=recover_med -> 0.5:(s'=recover_med) & (alt'=set_med) + 0.5:(s'=search_med) & (alt'=set_med);
+  [med] deciding & s=search_high & alt=2 -> 0.59:(s'=found) & (alt'=set_med)
+      + 0.4:(s'=search_high) & (alt'=set_med) + 0.01:(s'=recover_high) & (alt'=set_med);
+  [med] deciding & s=search_high & alt!=2 -> (s'=search_alt) & (alt'=set_med);
+  [med] deciding & s=recover_high -> 0.5:(s'=recover_high) & (alt'=set_med) + 0.5:(s'=search_high) & (alt'=set_med);
+  [high] deciding & s=start_task -> (s'=start_search) & (alt'=set_high);
+  [high] deciding & s=start_search -> (s'=search_alt) & (alt'=set_high);
+  [high] deciding & s=search_low & alt=0 -> 0.42:(s'=found) & (alt'=set_high)
+      + 0.55:(s'=search_low) & (alt'=set_high) + 0.03:(s'=recover_low) & (alt'=set_high);
+  [high] deciding & s=search_low & alt!=0 -> (s'=search_alt) & (alt'=set_high);
+  [high] deciding & s=recover_low -> 0.5:(s'=recover_low) & (alt'=set_high) + 0.5:(s'=search_low) & (alt'=set_high);
+  [high] deciding & s=search_med & alt=1 -> 0.48:(s'=found) & (alt'=set_high)
+      + 0.5:(s'=search_med) & (alt'=set_high) + 0.02:(s'=recover_med) & (alt'=set_high);
+  [high] deciding & s=search_med & alt!=1 -> (s'=search_alt) & (alt'=set_high);
+  [high] deciding & s=recover_med -> 0.5:(s'=recover_med) & (alt'=set_high) + 0.5:(s'=search_med) & (alt'=set_high);
+  [high] deciding & s=search_high & alt=2 -> 0.59:(s'=found) & (alt'=set_high)
+      + 0.4:(s'=search_high) & (alt'=set_high) + 0.01:(s'=recover_high) & (alt'=set_high);
+  [high] deciding & s=search_high & alt!=2 -> (s'=search_alt) & (alt'=set_high);
+  [high] deciding & s=recover_high -> 0.5:(s'=recover_high) & (alt'=set_high) + 0.5:(s'=search_high) & (alt'=set_high);
+
+  // Pipeline found: switch task to follow at low altitude
+  [step] !follow & s=found -> (s'=start_task) & (follow'=true) & (alt'=0);
+  [step] follow & s=start_task -> (s'=following);
+  // Following: inspect one more meter, lose the pipeline, or a thruster fails
+  [step] follow & s=following & d_insp<inspect & t_failed=0 ->
+        0.92:(s'=following) & (d_insp'=d_insp+1)
+      + 0.05:(s'=lost_pipe)
+      + 0.03:(s'=recover_following) & (t_failed'=min(t_failed+1, infl_tf));
+  // After recent thruster failures the AUV has drifted, so losing the pipeline is more likely
+  [step] follow & s=following & d_insp<inspect & t_failed>0 ->
+        0.92*(1-t_failed/infl_tf):(s'=following) & (d_insp'=d_insp+1) & (t_failed'=t_failed-1)
+      + 0.05*(1+((0.92*t_failed)/(0.05*infl_tf))):(s'=lost_pipe)
+      + 0.03:(s'=recover_following) & (t_failed'=min(t_failed+1, infl_tf));
+  [step] follow & s=following & d_insp=inspect -> (s'=done);
+  [step] follow & s=recover_following -> 0.5:(s'=recover_following) & (t_failed'=min(t_failed+1, infl_tf))
+      + 0.5:(s'=following);
+  // Pipeline lost: search again (from low altitude, where the AUV was following)
+  [step] follow & s=lost_pipe -> (s'=start_task) & (t_failed'=0) & (follow'=false);
+  [step] s=done -> true;
+endmodule
+
+
+module stepcount
+  t : [0..31] init 0;
+  ok : bool init true;   // false once a thruster-failure state has been left
+  [step] true -> (t'=min(t+1, 31)) & (ok'=ok & !(s=recover_high | s=recover_med | s=recover_low | s=recover_following));
+  [low] true -> (t'=min(t+1, 31)) & (ok'=ok & !(s=recover_high | s=recover_med | s=recover_low | s=recover_following));
+  [med] true -> (t'=min(t+1, 31)) & (ok'=ok & !(s=recover_high | s=recover_med | s=recover_low | s=recover_following));
+  [high] true -> (t'=min(t+1, 31)) & (ok'=ok & !(s=recover_high | s=recover_med | s=recover_low | s=recover_following));
+endmodule
+
+label "done" = s=done;
+label "thruster_failure" = s=recover_high | s=recover_med | s=recover_low | s=recover_following;
+
+// Paper's reward structures (costs), for reference analyses; the planner does not use them
+rewards "time"
+  [step] true : 1;
+  [low] true : 1;
+  [med] true : 1;
+  [high] true : 1;
+endrewards
+
+rewards "energy"
+  [step] s=recover_high | s=recover_med | s=recover_low | s=recover_following : 2;
+  [low] s=recover_high | s=recover_med | s=recover_low | s=recover_following : 2;
+  [med] s=recover_high | s=recover_med | s=recover_low | s=recover_following : 2;
+  [high] s=recover_high | s=recover_med | s=recover_low | s=recover_following : 2;
+  // Switching altitude: 2 per level (low <-> high costs 4)
+  [step] s=search_low & alt=1 : 2;
+  [low] s=search_low & alt=1 : 2;
+  [med] s=search_low & alt=1 : 2;
+  [high] s=search_low & alt=1 : 2;
+  [step] s=search_low & alt=2 : 4;
+  [low] s=search_low & alt=2 : 4;
+  [med] s=search_low & alt=2 : 4;
+  [high] s=search_low & alt=2 : 4;
+  [step] s=search_med & alt=0 : 2;
+  [low] s=search_med & alt=0 : 2;
+  [med] s=search_med & alt=0 : 2;
+  [high] s=search_med & alt=0 : 2;
+  [step] s=search_med & alt=2 : 2;
+  [low] s=search_med & alt=2 : 2;
+  [med] s=search_med & alt=2 : 2;
+  [high] s=search_med & alt=2 : 2;
+  [step] s=search_high & alt=0 : 4;
+  [low] s=search_high & alt=0 : 4;
+  [med] s=search_high & alt=0 : 4;
+  [high] s=search_high & alt=0 : 4;
+  [step] s=search_high & alt=1 : 2;
+  [low] s=search_high & alt=1 : 2;
+  [med] s=search_high & alt=1 : 2;
+  [high] s=search_high & alt=1 : 2;
+  // Found: descend to low altitude
+  [step] s=found & alt>0 : 2*alt;
+  [low] s=found & alt>0 : 2*alt;
+  [med] s=found & alt>0 : 2*alt;
+  [high] s=found & alt>0 : 2*alt;
+  [step] s=start_task | s=start_search | s=following | s=lost_pipe | (s=found & alt=0) : 1;
+  [low] s=start_task | s=start_search | s=following | s=lost_pipe | (s=found & alt=0) : 1;
+  [med] s=start_task | s=start_search | s=following | s=lost_pipe | (s=found & alt=0) : 1;
+  [high] s=start_task | s=start_search | s=following | s=lost_pipe | (s=found & alt=0) : 1;
+  [step] s=search_low & alt=0 : 1;
+  [low] s=search_low & alt=0 : 1;
+  [med] s=search_low & alt=0 : 1;
+  [high] s=search_low & alt=0 : 1;
+  [step] s=search_med & alt=1 : 1;
+  [low] s=search_med & alt=1 : 1;
+  [med] s=search_med & alt=1 : 1;
+  [high] s=search_med & alt=1 : 1;
+  [step] s=search_high & alt=2 : 1;
+  [low] s=search_high & alt=2 : 1;
+  [med] s=search_high & alt=2 : 1;
+  [high] s=search_high & alt=2 : 1;
+endrewards

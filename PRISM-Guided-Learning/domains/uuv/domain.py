@@ -99,6 +99,7 @@ class UUV(Domain):
             ],
             "p_visib_down": d["current_prob"],
             "p_visib_up": (1 - d["current_prob"]) / 2,
+            **rule_vocabulary(d),
         })
         return d
 
@@ -106,3 +107,57 @@ class UUV(Domain):
         """Rule syntax, with the names of mission states and altitudes added."""
         names = {"s": {code: st for st, code in STATES.items()}, "alt": {a["code"]: a["name"] for a in ALTITUDES}}
         return " & ".join(f"{k}={v}" + (f" ({names[k][v]})" if k in names else "") for k, v in valuation.items())
+
+
+# ---------------------------------------------------------------- extended rule vocabulary (Rajan's checklist, item 8)
+# Written from the model and the requirements alone (model.prism.j2, spec.yaml.j2), before any held-out check: the
+# model's codes and visibility bands as named constants (the general rule language allows only the numbers 0 and 1),
+# the mission's size, and features for the band, the mission phase and what an action does to the altitude.
+
+ALT_CODES = [("LOW", 0, "altitude low (values of alt)"), ("MED", 1, "altitude medium"), ("HIGH", 2, "altitude high")]
+
+
+def rule_vocabulary(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Constants and features for `rules.extended`: the visibility limits and band edges (the model's med_visib =
+    (max_visib - min_visib)/3 and high_visib = 2(max_visib - min_visib)/3, compared with water_visib, as the first
+    integer level of each band), the inspection length and deadline, the mission-state and altitude codes; state
+    features for the visibility band and the mission phase, and per-action features for keeping the altitude and for
+    the altitude the visibility allows."""
+    span = d["max_visib"] - d["min_visib"]
+    first_avg, first_good = -(-span // 3), -(-2 * span // 3)          # ceil(span/3), ceil(2 span/3)
+    poor, good = "water_visib < FIRST_AVG", "water_visib >= FIRST_GOOD"
+    average = f"!({poor}) & !({good})"
+    constants = [
+        {"name": "MIN_VISIB", "value": d["min_visib"], "description": "the worst water visibility"},
+        {"name": "MAX_VISIB", "value": d["max_visib"], "description": "the best water visibility"},
+        {"name": "FIRST_AVG", "value": first_avg,
+         "description": "the lowest visibility level of the average band (medium altitude allowed)"},
+        {"name": "FIRST_GOOD", "value": first_good,
+         "description": "the lowest visibility level of the good band (high altitude allowed)"},
+        {"name": "INSPECT", "value": d["inspect"], "description": "metres of pipeline to inspect"},
+        {"name": "DEADLINE", "value": d["deadline"], "description": "steps within which the inspection should be done"},
+    ] + [{"name": name.upper(), "value": code, "description": f"mission state {name} (values of s)"}
+         for name, code in STATES.items()] + [{"name": n, "value": v, "description": t} for n, v, t in ALT_CODES]
+    features = [
+        {"name": "poor_visib", "description": "the visibility is in the poor band (only low altitude allowed)",
+         "expr": poor},
+        {"name": "average_visib", "description": "the visibility is in the average band (low or medium allowed)",
+         "expr": average},
+        {"name": "good_visib", "description": "the visibility is in the good band (every altitude allowed)",
+         "expr": good},
+        {"name": "starting", "description": "the mission or a search is starting (the first altitude is chosen)",
+         "expr": "s = START_TASK | s = START_SEARCH"},
+        {"name": "searching", "description": "searching for the pipeline at some altitude",
+         "expr": "s = SEARCH_LOW | s = SEARCH_MED | s = SEARCH_HIGH"},
+        {"name": "recovering", "description": "recovering from a thruster failure while searching",
+         "expr": "s = RECOVER_LOW | s = RECOVER_MED | s = RECOVER_HIGH"},
+        {"name": "keeps_altitude", "description": "true if this action leaves the active altitude unchanged (no "
+                                                  "switching cost)",
+         "per_action": {"low": "alt = LOW",
+                        "med": f"(({poor}) & alt = LOW) | (!({poor}) & alt = MED)",
+                        "high": f"(({poor}) & alt = LOW) | (({average}) & alt = MED) | (({good}) & alt = HIGH)"}},
+        {"name": "allowed_now", "description": "true if the visibility allows this action's altitude (otherwise the "
+                                               "highest allowed altitude is used)",
+         "per_action": {"low": "true", "med": f"!({poor})", "high": good}},
+    ]
+    return {"rule_constants": constants, "rule_features": features}
