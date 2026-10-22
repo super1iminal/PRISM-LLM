@@ -229,35 +229,72 @@ committed before any episode ran (rule 7).
 - **Start only when both hold:** Asher confirms E1 shows a difference, and that model's Full families runs are
   certified.
 
-**8. UUV family. Stopped at the freeze (Wed Oct 21, 23:59 Toronto) at checkpoint 2.** Not in the paper's tables; what
-was produced goes to the replication package (`out/paper/rajan/item8/`).
+**8. UUV family.** In progress past the freeze (Rajan, Oct 22: continue), so not in the SEAMS draft's tables.
+Checkpoints 1-3 pass; checkpoint 4 waits on the paid key; the baselines' training targets need a decision (below).
+Evidence: `out/paper/rajan/item8/`.
 - **Checkpoint 1 passes**, from the model alone. `domains/uuv/model.prism.j2` exposes constants that change size and
   structure:
-  - `min_visib` / `max_visib`: the range of `water_visib`;
+  - `min_visib` / `max_visib`: the range of `water_visib`, and the band edges `med_visib = W/3`,
+    `high_visib = 2W/3`;
   - `inspect`: the range of `d_insp`;
   - `infl_tf`.
 
   Its requirements are properties with thresholds: `no_thruster_failure` (`G`), `done_in_time` (`F<=deadline`) and
   `energy_budget` (an expected reward until "done").
-- **Checkpoint 2, the replacement check: built and shown exact on one instance; LP result not reached.**
-  - The check is a copy of the model with a step counter (`stepcount`, +1 on every transition, saturating at
-    deadline + 1). `F<=D "done"` becomes the reachability `F ("done" & t<=D)`.
-  - Two more obstacles turned up and are handled in the same copy:
-    - PRISM's multi-objective engine takes only transition rewards, so the energy reward moves from each state to the
-      transitions leaving it;
-    - it takes only total reward (`C`), which equals reward until "done" here, because "done" is reached with
-      probability 1 under every scheduler and no energy accrues there.
-  - On North Sea (deadline 30), the copy gives exactly the original's best and worst probability of finishing on time
-    (0.8181 / 0.5164) and best and worst energy (24.784 / 44.388), at 95,215 states against 5,580.
-  - The joint query `multi(P>=0.67 [G !"thruster_failure"], P>=0.8 [F ("done" & t<=30)], R{"energy"}<=26.5 [C])`
-    (sparse engine, LP) had not finished after 25+ minutes on a desktop at the freeze.
-  - Possible speed-up, untested: replace the `G` objective with a flag that turns false on leaving a failure state, so
-    every objective is plain reachability and needs no LTL product.
-- **Not reached:** checkpoint 3 (a new family varying visibility range, deadline and inspection length, since the
-  failure-rate family is trivial (positioning Check 2), and a vocabulary), checkpoint 4 (Haiku smoke and full runs),
-  checkpoint 5 (certification of Haiku lists, trees and PPO).
-- **Smallest experiment that would supply the block:** finish checkpoint 2 on one instance, then the family and
-  vocabulary (PRISM only), then 3 Haiku runs of the core configuration on its training set.
+- **Checkpoint 2 passes. The check: a certified witness.** An instance is jointly solvable if some controller is
+  certified under rule 2 to meet every threshold at once. It is sound for "yes"; a member without a witness counts as
+  not shown solvable.
+  - Confirmed on both paper scenarios: `stay` is certified, North Sea 0.6734 / 0.8067 / 26.43.
+  - Exact queries tried first, all failed:
+    - PRISM's multi-objective LP rejects the step bound, state rewards and `R[F]`.
+    - On an exact copy that removes those, PRISM's LP did not finish in 25 min. The copy adds a step counter `t` and a
+      failure flag `ok`; energy is total reward `C`.
+      - Shown exact on North Sea: best and worst on-time 0.8181 / 0.5164, energy 24.784 / 44.388 and safety
+        0.67410 / 0.65383 match the original.
+      - 95k-137k states, against 5.6k.
+    - On the same copy, a HiGHS LP (`src/uuv_joint.py`, kept for the record) did not finish in 15 min.
+    - PRISM's value-iteration multi-objective method answers in 6 s but is wrong here: best on-time 0.472 under the
+      other two thresholds, while `stay` is certified at 0.8067. DECISIONS already notes this method understating.
+- **Checkpoint 3 passes.**
+  - *Family* `domains/uuv/data/uuv_family_v0.csv` (`family_v0.py`, PRISM only):
+    - North Sea dynamics; visibility range W = 7-12; inspection 6, 8, 10, 12, 14 m; deadline 3 × inspection.
+      30 members: 3 training (ids 0, 6, 10: W 7, 8, 9) and 27 validation.
+    - Thresholds per member and requirement: best - 0.1 × (best - worst), from exact bounds. The paper's thresholds
+      sit at 6-20% of these ranges; "optimum - 5%" would let every controller pass `no_thruster_failure`, whose range
+      is about 0.02.
+    - The sealed test members (longer inspections) are not generated: building them is the test pass's (rule 3).
+  - *Gate* (`src/uuv_gate.py`, rule 2 on all 30; `out/paper/rajan/item8/gate.csv`):
+
+    | Controller | Certified |
+    |---|---|
+    | `always_low` | 0 |
+    | `always_med` | 26 |
+    | `always_high` | 10 |
+    | `stay` | 25 |
+    | uniform random | 0 |
+    | hand-written list | 30 |
+
+    - The hand-written list: search at med; once forced low, stay low until visibility is one level above the poor
+      band; keep high.
+    - It is every member's joint-solvability witness. Its smallest margin is 0.0002.
+    - Uniform random is exact: a pick variable redrawn every step, averaged over the first pick.
+  - *Vocabulary* (`domains/uuv/domain.py` `rule_vocabulary`, `spec.yaml.j2`). Written from the model and requirements
+    alone in about 10 min (01:19-01:29), and committed (`2e719a07`) before any LLM list was checked on a held-out
+    member.
+    - Constants: `MIN_VISIB`, `MAX_VISIB`, `FIRST_AVG`, `FIRST_GOOD`, `INSPECT`, `DEADLINE`, the mission-state codes
+      and the altitude codes.
+    - State features: `poor_visib`, `average_visib`, `good_visib`, `starting`, `searching`, `recovering`.
+    - Action features: `keeps_altitude`, `allowed_now`.
+    - The hand-written list in this vocabulary gives the same margins as its numeric form.
+- **Checkpoint 4, prepared.**
+  - Condition `port_uuv`: `port_mer` with only the domain's settings changed (domain, dataset and training set;
+    `planner.branch: per_requirement`; `feedback.horizon: domain`; `done_margin 0.0001`).
+  - Plumbing smoke test with the free model (Nemotron, schema in the prompt, 1 chain × 2 rounds): passed. 2 calls; the
+    answers use the vocabulary; rounds, pick, final and determinized lists all run.
+  - **Waiting:** the Haiku 5.5 smoke test and three full runs need the paid key.
+  - **Decision needed:** the raw-tree baseline learns a single objective's optimal actions on the explicit model
+    (`baselines/explicit_mdp.py`), which supports only `F`/`U` probabilities. UUV's three requirements are a `G`, a
+    step-bounded `F` and a reward. Which objective the trees (and PPO) learn needs choosing before checkpoint 5.
 
 ## Blocked
 
