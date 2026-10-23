@@ -351,7 +351,8 @@ Evidence: `out/paper/rajan/item8/`.
     `t` and `ok`, misses the safety threshold on 2 of 3 training members (member 0: 0.7703 against 0.7709). The
     objective trades a little safety for punctuality, and energy is not in it at all.
 - **Item 8 follow-up: Asher's UUV plan** (Oct 22-23, branch `rajanmaghera/uuv-2`). Steps 1-6 are run on Fir (commit
-  `014ede0c`; every job `git_dirty: false`, no check inconclusive, timed out or by the fallback). Step 7 (sealed) waits.
+  `014ede0c`; every job `git_dirty: false`, no check inconclusive, timed out or by the fallback). Step 7 ran once,
+  after the validation results were committed (`d79000c8`; job `item8-sealed`, 28 min, `git_dirty: false`).
   - **Validation results** (`tab_rq1-coverage-uuv`, 27 held-out members; frozen = permissive, every list resolved):
 
     | Controller | Frozen per list | Library | Calls / $ per run |
@@ -381,6 +382,29 @@ Evidence: `out/paper/rajan/item8/`.
     - Words do not change coverage (90.9% against 91.4% per list; both libraries 100%).
     - Every 3-set run under `members_first` solves all 3 training sets (18 of 18). Under the capped sum, 10 of 18.
     - The members missed most are 3, 4 (W 7 at 12 and 14 m, safety) and 7-9 (W 8 at 10-14 m, energy), as in item 8.
+  - **Sealed test results** (step 7, `tab_rq1-coverage-uuv-sealed`; members 30-41: W 7-12 at 16 and 18 m, longer
+    than any validation member). Run once; nothing was changed after.
+
+    | Controller | Frozen per list | Library |
+    |---|---|---|
+    | Full (capped sum) / members_first / NoRepair | 72.2% ± 19.2 | 72.2% |
+    | Restart / Restart, members_first | 72.2% ± 19.2 / 83.3% ± 0.0 | 72.2% / 83.3% |
+    | OneShot | 33.3% | |
+    | 3 training sets / members_first | 74.1% ± 27.8 / 74.1% ± 18.8 | 83.3% / 88.9% ± 9.6 |
+    | 3 sets + words / members_first | 55.6% ± 26.4 / 77.8% ± 16.7 | 72.2% / 88.9% ± 9.6 |
+    | PPO features / raw | 83.3% ± 0.0 / 55.6% ± 9.6 | |
+    | Random policies / one instance | 16.7% / 50.0% | |
+    | Uniform / `always_med` / `stay` | 0% / 50.0% / 83.3% | |
+    | Hand (reference) | 100% | |
+    | DT-raw / DT-voc (CSV only) | 50.0% / 0% | |
+
+    - Every method's coverage falls on the longer inspections. The members missed are W 7 (safety, by every LLM row
+      and PPO), then W 8 and W 10 (energy). `stay` certifies 10 of 12 here, as many as PPO and the best LLM rows.
+    - `members_first` matters less here than on validation, except for the words arm (77.8% against 55.6%) and the
+      3-set libraries (88.9% against 83.3% and 72.2%).
+    - PPO used step 6's networks (`nets.pt`); the trees and random policies refit to the same models.
+    - UUV appears in `tab_rq1-coverage-sealed` and `tab_rq3-ablation-sealed` (checked with viz/paper_results.py
+      writing to a scratch directory; Asher's tables are not rebuilt here).
   - *Spend.* About $5.30 of Haiku for both variants (18 runs). The first attempt stopped at the OpenRouter key's weekly
     limit ($90, shared): 403s on every call of 12 runs and some calls of 4. Those runs were deleted (a copy was
     pulled first) and rerun on Oct 23 after the limit was raised; the rerun has no error.
