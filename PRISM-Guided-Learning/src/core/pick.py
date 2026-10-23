@@ -93,29 +93,34 @@ def neighbours(rules: Rules, rng: random.Random, k: int, literals: Sequence[str]
 
 def repair(rules: Rules, evaluate: Callable[[Rules], Optional[List[Dict[str, float]]]],
            reqs: Sequence[Sequence[Requirement]], literals: Sequence[str], actions: Sequence[str], steps: int,
-           tries: int, seed: int, valid: Callable[[Rules], bool] = lambda rules: True) -> Rules:
+           tries: int, seed: int, valid: Callable[[Rules], bool] = lambda rules: True,
+           members_first: bool = False) -> Rules:
     """Hill climbing from `rules`: `evaluate` gives the members' worst-case values (None if the rules do not parse),
-    `valid` rejects lists the run does not allow (e.g. `rules.strict`)."""
+    `valid` rejects lists the run does not allow (e.g. `rules.strict`). `members_first` (`planner.repair_score`):
+    an edit must keep the members passing, then improve the capped sum; otherwise only the sum counts, so an edit
+    may trade one requirement's small passing margin for capped gains on others (UUV's runs lost members so)."""
     rng = random.Random(seed)
 
-    def value(rs: Rules) -> Optional[float]:
+    def value(rs: Rules) -> Optional[Tuple[int, float]]:
         if not valid(rs):
             return None
         values = evaluate(rs)
         if values is None:
             return None
-        return sum(min(r.margin(v[r.name]), CAP) for v, rq in zip(values, reqs) for r in rq)
+        total = sum(min(r.margin(v[r.name]), CAP) for v, rq in zip(values, reqs) for r in rq)
+        passed = sum(all(r.satisfied(v[r.name]) for r in rq) for v, rq in zip(values, reqs)) if members_first else 0
+        return passed, total
 
     cur, best = list(rules), value(rules)
     if best is None:
         return cur
     target = CAP * sum(len(rq) for rq in reqs)
     for _ in range(steps):
-        if best >= target - 1e-9:
+        if best[1] >= target - 1e-9:
             break
         for nb in neighbours(cur, rng, tries, literals, actions):
             v = value(nb)
-            if v is not None and v > best + 1e-9:
+            if v is not None and (v[0] > best[0] or v[0] == best[0] and v[1] > best[1] + 1e-9):
                 cur, best = nb, v
                 break
         else:

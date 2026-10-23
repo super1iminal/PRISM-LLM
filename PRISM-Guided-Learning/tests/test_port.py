@@ -197,3 +197,16 @@ def test_repair_climbs_to_a_passing_list_and_choose_prefers_more_members():
     a = {"rules": [("a", "up")], "final_score": (1, 0.0, 0.1), "resolved_score": (1, 0.0, 0.1)}
     b = {"rules": [("b", "up")], "final_score": (2, 0.0, 0.01), "resolved_score": (2, 0.0, 0.01)}
     assert choose([a, b]) is b
+
+
+def test_repair_members_first_never_trades_a_passing_requirement():
+    """`planner.repair_score`: the capped sum takes an edit that loses a member if the other requirement gains more
+    (UUV's runs: safety's small margin for capped energy gains); members_first keeps the passing list."""
+    safe, cheap = Requirement("safe", 'F "goal"', 0.5), Requirement("cheap", 'F "goal"', 0.5)
+    values = {"up": {"safe": 0.501, "cheap": 0.51}, "left": {"safe": 0.49, "cheap": 0.56}}
+
+    def evaluate(rules):
+        return [values.get(rules[-1][1], {"safe": 0.0, "cheap": 0.0})]
+    args = ([("true", "up")], evaluate, [[safe, cheap]], ["wall"], ["up", "left"])
+    assert repair(*args, steps=5, tries=20, seed=0)[-1][1] == "left"                    # the default: capped sum
+    assert repair(*args, steps=5, tries=20, seed=0, members_first=True)[-1][1] == "up"

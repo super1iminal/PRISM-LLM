@@ -418,7 +418,8 @@ class SymbolicPlanner:
             rules = cand["rules"]
             if repairing:
                 rules = repair(rules, evaluate, req_lists, literals, actions, cfg.planner.repair,
-                               cfg.planner.repair_tries, seed=k, valid=valid)
+                               cfg.planner.repair_tries, seed=k, valid=valid,
+                               members_first=cfg.planner.repair_score == "members_first")
             f = final(cand, rules)
             if f is None:
                 continue

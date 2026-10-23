@@ -76,6 +76,7 @@ class PlannerConfig:
     pick_top: int                             # pick: candidates: distinct lists repaired and compared
     repair: int                               # pick: candidates: hill-climbing steps (0: none)
     repair_tries: int                         # neighbours tried per repair step
+    repair_score: str                         # what repair improves: capped_sum | members_first
 
 
 @dataclass
@@ -312,6 +313,7 @@ def validate(cfg: Config) -> None:
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table", "failures"}),
         "planner.pick": (cfg.planner.pick, {"chain", "candidates"}),
+        "planner.repair_score": (cfg.planner.repair_score, {"capped_sum", "members_first"}),
         "planner.keep_ties": (cfg.planner.keep_ties, {"older", "newer"}),
         "feedback.blame": (cfg.feedback.blame, {"mass", "regret", "random", "none"}),
         "feedback.space": (cfg.feedback.space, {"states", "features"}),
