@@ -45,13 +45,14 @@ BASELINES = {"DT-raw": "1-2-3-Go! (reimplemented: trees over raw variables)",
              "DT-voc": "1-2-3-Go! with our features",
              "RL": "PPO with our features",
              "Hand": {"grids": "Hand-written template", "families": "Hand-written template",
-                      "pacman": "Hand-written maze rules"}}
+                      "pacman": "Hand-written maze rules", "uuv": "Hand-written template"}}
 APPROACHES = ["Full", "DT-raw", "DT-voc", "RL", "Hand"]
 RQ1_BENCHES = {"grids": "Random grids", "families": "Grid-world families", "pacman": "Pac-Man",
-               "mer": "MER across $x$", "mer_n": "MER across $n$"}
+               "mer": "MER across $x$", "mer_n": "MER across $n$", "uuv": "UUV inspection"}
 EXTRA_BENCHES = {"mer_one": "MER across $x$, trained on $n=1$", "mer_n_one": "MER across $n$, trained on $n=1$"}
 SIZE = {"grids": ("n", "grid side length", 11), "families": ("n", "grid side length", 8),
-        "pacman": ("max_steps", "game length (moves)", 18), "mer_n": ("n", "number of requests $n$", 3)}
+        "pacman": ("max_steps", "game length (moves)", 18), "mer_n": ("n", "number of requests $n$", 3),
+        "uuv": ("inspect", "inspection length (m)", 8)}
 
 # One colour, marker and line style per approach in every figure; markers and dashes keep them apart in grayscale
 STYLE = {"Full": dict(color="#1f5fae", marker="o", ls="-"),
@@ -128,7 +129,8 @@ def checked(path: Optional[Path], kind: Optional[str] = None) -> Optional[Path]:
 SEALED = {"grids": {"targets": "0-41", "dataset": "grid_test_large.csv"},
           "families": {"targets": "36-59,96-119,156-179",
                        "groups": {"rooms": "36-59", "crossing": "96-119", "adjacent": "156-179"}},
-          "pacman": {"targets": "10-11"}, "mer": {"targets": "9-11"}, "mer_n": {"targets": "9-11"}}
+          "pacman": {"targets": "10-11"}, "mer": {"targets": "9-11"}, "mer_n": {"targets": "9-11"},
+          "uuv": {"targets": "30-41"}}
 
 
 def sealed_bench(bench):
@@ -786,7 +788,7 @@ def controller_sizes() -> None:
                 continue
             path = ROOT / spec["config"][bench]
             sources = Comparison._sources(spec["sources"][bench])["sources"]
-            if approach == "Hand" and bench == "pacman":
+            if approach == "Hand" and bench in ("pacman", "uuv"):      # fixed lists (rule_lists)
                 lists = yaml.safe_load(path.read_text(encoding="utf-8"))["params"]["lists"]
                 rows += [{"bench": bench, "controller": approach, "source": s, "kind": "rule list",
                           **list_size(lists[s])} for s in sources]
@@ -884,9 +886,9 @@ def generation_cost(study: str) -> None:
 # ---------------------------------------------------------------- RQ3: ingredients of generation
 
 RQ3_BENCHES = {"grids": "Random grids", "families": "Grid-world families", "pacman": "Pac-Man",
-               "mer": "MER across $x$", "mer_n": "MER across $n$"}
+               "mer": "MER across $x$", "mer_n": "MER across $n$", "uuv": "UUV inspection"}
 RESTARTS = {"mer": "port_mer_resample", "families": "port_fam_history_resample", "grids": "port_ts_history_resample",
-            "pacman": "port_pacman_narrow_core_resample"}   # pure restarts of the core loop (planner.retry: always)
+            "pacman": "port_pacman_narrow_core_resample", "uuv": "port_uuv_resample"}   # pure restarts of the core loop (planner.retry: always)
 
 
 def members_passed(run: Path, norepair: bool = False) -> List[float]:
@@ -1066,6 +1068,7 @@ def rq3_tables() -> None:
 # Budget-curve panels: name -> (benchmark, replay file per run, what checked it, sealed test targets). MER's replay
 # predates the fixed rule. A panel is drawn only where its files exist.
 BUDGET_PANELS = {"mer": ("mer", "budget_transfer_chains.csv", "loop solver", False),
+                 "uuv": ("uuv", "budget_transfer_chains.csv", "loop solver", False),
                  "families": ("families", "budget_ii_rounds.csv", "fixed rule", False),
                  "families_test": ("families", "budget_ii_sealed_rounds.csv", "fixed rule", True)}
 
