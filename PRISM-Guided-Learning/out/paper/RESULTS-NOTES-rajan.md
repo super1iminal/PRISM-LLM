@@ -370,6 +370,9 @@ Evidence: `out/paper/rajan/item8/`.
       - With `planner.repair_score: members_first`, repair never loses a member. Run 1 keeps its 3-of-3 list (=
         NoRepair), and run 3's repair lifts two candidates from 2 to 3 members.
       - On the other benchmarks' stored runs, 5 of about 900 repaired candidates lost a member; no chosen list did.
+      - **Both variants are run** (`cluster/queue_uuv2.sh`): `members_first` as the `*_mf` conditions and the
+        re-pick in `out/results/ablations/port_uuv_mf`; `tab_rq1-coverage-uuv` gets a `members_first` row for
+        Full, Restart and both 3-set arms. OneShot and NoRepair do not repair, so they are made once.
   - *Step 6, prepared.* Restart arm (`item8-resample`), OneShot and budget curves (`item8-curves`), and baselines
     (`item8-baselines2`: `uuv_ppo_raw`, `uuv_random_policies`, `uuv_one_instance`, and both PPO configs refit with
     `--nets`).
@@ -388,7 +391,11 @@ Evidence: `out/paper/rajan/item8/`.
       both pass, 2 calls each.
       - The words arm's second prompt names states and losses in words, with no `s=` / `water_visib=` form.
       - The Restart arm's second prompt is identical to its first.
-    - Haiku: `cluster/smoke/uuv2_haiku_smoke.sh`, waiting for approval.
+    - Haiku (`cluster/smoke/uuv2_haiku_smoke.sh`, Oct 22, local): all three pass. 10 calls in all, all served by
+      Anthropic, none failed; $0.018. Each invalid answer named state codes as numbers (`s = 11`), and each re-ask came
+      back valid.
+    - Free model, `port_uuv_resample_mf`: the run records `members_first`, and repair lifts a candidate from 1 to 2
+      training members.
   - *Report.* `tab_rq1-coverage-uuv` gets the plan's rows, with permissive, frozen and library coverage, and LLM calls
     and reported cost per run. DT-raw and DT-voc are in the CSV only, with the note.
   - *Job records.* Item 8's `meta.json` recorded `git_dirty: null`. `cluster/push.sh` copies `.git`, so on Fir the

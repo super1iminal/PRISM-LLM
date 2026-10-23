@@ -309,6 +309,14 @@ UUV_METHODS = [
      "run.train_sets: 3 sets (42-44, 45-47 added)", True),
     ("Full, 3 training sets, words", "run", "ablations/port_uuv_sets_words", "_determinized", "",
      "the row above with feedback.words: true", True),
+    ("Full, members_first", "run", "ablations/port_uuv_mf", "_determinized", "",
+     "planner.repair_score: members_first (repair never loses a member)", True),
+    ("Restart, members_first", "run", "ablations/port_uuv_resample_mf", "_determinized", "",
+     "Restart with members_first", True),
+    ("Full, 3 training sets, members_first", "run", "ablations/port_uuv_sets_mf", "_determinized", "",
+     "3 training sets with members_first", True),
+    ("Full, 3 training sets, words, members_first", "run", "ablations/port_uuv_sets_words_mf", "_determinized", "",
+     "3 training sets and words with members_first", True),
     ("RL (PPO, features)", "baseline", "uuv_ppo_features", None, None, "method: PPO over our features", True),
     ("RL (PPO, raw)", "baseline", "uuv_ppo_raw", None, None, "method: PPO over the raw variables", True),
     ("Best of 1000 random policies", "baseline", "uuv_random_policies", None, None, "method", True),
@@ -413,7 +421,7 @@ def item8(sealed: bool = False) -> None:
         if "frozen_mean" not in entry:
             note(f"item 8: no {'sealed ' if sealed else ''}checks for {name} yet")
             continue
-        if kind == "run" and name not in ("NoRepair", "OneShot"):      # those two spend nothing of their own
+        if kind == "run" and name not in ("NoRepair", "OneShot", "Full, members_first"):   # no spend of their own
             entry.update(uuv_spend(where))
         rows.append(entry)
         if not in_tex:

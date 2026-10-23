@@ -5,7 +5,7 @@
   and worst values per target);
 - run 3 may differ (its `any` rules are now resolved by the fast checker): reported, not an error;
 - no check of the re-picked runs is inconclusive, timed out, an error, or decided by the Gauss-Seidel fallback.
-Exits 1 on any failure, so the job reads as failed.
+Exits 1 on any failure, so the job reads as failed. Usage: uuv_repick_check.py [re-picked runs' directory]
 """
 import json
 import sys
@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
-OLD, NEW = Path("out/results/prepick/port_uuv"), Path("out/results/core/port_uuv")
+OLD = Path("out/results/prepick/port_uuv")
+NEW = Path(sys.argv[1] if len(sys.argv) > 1 else "out/results/core/port_uuv")    # or ablations/port_uuv_mf
 STEM = "transfer_exact_uuv_family_v0"
 WORST = ["worst_no_thruster_failure", "worst_done_in_time", "worst_energy_budget"]
 problems = []

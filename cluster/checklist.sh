@@ -25,8 +25,8 @@
 #   bash cluster/checklist.sh item8-baselines2       # step 6: PPO raw, random policies, one instance, PPO refits
 #   bash cluster/checklist.sh item8-curves           # step 6: OneShot and budget curves (after repick and resample)
 #   SEALED=yes bash cluster/checklist.sh item8-sealed   # step 7, last: every controller on the sealed members 30-41
-#   REPAIR_SCORE=members_first (environment, for item8-repick/-sets/-words/-resample): the pick's repair objective
-#   (planner.repair_score) instead of the conditions' capped_sum; same for every step, or the rows do not compare.
+#   Add "mf" to item8-repick/-sets/-words/-resample/-curves for the members_first variant (planner.repair_score;
+#   the *_mf conditions, out/results/ablations/port_uuv_mf for the re-pick); cluster/queue_uuv2.sh queues both.
 #   bash cluster/checklist.sh report                 # viz/rajan_results.py (Rajan's tables; Asher rebuilds his own)
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -40,6 +40,13 @@ submit() { bash "$here/submit.sh" cmd "${dry[@]}" ${AFTER:+--after "$AFTER"} "$@
 need_key() { [ -n "${OPENROUTER_API_KEY:-}" ] || { echo "OPENROUTER_API_KEY is not set in this shell"; exit 1; }; }
 model() {
     case ${1:-} in luna|gemini) echo "_$1" ;; *) echo "name the model: luna or gemini" >&2; exit 1 ;; esac
+}
+variant() {    # item8-*: "" = planner.repair_score capped_sum (the conditions'), mf = members_first (*_mf)
+    case ${1:-} in
+        "") SFX=; SCORE=capped_sum; RUNS=out/results/core/port_uuv ;;
+        mf) SFX=_mf; SCORE=members_first; RUNS=out/results/ablations/port_uuv_mf ;;
+        *) echo "variant: nothing (capped_sum) or mf (members_first)" >&2; exit 1 ;;
+    esac
 }
 item1_running() { squeue -h -u "$USER" -o "%j" 2>/dev/null | grep -q '^item1' && echo yes || true; }
 warn_item1() {
@@ -132,53 +139,57 @@ item8-full)
         python src/run_ablation.py port_uuv --unseeded 3 &&
         CONDITIONS=port_uuv bash ../cluster/jobs/certify_llm.sh ''" ;;
 item8-repick)       # step 3: no LLM calls; the item 8 originals stay in out/results/prepick/port_uuv
-    submit --name item8-repick --cpus 8 --mem 40 --time 8:00:00 -- bash -c '
+    variant "${args[0]:-}"
+    submit --name "item8-repick$SFX" --cpus 8 --mem 40 --time 8:00:00 -- env RUNS="$RUNS" SCORE="$SCORE" bash -c '
         for k in 1 2 3; do
-            out=out/results/core/port_uuv/seed_none_$k
+            out=$RUNS/seed_none_$k
             [ -e $out ] && { echo "$out exists: delete it first (a partial re-pick)"; exit 1; }
             python src/equal_spend.py out/results/prepick/port_uuv/seed_none_$k --budget 1000 --out $out --as-run \
-                ${REPAIR_SCORE:+--repair-score $REPAIR_SCORE} > "$JOB_DIR/repick_$k.log" 2>&1 || exit 1
+                --repair-score $SCORE > "$JOB_DIR/repick_$k.log" 2>&1 || exit 1
         done
         pids=()
         for k in 1 2 3; do (
             for r in determinized norepair_determinized final; do
-                python src/recertify.py run out/results/core/port_uuv/seed_none_$k --rules $r --targets 0-29 \
-                    --workers 4 || exit 1
+                python src/recertify.py run $RUNS/seed_none_$k --rules $r --targets 0-29 --workers 4 || exit 1
             done ) > "$JOB_DIR/certify_$k.log" 2>&1 &
             pids+=($!)
         done
         for p in "${pids[@]}"; do wait $p || exit 1; done
-        python ../cluster/checks/uuv_repick_check.py' ;;
+        python ../cluster/checks/uuv_repick_check.py $RUNS' ;;
 item8-sets|item8-words)
-    need_key
+    need_key; variant "${args[0]:-}"
     c=port_uuv_sets; [ "$what" = item8-words ] && c=port_uuv_sets_words
-    submit --name "$what" --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
-        python src/run_ablation.py $c --unseeded 3 \${REPAIR_SCORE:+--set planner.repair_score=\$REPAIR_SCORE} &&
-        CONDITIONS=$c WORKERS=4 bash ../cluster/jobs/certify_llm.sh '' determinized final norepair_determinized" ;;
+    submit --name "$what$SFX" --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
+        python src/run_ablation.py $c$SFX --unseeded 3 &&
+        CONDITIONS=$c WORKERS=4 bash ../cluster/jobs/certify_llm.sh '$SFX' determinized final norepair_determinized" ;;
 item8-resample)
-    need_key
-    submit --name item8-resample --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
-        python src/run_ablation.py port_uuv_resample --unseeded 3 \${REPAIR_SCORE:+--set planner.repair_score=\$REPAIR_SCORE} &&
-        CONDITIONS=port_uuv WORKERS=4 bash ../cluster/jobs/certify_llm.sh _resample" ;;
+    need_key; variant "${args[0]:-}"
+    submit --name "item8-resample$SFX" --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
+        python src/run_ablation.py port_uuv_resample$SFX --unseeded 3 &&
+        CONDITIONS=port_uuv WORKERS=4 bash ../cluster/jobs/certify_llm.sh _resample$SFX" ;;
 item8-baselines2)   # step 6; PPO refits save their networks for the sealed pass and replace item 8's PPO checks
     submit --name item8-baselines2 --cpus 8 --mem 32 --time 12:00:00 -- bash -c '
         for b in uuv_random_policies uuv_one_instance uuv_ppo_features uuv_ppo_raw; do
             nets=; case $b in uuv_ppo_*) nets="--nets out/results/baselines/$b/nets.pt" ;; esac
             python src/recertify.py baseline configs/baselines/$b.yaml $nets --workers 4 > "$JOB_DIR/$b.log" 2>&1 || exit 1
         done' ;;
-item8-curves)       # step 6: needs item8-repick and item8-resample finished
-    submit --name item8-curves --cpus 8 --mem 40 --time 12:00:00 -- bash -c '
+item8-curves)       # step 6: needs item8-repick and item8-resample (same variant) finished. OneShot has no repair,
+    variant "${args[0]:-}"   # so it runs once, on the capped_sum runs; the budget curves pick with repair, per variant
+    submit --name "item8-curves$SFX" --cpus 8 --mem 40 --time 12:00:00 -- \
+        env RUNS="$RUNS" SFX="$SFX" bash -c '
         for k in 1 2 3; do
-            [ -f out/results/core/port_uuv/seed_none_$k/determinized.json ] || { echo "run item8-repick first"; exit 1; }
-            [ -f out/results/ablations/port_uuv_resample/seed_none_$k/SYMBOLIC_results.parquet ] ||
+            [ -f $RUNS/seed_none_$k/determinized.json ] || { echo "run item8-repick first"; exit 1; }
+            [ -f out/results/ablations/port_uuv_resample$SFX/seed_none_$k/SYMBOLIC_results.parquet ] ||
                 { echo "run item8-resample first"; exit 1; }
         done
-        for k in 1 2 3; do
-            python src/oneshot.py out/results/core/port_uuv/seed_none_$k --targets 0-29 --workers 4 \
-                > "$JOB_DIR/oneshot_$k.log" 2>&1 || exit 1
-        done
-        python src/budget_transfer.py out/results/core/port_uuv/seed_none_* \
-            out/results/ablations/port_uuv_resample/seed_none_* --targets 0-29 --price 0.10 0.50 --workers 4 \
+        if [ -z "$SFX" ]; then
+            for k in 1 2 3; do
+                python src/oneshot.py $RUNS/seed_none_$k --targets 0-29 --workers 4 \
+                    > "$JOB_DIR/oneshot_$k.log" 2>&1 || exit 1
+            done
+        fi
+        python src/budget_transfer.py $RUNS/seed_none_* \
+            out/results/ablations/port_uuv_resample$SFX/seed_none_* --targets 0-29 --price 0.10 0.50 --workers 4 \
             > "$JOB_DIR/budget.log" 2>&1' ;;
 item8-sealed)       # step 7, once: after every validation result of steps 3-6 is final and committed
     [ "${SEALED:-}" = yes ] || { echo "step 7 checks the sealed test members: run only once every validation";
@@ -186,7 +197,9 @@ item8-sealed)       # step 7, once: after every validation result of steps 3-6 i
     submit --name item8-sealed --cpus 8 --mem 40 --time 16:00:00 -- bash -c '
         T=30-41
         for run in out/results/core/port_uuv/seed_none_* \
-                   out/results/ablations/port_uuv_{sets,sets_words,resample}/seed_none_*; do
+                   out/results/ablations/port_uuv_{sets,sets_words,resample}/seed_none_* \
+                   out/results/ablations/port_uuv{,_sets,_sets_words,_resample}_mf/seed_none_*; do
+            [ -d $run ] || continue                     # a variant that was not run
             for r in determinized norepair_determinized final; do
                 python src/recertify.py run $run --rules $r --targets $T --prefix transfer_sealed --unseal --workers 4 \
                     || exit 1
