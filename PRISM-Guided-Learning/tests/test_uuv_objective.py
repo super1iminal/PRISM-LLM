@@ -60,3 +60,21 @@ def test_a_tree_learns_the_objective(setup):
     tree.fit([inst])
     rules = tree.rules(inst)["tree_raw_t"]
     domain.spec(inst).policy(rules, domain.spec(inst).vocabulary(cfg.rules))   # compiles in the baseline vocabulary
+
+
+def test_random_policies_and_one_instance_learn_the_objective(setup):
+    """Asher's UUV plan, step 6: both rank or learn on the objective model and are certified as rules."""
+    from baselines.simple import OneInstance, RandomPolicies
+    cfg, domain, inst = setup
+    rand = RandomPolicies(domain, {"count": 5, "requirement": "objective", "certify": "rules"})
+    one = OneInstance(domain, {"instance": int(inst.id), "requirement": "objective", "certify": "rules",
+                               "keys": {"one_instance": ["s", "alt", "water_visib"]}})
+    assert not rand.explicit and not one.explicit and RandomPolicies(domain, {}).explicit
+    for b in (rand, one):
+        b.config = cfg
+        b.fit([inst])
+        (rules,) = b.rules(inst).values()
+        worst = domain.fast_checker(inst, cfg, domain.spec(inst).vocabulary(cfg.rules)).worst(rules)
+        assert set(worst) == {r.name for r in domain.spec(inst).requirements}
+    assert 0 <= rand.best < 5
+    assert len(one.tables["one_instance"]) > 0           # one key per visible state: the vote over t and ok

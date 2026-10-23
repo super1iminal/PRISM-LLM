@@ -17,12 +17,22 @@
 #   bash cluster/checklist.sh item7 luna|gemini      # restart arm on the families (only once item 7's conditions hold)
 #   bash cluster/checklist.sh item8-baselines        # UUV family: trees (raw, features), PPO, hand-written list (no LLM)
 #   bash cluster/checklist.sh item8-full             # UUV family: 3 Haiku runs of port_uuv, then their certification
+#   Asher's UUV plan (item 8 follow-up), steps 3-7 (out/paper/RESULTS-NOTES-rajan.md, item 8), in this order:
+#   bash cluster/checklist.sh item8-repick           # step 3: the pick with repair on item 8's runs (PRISM only)
+#   bash cluster/checklist.sh item8-sets             # step 4: 3 runs of port_uuv_sets (Haiku 5.5), then certified
+#   bash cluster/checklist.sh item8-words            # step 5: 3 runs of port_uuv_sets_words (Haiku 5.5), certified
+#   bash cluster/checklist.sh item8-resample         # step 6: the Restart arm, 3 runs of port_uuv_resample (Haiku)
+#   bash cluster/checklist.sh item8-baselines2       # step 6: PPO raw, random policies, one instance, PPO refits
+#   bash cluster/checklist.sh item8-curves           # step 6: OneShot and budget curves (after repick and resample)
+#   SEALED=yes bash cluster/checklist.sh item8-sealed   # step 7, last: every controller on the sealed members 30-41
+#   REPAIR_SCORE=members_first (environment, for item8-repick/-sets/-words/-resample): the pick's repair objective
+#   (planner.repair_score) instead of the conditions' capped_sum; same for every step, or the rows do not compare.
 #   bash cluster/checklist.sh report                 # viz/rajan_results.py (Rajan's tables; Asher rebuilds his own)
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$here/config.sh"
 cd "$REPO_DIR"
-what=${1:?usage: checklist.sh item1|item2|item3-smoke|item3-full|item3-certify|item4|item5|item6|item7|report}; shift
+what=${1:?usage: checklist.sh item1|item2|item3-smoke|item3-full|item3-certify|item4|item5|item6|item7|item8-...|report}; shift
 dry=(); args=()
 for a in "$@"; do if [ "$a" = --dry ]; then dry=(--dry); else args+=("$a"); fi; done
 # AFTER (environment): a Slurm dependency for every job this call submits (cluster/queue_all.sh sets it)
@@ -121,6 +131,81 @@ item8-full)
     submit --name item8-full --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
         python src/run_ablation.py port_uuv --unseeded 3 &&
         CONDITIONS=port_uuv bash ../cluster/jobs/certify_llm.sh ''" ;;
+item8-repick)       # step 3: no LLM calls; the item 8 originals stay in out/results/prepick/port_uuv
+    submit --name item8-repick --cpus 8 --mem 40 --time 8:00:00 -- bash -c '
+        for k in 1 2 3; do
+            out=out/results/core/port_uuv/seed_none_$k
+            [ -e $out ] && { echo "$out exists: delete it first (a partial re-pick)"; exit 1; }
+            python src/equal_spend.py out/results/prepick/port_uuv/seed_none_$k --budget 1000 --out $out --as-run \
+                ${REPAIR_SCORE:+--repair-score $REPAIR_SCORE} > "$JOB_DIR/repick_$k.log" 2>&1 || exit 1
+        done
+        pids=()
+        for k in 1 2 3; do (
+            for r in determinized norepair_determinized final; do
+                python src/recertify.py run out/results/core/port_uuv/seed_none_$k --rules $r --targets 0-29 \
+                    --workers 4 || exit 1
+            done ) > "$JOB_DIR/certify_$k.log" 2>&1 &
+            pids+=($!)
+        done
+        for p in "${pids[@]}"; do wait $p || exit 1; done
+        python ../cluster/checks/uuv_repick_check.py' ;;
+item8-sets|item8-words)
+    need_key
+    c=port_uuv_sets; [ "$what" = item8-words ] && c=port_uuv_sets_words
+    submit --name "$what" --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
+        python src/run_ablation.py $c --unseeded 3 \${REPAIR_SCORE:+--set planner.repair_score=\$REPAIR_SCORE} &&
+        CONDITIONS=$c WORKERS=4 bash ../cluster/jobs/certify_llm.sh '' determinized final norepair_determinized" ;;
+item8-resample)
+    need_key
+    submit --name item8-resample --cpus 8 --mem 40 --time 16:00:00 -- bash -c "
+        python src/run_ablation.py port_uuv_resample --unseeded 3 \${REPAIR_SCORE:+--set planner.repair_score=\$REPAIR_SCORE} &&
+        CONDITIONS=port_uuv WORKERS=4 bash ../cluster/jobs/certify_llm.sh _resample" ;;
+item8-baselines2)   # step 6; PPO refits save their networks for the sealed pass and replace item 8's PPO checks
+    submit --name item8-baselines2 --cpus 8 --mem 32 --time 12:00:00 -- bash -c '
+        for b in uuv_random_policies uuv_one_instance uuv_ppo_features uuv_ppo_raw; do
+            nets=; case $b in uuv_ppo_*) nets="--nets out/results/baselines/$b/nets.pt" ;; esac
+            python src/recertify.py baseline configs/baselines/$b.yaml $nets --workers 4 > "$JOB_DIR/$b.log" 2>&1 || exit 1
+        done' ;;
+item8-curves)       # step 6: needs item8-repick and item8-resample finished
+    submit --name item8-curves --cpus 8 --mem 40 --time 12:00:00 -- bash -c '
+        for k in 1 2 3; do
+            [ -f out/results/core/port_uuv/seed_none_$k/determinized.json ] || { echo "run item8-repick first"; exit 1; }
+            [ -f out/results/ablations/port_uuv_resample/seed_none_$k/SYMBOLIC_results.parquet ] ||
+                { echo "run item8-resample first"; exit 1; }
+        done
+        for k in 1 2 3; do
+            python src/oneshot.py out/results/core/port_uuv/seed_none_$k --targets 0-29 --workers 4 \
+                > "$JOB_DIR/oneshot_$k.log" 2>&1 || exit 1
+        done
+        python src/budget_transfer.py out/results/core/port_uuv/seed_none_* \
+            out/results/ablations/port_uuv_resample/seed_none_* --targets 0-29 --price 0.10 0.50 --workers 4 \
+            > "$JOB_DIR/budget.log" 2>&1' ;;
+item8-sealed)       # step 7, once: after every validation result of steps 3-6 is final and committed
+    [ "${SEALED:-}" = yes ] || { echo "step 7 checks the sealed test members: run only once every validation";
+                                 echo "result is final and committed, as SEALED=yes bash cluster/checklist.sh item8-sealed"; exit 1; }
+    submit --name item8-sealed --cpus 8 --mem 40 --time 16:00:00 -- bash -c '
+        T=30-41
+        for run in out/results/core/port_uuv/seed_none_* \
+                   out/results/ablations/port_uuv_{sets,sets_words,resample}/seed_none_*; do
+            for r in determinized norepair_determinized final; do
+                python src/recertify.py run $run --rules $r --targets $T --prefix transfer_sealed --unseal --workers 4 \
+                    || exit 1
+            done
+        done > "$JOB_DIR/runs.log" 2>&1
+        for k in 1 2 3; do
+            python src/oneshot.py out/results/core/port_uuv/seed_none_$k --targets $T --prefix transfer_sealed \
+                --unseal --workers 4 || exit 1
+        done > "$JOB_DIR/oneshot.log" 2>&1
+        for b in uuv_hand uuv_tree_raw uuv_tree_features uuv_ppo_features uuv_ppo_raw uuv_random_policies \
+                 uuv_one_instance; do
+            nets=; case $b in uuv_ppo_*)        # the networks of step 6, never a new fit
+                nets="--nets out/results/baselines/$b/nets.pt"
+                [ -f out/results/baselines/$b/nets.pt ] || { echo "no $b networks: run item8-baselines2"; exit 1; } ;; esac
+            python src/recertify.py baseline configs/baselines/$b.yaml --set targets=$T $nets \
+                --prefix transfer_sealed --unseal --workers 4 > "$JOB_DIR/$b.log" 2>&1 || exit 1
+        done
+        python src/uuv_gate.py --targets $T --unseal --out out/paper/rajan/item8/gate_sealed.csv \
+            > "$JOB_DIR/gate.log" 2>&1' ;;
 report)
     submit --name report --cpus 4 --mem 16 --time 1:00:00 -- python viz/rajan_results.py ;;   # Asher's tables are his
 *) echo "unknown: $what"; exit 1 ;;

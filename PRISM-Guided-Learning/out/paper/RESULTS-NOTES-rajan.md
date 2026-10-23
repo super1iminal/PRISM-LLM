@@ -350,6 +350,53 @@ Evidence: `out/paper/rajan/item8/`.
   - **This comes from the objective, not the code.** Even the optimal controller for the objective, which can see
     `t` and `ok`, misses the safety threshold on 2 of 3 training members (member 0: 0.7703 against 0.7709). The
     objective trades a little safety for punctuality, and energy is not in it at all.
+- **Item 8 follow-up: Asher's UUV plan** (Oct 22, branch `rajanmaghera/uuv-2`). Steps 1-7 are prepared; no Fir job
+  has run.
+  - *Step 1, done* (`a3b355f9`). 12 sealed test members, ids 30-41 (W 7-12 at inspection 16 and 18 m), each bound
+    by interval iteration. Rows 0-29 are byte-identical; `configs/transfer/default.yaml` seals 30-41.
+  - *Step 2, done* (`d7d826c8`). The fast checker equals PRISM within 1e-7 on members 0-29 for every list the plan
+    names (`tests/test_uuv_fast_checker.py`). "Reached almost surely" uses the exact graph algorithms; value
+    iteration only approaches 1, which made expected energy read as infinite.
+  - *Steps 4 and 5, code done* (`d7d826c8`). Training rows 42-47; conditions `port_uuv_sets` and
+    `port_uuv_sets_words`; the words hooks and their test.
+  - *Step 3, prepared* (`cluster/checklist.sh item8-repick`). Item 8's runs moved to `out/results/prepick/port_uuv`.
+    `src/equal_spend.py --as-run` re-picks them into `out/results/core/port_uuv` as finished runs (rounds, results
+    parquet, task log). Then `cluster/checks/uuv_repick_check.py` runs the sanity check.
+    - Local trial: the NoRepair list equals item 8's on runs 1 and 2. Run 3 differs: its `any` rules are now resolved.
+    - **Finding: repair makes Full worse on UUV** (DECISIONS, [REVIEW]). Repair maximizes the members' capped margins
+      summed, so it trades safety's 1e-4 passing margin for energy and deadline gains.
+      - Run 1's list passing all three members is repaired into one passing none.
+      - Full then keeps a 2-of-3 list (frozen: fails validation members 1 and 2, which NoRepair certifies).
+      - With `planner.repair_score: members_first`, repair never loses a member. Run 1 keeps its 3-of-3 list (=
+        NoRepair), and run 3's repair lifts two candidates from 2 to 3 members.
+      - On the other benchmarks' stored runs, 5 of about 900 repaired candidates lost a member; no chosen list did.
+  - *Step 6, prepared.* Restart arm (`item8-resample`), OneShot and budget curves (`item8-curves`), and baselines
+    (`item8-baselines2`: `uuv_ppo_raw`, `uuv_random_policies`, `uuv_one_instance`, and both PPO configs refit with
+    `--nets`).
+    - Random policies and the one-instance table learn the objective and are certified as rules.
+    - Local trial on 3 members: both run end to end, and the checker agrees with PRISM.
+    - The paper pipeline is a separate commit: `rq1_comparison.yaml` benchmark `uuv`, plus `viz/paper_results.py`'s
+      `RQ1_BENCHES`, `RQ3_BENCHES`, `RESTARTS`, `BUDGET_PANELS`, `SIZE` and `SEALED`.
+      - A dry run with the output in scratch completes. UUV's baseline rows equal item 8's.
+      - UUV's uniform controller has no baseline config (the gate computes it), so the paper tables lack it; it is
+        in `tab_rq1-coverage-uuv`.
+  - *Step 7, prepared* (`SEALED=yes ... item8-sealed`). `uuv_gate.py --targets 30-41 --unseal` writes
+    `gate_sealed.csv`; without `--unseal` the gate refuses sealed members.
+    - `viz/rajan_results.py --items 8 --sealed` builds `tab_rq1-coverage-uuv-sealed`.
+  - *Smoke tests.*
+    - Free model (Nemotron, 1 chain × 2 rounds): `port_uuv_sets_words` on set 1 (42-44) and `port_uuv_resample`
+      both pass, 2 calls each.
+      - The words arm's second prompt names states and losses in words, with no `s=` / `water_visib=` form.
+      - The Restart arm's second prompt is identical to its first.
+    - Haiku: `cluster/smoke/uuv2_haiku_smoke.sh`, waiting for approval.
+  - *Report.* `tab_rq1-coverage-uuv` gets the plan's rows, with permissive, frozen and library coverage, and LLM calls
+    and reported cost per run. DT-raw and DT-voc are in the CSV only, with the note.
+  - *Job records.* Item 8's `meta.json` recorded `git_dirty: null`. `cluster/push.sh` copies `.git`, so on Fir the
+    index's file stats are stale and `git status` re-reads every file; on Lustre that likely exceeded the 120 s
+    limit.
+    - The `out/` exclusion was also resolved from the working directory.
+    - `cluster/lib/job.sh` now refreshes the index first (900 s), takes the diff from the top of the repository, and
+      sets `git_dirty` from it.
 
 
 ## Blocked

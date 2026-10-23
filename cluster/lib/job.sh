@@ -41,6 +41,13 @@ env = {k: v for k, v in os.environ.items() if k.startswith("SLURM_") and k in (
     "SLURM_JOB_ID", "SLURM_JOB_NAME", "SLURM_JOB_NODELIST", "SLURM_CPUS_PER_TASK", "SLURM_MEM_PER_NODE",
     "SLURM_JOB_ACCOUNT", "SLURM_SUBMIT_DIR", "SLURM_ARRAY_JOB_ID", "SLURM_ARRAY_TASK_ID")}
 root = os.environ.get("REPO_DIR", ".")
+def git_diff():
+    """`git diff --stat HEAD` outside PRISM-Guided-Learning/out (pathspecs from the top of the repo, whatever the
+    working directory), or None. cluster/push.sh copies .git, so the index's file stats are stale on Fir and git
+    re-reads every file once: refresh the index first, with time for Lustre (item 8's jobs recorded null here)."""
+    sh("git", "-C", root, "update-index", "-q", "--refresh", timeout=900)
+    return sh("git", "-C", root, "diff", "--stat", "HEAD", "--", ":(top)", ":(top,exclude)PRISM-Guided-Learning/out",
+              timeout=900)
 def hardware():
     out = {"os": " ".join(open("/etc/os-release").read().split("PRETTY_NAME=")[1].splitlines()[0].strip('"').split())
            if os.path.exists("/etc/os-release") else None, "kernel": os.uname().release,
@@ -62,9 +69,8 @@ meta = {"state": state, "exit_code": int(code) if code else None, "command": cmd
         "host": os.uname().nodename, "slurm": env,
         "time_limit": sh("squeue", "-h", "-j", os.environ.get("SLURM_JOB_ID", "0"), "-o", "%l"),
         "git_commit": sh("git", "-C", root, "rev-parse", "HEAD"),
-        "git_dirty": None if (st := sh("git", "-C", root, "status", "--porcelain", "--untracked-files=no",
-                                     "--", ".", ":!PRISM-Guided-Learning/out")) is None else bool(st),
-        "git_diff": sh("git", "-C", root, "diff", "--stat", "HEAD", "--", ".", ":!PRISM-Guided-Learning/out"),
+        "git_dirty": None if (diff := git_diff()) is None else bool(diff),   # tracked files outside out/ changed?
+        "git_diff": diff,
         "modules": os.environ.get("LOADEDMODULES", "").split(":"),
         "python": sys.version.split()[0], "java": next(iter((sh("java", "-version", stderr=True) or "").splitlines()), None),
         "prism": os.environ.get("PRISM_PATH"), "tmpdir": os.environ.get("TMPDIR"),

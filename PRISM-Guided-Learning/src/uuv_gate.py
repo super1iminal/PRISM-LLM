@@ -12,7 +12,10 @@ may fire, so the controller picks low, med or high with probability 1/3 at every
 before any redraw, so its value is the mean of the three runs that start with pick = 0, 1, 2 (every requirement is
 linear in the initial distribution). Its "certified" means the mean of each requirement passes with the band.
 
-Usage (from PRISM-Guided-Learning/): python src/uuv_gate.py [--data uuv_family_v0.csv] [--out out/paper/rajan/item8/gate.csv]
+Usage (from PRISM-Guided-Learning/):
+    python src/uuv_gate.py [--data uuv_family_v0.csv] [--targets 0-29] [--out out/paper/rajan/item8/gate.csv]
+    python src/uuv_gate.py --targets 30-41 --unseal --out out/paper/rajan/item8/gate_sealed.csv   (the test pass only)
+Sealed members (configs/transfer/default.yaml) are refused without --unseal.
 """
 import argparse
 from pathlib import Path
@@ -23,6 +26,7 @@ from config import load_config
 from core.domain import load_domain
 from core.verifier import PolicyVerifier, exact_verdict
 from settings import PROJECT_ROOT
+from transfer import guard_sealed, parse_ids
 
 START = "s = 11 | s = 0"     # start_task, start_search (STATES in domains/uuv/domain.py)
 # Search at med; once forced down to low, stay low until the visibility is one level above the poor band; keep high.
@@ -58,13 +62,17 @@ def verdict(v, worst, solver, cfg):
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--data", default="uuv_family_v0.csv")
+    p.add_argument("--targets", default="0-29", help="Member ids (default: the training and validation members)")
+    p.add_argument("--unseal", action="store_true", help="Allow sealed test members (the test pass only)")
     p.add_argument("--out", type=Path, default=PROJECT_ROOT / "out" / "paper" / "rajan" / "item8" / "gate.csv")
     a = p.parse_args()
+    ids = parse_ids(a.targets)
+    guard_sealed(a.data, ids, a.unseal)
     cfg = load_config("U1", [f"domain.dataset={a.data}"])
     domain = load_domain("uuv")
     refs = domain.reference_policies()
     rows = []
-    for inst in domain.load_instances(a.data):
+    for inst in (i for i in domain.load_instances(a.data) if int(i.id) in ids):
         v = PolicyVerifier(domain, inst, cfg)
         lists = {**refs, "hand": instantiate(HAND, inst.data)}
         for name, rules in lists.items():

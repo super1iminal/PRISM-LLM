@@ -13,7 +13,8 @@ suffix=${1?usage: certify_llm.sh <suffix> [rules...] (suffix "" for a condition 
 rules_arg=("$@")
 declare -A TARGETS=([port_ts_history]="12-19" [port_fam_history]="16-35,76-95,136-155"
                     [port_pacman_narrow_core]="0-7,9" [port_mer]="0-8" [port_mer_n]="0-8"
-                    [port_uuv]="0-29")          # item 8: the UUV family's training and validation members
+                    [port_uuv]="0-29"           # item 8: the UUV family's training and validation members
+                    [port_uuv_sets]="0-29" [port_uuv_sets_words]="0-29")   # Asher's UUV plan, steps 4 and 5
 declare -A DATA=([port_pacman_narrow_core]=pacman_transfer.csv [port_mer]=mer_transfer.csv
                  [port_mer_n]=mer_n_transfer.csv)
 status=0

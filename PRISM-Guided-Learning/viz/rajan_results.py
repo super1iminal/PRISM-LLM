@@ -293,74 +293,154 @@ def item3_ablation(exp) -> None:
 
 UUV_DATA = "uuv_family_v0"
 UUV_TRAIN = {0, 6, 10}                    # domains/uuv/data/uuv_family_v0.csv split == train
-UUV_METHODS = [                           # (row, kind, where): kind run = core runs, baseline = a baseline config
-    ("Full (Haiku 5.5)", "run", "ablations/port_uuv"),
-    ("DT-raw", "baseline", "uuv_tree_raw"),
-    ("DT-voc", "baseline", "uuv_tree_features"),
-    ("RL", "baseline", "uuv_ppo_features"),
-    ("Hand", "baseline", "uuv_hand"),
+UUV_SEALED = "30-41"                     # configs/transfer/default.yaml: checked only by step 7 (transfer_sealed_*)
+GATE_DIR = pr.OUT / "rajan" / "item8"
+# Asher's UUV plan, Reporting: (row, kind, where, frozen file, permissive file, what differs from Full, in the .tex)
+# kind run: <root>/<condition>'s runs (frozen/permissive: the transfer CSV suffix; None: not checked); baseline: a
+# baseline config (one action per state, or as written: frozen = permissive); gate: a fixed controller of
+# src/uuv_gate.py (gate.csv, gate_sealed.csv). 1-2-3-Go! learns one reachability objective, so it cannot represent the
+# deadline and the energy bound: its rows stay in the CSV, out of the .tex (UUV_TEX_NOTE).
+UUV_METHODS = [
+    ("Full (Haiku 5.5)", "run", "core/port_uuv", "_determinized", "", "the core configuration, with repair", True),
+    ("NoRepair", "run", "core/port_uuv", "_norepair_determinized", None, "no repair in the pick", True),
+    ("Restart", "run", "ablations/port_uuv_resample", "_determinized", "", "planner.retry: always", True),
+    ("OneShot", "run", "core/port_uuv", "_oneshot", None, "the first answer: no selection or repair", True),
+    ("Full, 3 training sets", "run", "ablations/port_uuv_sets", "_determinized", "",
+     "run.train_sets: 3 sets (42-44, 45-47 added)", True),
+    ("Full, 3 training sets, words", "run", "ablations/port_uuv_sets_words", "_determinized", "",
+     "the row above with feedback.words: true", True),
+    ("RL (PPO, features)", "baseline", "uuv_ppo_features", None, None, "method: PPO over our features", True),
+    ("RL (PPO, raw)", "baseline", "uuv_ppo_raw", None, None, "method: PPO over the raw variables", True),
+    ("Best of 1000 random policies", "baseline", "uuv_random_policies", None, None, "method", True),
+    ("Strategy of one instance (id 6)", "baseline", "uuv_one_instance", None, None, "method: W 8 / 8 m's optimum", True),
+    ("Uniform", "gate", "uniform", None, None, "fixed controller", True),
+    ("always_med", "gate", "always_med", None, None, "fixed controller", True),
+    ("stay", "gate", "stay", None, None, "fixed controller", True),
+    ("Hand (reference)", "baseline", "uuv_hand", None, None, "written with the family: not a blind baseline", True),
+    ("DT-raw", "baseline", "uuv_tree_raw", None, None, "method: 1-2-3-Go! over raw variables", False),
+    ("DT-voc", "baseline", "uuv_tree_features", None, None, "method: 1-2-3-Go! over our features", False),
 ]
+UUV_TEX_NOTE = (r"1-2-3-Go! (DT-raw, DT-voc) learns one reachability objective and cannot represent the step-bounded "
+                r"deadline or the energy bound; its rows are in the CSV only.")
 
 
-def uuv_checks(kind: str, where: str, frozen: bool) -> pd.DataFrame:
-    """Every (list, held-out target) check of one method under rule 2 (transfer_exact_*.csv), one row each."""
+def uuv_targets(sealed: bool):
+    from transfer import parse_ids
+    return set(parse_ids(UUV_SEALED)) if sealed else set(range(30)) - UUV_TRAIN
+
+
+def uuv_checks(kind: str, where: str, suffix: str, sealed: bool = False) -> pd.DataFrame:
+    """Every (list, held-out target) check of one row under rule 2, one row each, with `run` (the run, or the
+    baseline / controller) for library coverage."""
+    prefix = "transfer_sealed" if sealed else "transfer_exact"
     frames = []
     if kind == "run":
-        suffix = "_determinized" if frozen else ""
-        for run in pr.runs_of(where.split("/")[1], where.split("/")[0]):
-            path = run / f"transfer_exact_{UUV_DATA}{suffix}.csv"
+        root, name = where.split("/")
+        for run in pr.runs_of(name, root):
+            path = run / f"{prefix}_{UUV_DATA}{suffix}.csv"
             if path.exists():
-                frames.append(pd.read_csv(path).assign(list=lambda d, r=run.name: r + "/" + d.source.astype(str)))
-    else:
-        path = RESULTS / "baselines" / where / f"transfer_exact_{UUV_DATA}.csv"
+                frames.append(pd.read_csv(path).assign(run=run.name, list=lambda d, r=run.name: r + "/" + d.source.astype(str)))
+    elif kind == "baseline":
+        path = RESULTS / "baselines" / where / f"{prefix}_{UUV_DATA}.csv"
         if path.exists():
-            frames.append(pd.read_csv(path).assign(list=lambda d: d.source.astype(str)))
+            frames.append(pd.read_csv(path).assign(run=where, list=lambda d: d.source.astype(str)))
+    else:
+        path = GATE_DIR / ("gate_sealed.csv" if sealed else "gate.csv")
+        if path.exists():
+            g = pd.read_csv(path)
+            g = g[g.controller == where]
+            frames.append(pd.DataFrame({"target": g.instance, "source": where, "outcome": g.verdict,
+                                        "certified": g.verdict == "certified", "binding": g.binding,
+                                        "solver": g.solver, "run": where, "list": where}))
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
-    return df[~df.target.isin(UUV_TRAIN)]
+    return df[df.target.isin(uuv_targets(sealed))]
 
 
-def item8() -> None:
-    rows, tex = [], [r"\toprule", r"Controller & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) \\",
-                     r"\midrule", r"\multicolumn{5}{l}{\emph{UUV family (27 held-out members)}} \\"]
-    for name, kind, where in UUV_METHODS:
-        entry = {"bench": "uuv", "approach": name, "split": "validation", "checks": "exact"}
-        for label, frozen in (("frozen", True), ("permissive", False)):
-            if kind == "baseline" and not frozen:
-                continue                   # one action per state (trees, PPO) or as written (Hand): frozen = permissive
-            df = uuv_checks(kind, where, frozen)
+def uuv_spend(where: str) -> dict:
+    """LLM calls and OpenRouter's reported cost per run (llm_tasks.jsonl; a re-picked core run carries its source
+    run's log), mean and sd over the runs."""
+    root, name = where.split("/")
+    calls, cost = [], []
+    for run in pr.runs_of(name, root):
+        log = run / "llm_tasks.jsonl"
+        if not log.exists():
+            continue
+        metas = [(json.loads(l)["result"].get("meta") or {}) for l in log.read_text(encoding="utf-8").splitlines()]
+        calls.append(len(metas))
+        cost.append(sum((m.get("usage") or {}).get("cost") or 0 for m in metas))
+    c, d = pr.stats(calls), pr.stats(cost)
+    return {"llm_calls_mean": c["mean"], "llm_calls_sd": c["sd"], "cost_usd_mean": d["mean"], "cost_usd_sd": d["sd"]}
+
+
+def item8(sealed: bool = False) -> None:
+    targets = uuv_targets(sealed)
+    head = (f"UUV family, sealed test members {UUV_SEALED} ({len(targets)})" if sealed
+            else f"UUV family ({len(targets)} held-out members)")
+    rows, tex = [], [r"\toprule", r"Controller & Permissive (\%) & Frozen (\%) & Library (\%) & LLM calls & "
+                     r"Cost (\$) \\", r"\midrule", rf"\multicolumn{{6}}{{l}}{{\emph{{{head}}}}} \\"]
+    bad = 0
+    for name, kind, where, frozen_sfx, permissive_sfx, differs, in_tex in UUV_METHODS:
+        entry = {"bench": "uuv", "approach": name, "differs": differs, "split": "sealed test" if sealed else "validation",
+                 "checks": "exact"}
+        for label, sfx in (("frozen", frozen_sfx or ""), ("permissive", permissive_sfx)):
+            if sfx is None or (kind != "run" and label == "permissive"):
+                continue
+            df = uuv_checks(kind, where, sfx, sealed)
             if df.empty:
                 continue
             per = df.groupby("list").agg(coverage=("certified", "mean"), targets=("target", "count"),
                                          certified=("certified", "sum"))
             st = pr.stats(per.coverage)
+            lib = pr.stats(df.groupby(["run", "target"]).certified.any().groupby("run").mean())
             entry.update({f"{label}_mean": st["mean"], f"{label}_sd": st["sd"], f"{label}_n": st["n"],
                           f"{label}_certified_per_list": per.certified.mean(),
-                          f"{label}_targets_per_list": per.targets.mean()})
-            if frozen:
+                          f"{label}_targets_per_list": per.targets.mean(),
+                          f"{label}_library_mean": lib["mean"], f"{label}_library_sd": lib["sd"],
+                          f"{label}_library_n": lib["n"]})
+            if label == "frozen":
+                odd = ~df.outcome.isin(["certified", "failed"]) | ~df.solver.isin(["interval iteration",
+                                                                                    "linear programming"])
+                bad += int(odd.sum())
                 entry.update(inconclusive_share=(df.outcome == "inconclusive").mean(),
                              timeout_share=(df.outcome == "not_certifiable").mean(),
-                             failing_on=df[df.outcome != "certified"].binding.value_counts().to_dict())
-        if kind == "baseline" and "frozen_mean" in entry:
-            entry.update({k.replace("frozen", "permissive"): v for k, v in entry.items() if k.startswith("frozen")})
+                             failing_on=df[df.outcome != "certified"].binding.value_counts().to_dict(),
+                             misses=sorted(int(t) for t in df[~df.certified].target.unique()))
+        if kind != "run" and "frozen_mean" in entry:
+            entry.update({k.replace("frozen", "permissive", 1): v for k, v in list(entry.items())
+                          if k.startswith("frozen")})
         if "frozen_mean" not in entry:
-            note(f"item 8: no checks for {name} yet")
+            note(f"item 8: no {'sealed ' if sealed else ''}checks for {name} yet")
             continue
+        if kind == "run" and name not in ("NoRepair", "OneShot"):      # those two spend nothing of their own
+            entry.update(uuv_spend(where))
         rows.append(entry)
+        if not in_tex:
+            continue
+        library = (pr.pct(entry["frozen_library_mean"], entry["frozen_library_sd"], pr.count(entry["frozen_library_n"]))
+                   if kind == "run" else "--")
+        calls = (f"${entry['llm_calls_mean']:.0f}$" if not pd.isna(entry.get("llm_calls_mean", np.nan)) else "--")
+        cost = (f"${entry['cost_usd_mean']:.2f}$" if not pd.isna(entry.get("cost_usd_mean", np.nan)) else "--")
         tex.append(f"{name} & {pr.pct(entry.get('permissive_mean'), entry.get('permissive_sd'), pr.count(entry.get('permissive_n')))}"
                    f" & {pr.pct(entry['frozen_mean'], entry['frozen_sd'], pr.count(entry['frozen_n']))}"
-                   f" & {pr.share(entry.get('inconclusive_share'))} & {pr.share(entry.get('timeout_share'))} \\\\")
+                   f" & {library} & {calls} & {cost} \\\\")
+    if bad:
+        print(f"  WARNING: {bad} UUV checks inconclusive, timed out or not by the exact solvers")
     if rows:
-        pr.write_table("tab_rq1-coverage-uuv", tex + [r"\bottomrule"], rows)
+        pr.write_table("tab_rq1-coverage-uuv" + ("-sealed" if sealed else ""),
+                       tex + [r"\bottomrule", rf"\multicolumn{{6}}{{p{{0.95\linewidth}}}}{{\footnotesize {UUV_TEX_NOTE}}} \\"],
+                       rows)
         for r in rows:
-            print(f"  {r['approach']:18s} frozen {100 * r['frozen_mean']:.1f}% (n={r['frozen_n']}), "
-                  f"{r['frozen_certified_per_list']:.2f} of {r['frozen_targets_per_list']:.0f} per list")
+            print(f"  {r['approach']:32s} frozen {100 * r['frozen_mean']:.1f}% (n={r['frozen_n']}), "
+                  f"{r['frozen_certified_per_list']:.2f} of {r['frozen_targets_per_list']:.0f} per list, "
+                  f"library {100 * r['frozen_library_mean']:.1f}%")
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--items", nargs="+", type=int, default=[1, 2, 3, 4, 5, 6, 7, 8])
+    p.add_argument("--sealed", action="store_true", help="Item 8 on the sealed test members (after step 7 only)")
     a = p.parse_args(argv)
     TABLES.mkdir(parents=True, exist_ok=True)
     exp = None
@@ -369,7 +449,7 @@ def main(argv=None):
         pr.EXP = exp
     for item in a.items:
         print(f"== item {item}")
-        {1: item1, 2: item2, 4: item4, 5: item5, 6: item6, 8: item8}.get(item, lambda: None)()
+        {1: item1, 2: item2, 4: item4, 5: item5, 6: item6, 8: lambda: item8(a.sealed)}.get(item, lambda: None)()
         if item == 3:
             item3(exp)
         if item in (3, 7) and item == max(i for i in a.items if i in (3, 7)):

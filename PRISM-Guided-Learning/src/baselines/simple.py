@@ -11,11 +11,17 @@ target's explicit model.
   declared order) as a table from a key to an action, looked up on the targets. Each source names its key
   (`keys`): policy variables and rule-language state features (core evaluator), e.g. Pac-Man's variables, or the
   same with `steps` replaced by `moves_left` to align horizons by their end. Keys never seen in training are left
-  undecided (the worst case covers them).
+  undecided (the worst case covers them). On an objective model (`requirement: objective`), one key covers the
+  states that differ only in the objective's own variables (UUV: the step counter and the failure flag); the table
+  takes the action optimal in most of them, each state's optimal actions weighted 1/k as the trees' vote, ties to
+  the first in declared order.
 
 params:
   RandomPolicies: count (1000), seed (0), requirement (null: the first)
   OneInstance: instance (an id among the training ids), keys {source: [names]}, requirement (null: the first)
+  both: requirement: objective learns the domain's objective (Domain.objective, `ExplicitMDP(objective=True)`)
+    instead; certify: explicit (default: through each target's explicit model) | rules (one rule per decision state,
+    certified like any rule list: for requirements explicit_mdp cannot check, such as expected rewards)
 """
 from typing import Dict, List, Optional, Sequence
 
@@ -30,9 +36,15 @@ class _Explicit(Baseline):
     """Per-state policies on the explicit model; `rules` writes them one rule per state (small targets only)."""
     explicit = True
 
-    def _mdp(self, instance: Instance):
+    def __init__(self, domain, params):
+        super().__init__(domain, params)
+        if params.get("certify", "explicit") == "rules":
+            self.explicit = False       # certified as rules (`rules`), e.g. for reward requirements
+        self.objective = params.get("requirement") == "objective"
+
+    def _mdp(self, instance: Instance, objective: bool = False):
         from baselines.explicit_mdp import ExplicitMDP
-        return ExplicitMDP(self.domain, instance, self.config or load_config())
+        return ExplicitMDP(self.domain, instance, self.config or load_config(), objective=objective)
 
     def rules(self, target: Instance) -> Dict[str, Rules]:
         from baselines.explicit_mdp import per_state_rules
@@ -41,6 +53,8 @@ class _Explicit(Baseline):
 
     def _requirement(self, mdp):
         name = self.params.get("requirement")
+        if name == "objective":
+            return mdp.objective_requirement
         return next(r for r in mdp.spec.requirements if name in (None, r.name))
 
 
@@ -84,7 +98,7 @@ class RandomPolicies(_Explicit):
     def fit(self, train: Sequence[Instance]) -> None:
         total = np.zeros(self.count)
         for inst in train:
-            mdp = self._mdp(inst)
+            mdp = self._mdp(inst, self.objective)
             req = self._requirement(mdp)
             for lo in range(0, self.count, 50):
                 ks = range(lo, min(lo + 50, self.count))
@@ -122,12 +136,18 @@ class OneInstance(_Explicit):
 
     def fit(self, train: Sequence[Instance]) -> None:
         inst = next(i for i in train if int(i.id) == self.instance)
-        mdp = self._mdp(inst)
+        mdp = self._mdp(inst, self.objective)
         _, optimal = mdp.optimal_actions(self._requirement(mdp))
         states = np.flatnonzero(mdp.decision)
         actions = optimal[states].argmax(axis=1)
         for source, names in self.keys.items():
             rows = self.key_rows(mdp, states, names)
+            if self.objective:          # a key covers several states of the objective model: the vote
+                votes: Dict[tuple, np.ndarray] = {}
+                for r, o in zip(rows.tolist(), optimal[states].astype(float)):
+                    votes[tuple(r)] = votes.get(tuple(r), 0.0) + o / max(o.sum(), 1.0)
+                self.tables[source] = {k: int(np.argmax(v)) for k, v in votes.items()}
+                continue
             self.tables[source] = {tuple(r): int(a) for r, a in zip(rows.tolist(), actions)}
             if len(self.tables[source]) != len(states):
                 raise ValueError(f"key {names} does not tell the decision states of instance {self.instance} apart")
