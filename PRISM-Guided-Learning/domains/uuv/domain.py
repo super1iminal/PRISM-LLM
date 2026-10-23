@@ -38,6 +38,19 @@ STATES = {
 
 FOLLOW = {"p_follow": 0.92, "p_lost": 0.05, "p_fail": 0.03}
 
+# Mission states in words (`feedback.words`), from the model's comments and the description's state list
+PHASE_WORDS = {
+    "start_task": "starting a task (the first search altitude is chosen here)",
+    "start_search": "starting a search", "search_low": "searching at low altitude",
+    "search_med": "searching at medium altitude", "search_high": "searching at high altitude",
+    "found": "pipeline found (descending to follow it)", "following": "following the pipeline",
+    "recover_low": "recovering a failed thruster while searching low",
+    "recover_med": "recovering a failed thruster while searching at medium altitude",
+    "recover_high": "recovering a failed thruster while searching high",
+    "recover_following": "recovering a failed thruster while following", "done": "inspection done",
+    "lost_pipe": "pipeline lost (searching again from low altitude)",
+}
+
 
 def scaled_failures(rows: List[Dict[str, Any]], absorbing: str, k: float) -> List[Dict[str, Any]]:
     """`rows` with every `p_fail` times `k`; the probability `absorbing` (staying in the same state) takes up the
@@ -113,6 +126,43 @@ class UUV(Domain):
         return product_model(self.model(instance), instance.data["deadline"]), Requirement(
             name="goal", formula='F "goal"', threshold=0.0, bound=">=",
             description="the inspection is done within the deadline and no thruster ever fails")
+
+    def fast_checker(self, instance: Instance, config, vocabulary):
+        """The explicit model's numpy checker (baselines/explicit_mdp.RuleChecker), as for MER and Pac-Man: each
+        requirement's worst case over the completions a rule list allows, `G` as one minus the opposite `F`, the
+        deadline by backward induction, and expected energy until "done" from the model's state rewards. It lets the
+        pick repair candidates and resolve `any` (Asher's UUV plan, step 2)."""
+        from baselines.explicit_mdp import RuleChecker
+        return RuleChecker(self, instance, config, vocabulary)
+
+    def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
+        """The default (action features and their negations), the visibility bands and mission phases, and the
+        altitude and decision states by their codes."""
+        states = ["START_TASK", "START_SEARCH", "SEARCH_LOW", "SEARCH_MED", "SEARCH_HIGH", "RECOVER_LOW", "RECOVER_MED",
+                  "RECOVER_HIGH"]
+        return super().repair_literals(instance, vocabulary) + [
+            lit for f in ("poor_visib", "average_visib", "good_visib", "starting", "searching", "recovering")
+            for lit in (f, f"!{f}")] + [f"alt = {a}" for a in ("LOW", "MED", "HIGH")] \
+            + [f"alt != {a}" for a in ("LOW", "MED", "HIGH")] + [f"s = {c}" for c in states]
+
+    def state_words(self, instance: Instance, valuation: Dict[str, Any]) -> Optional[str]:
+        """A state in the mission's words (`feedback.words`; Asher's UUV plan, step 5), from the model and spec alone:
+        the mission phase, the active altitude, and the visibility with its band and what the band allows."""
+        d = instance.data
+        span = d["max_visib"] - d["min_visib"]
+        first_avg, first_good = -(-span // 3), -(-2 * span // 3)
+        names = {code: st for st, code in STATES.items()}
+        phase = PHASE_WORDS.get(names.get(valuation.get("s")), f"mission state {valuation.get('s')}")
+        alt = {a["code"]: a["name"] for a in ALTITUDES}.get(valuation.get("alt"), str(valuation.get("alt")))
+        v = valuation.get("water_visib")
+        band = ("poor (only low altitude allowed)" if v < first_avg else
+                "average (low or medium allowed)" if v < first_good else "good (every altitude allowed)")
+        return f"{phase}, active altitude {alt}, visibility {v} of {d['min_visib']}-{d['max_visib']}: {band}"
+
+    def loss_words(self, requirement) -> Optional[str]:
+        """What losing a requirement in one step means, for the failure feedback's risks (`feedback.words`)."""
+        return {"no_thruster_failure": "a thruster failure", "done_in_time": "missing the deadline",
+                "energy_budget": "exceeding the energy budget"}.get(requirement.name)
 
     def format_state(self, valuation: Dict[str, Any]) -> str:
         """Rule syntax, with the names of mission states and altitudes added."""

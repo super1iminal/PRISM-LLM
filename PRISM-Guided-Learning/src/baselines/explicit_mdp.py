@@ -117,6 +117,118 @@ class Model:
             V = new
         raise RuntimeError(f"value iteration did not converge in {MAX_ITERS} iterations")
 
+    state_rewards: Dict[str, np.ndarray] = {}     # reward structure -> state reward per state (ExplicitMDP, if needed)
+
+    def bounded_reach(self, goal: np.ndarray, steps: int, maximize: bool,
+                      mask: Optional[np.ndarray] = None) -> np.ndarray:
+        """Per state: the maximum (or minimum) over schedulers of reaching `goal` within `steps` transitions, by
+        backward induction over exactly `steps` steps (PRISM's `F<=k`). A state left without a choice keeps its value,
+        as a self-loop would."""
+        V = goal.astype(float)
+        reduce = np.maximum.reduceat if maximize else np.minimum.reduceat
+        blocked = -np.inf if maximize else np.inf
+        for _ in range(steps):
+            q = self.matrix @ V
+            if mask is not None:
+                q = np.where(mask, q, blocked)
+            best = reduce(q, self.choice_start[:-1])
+            V = np.where(goal, 1.0, np.where(np.isfinite(best), best, V))
+        return V
+
+    def reward_until(self, reward: str, formula: str, maximize: bool, mask: Optional[np.ndarray] = None) -> np.ndarray:
+        """Per state: the maximum (or minimum) over schedulers of the expected state reward `reward` collected until
+        `formula` (`F ψ`) holds, each state's reward counted when the state is left (PRISM's `R{r}[F ψ]`). Infinite
+        where the optimizing scheduler can miss ψ with positive probability, as PRISM reports it. Value iteration from
+        zero, stopped when no state changes by more than `TOL`."""
+        stay, goal = self.path_sets(formula)
+        if not stay.all():
+            raise NotImplementedError(f"reward until {formula!r}: only F")
+        r = self.state_rewards[reward]
+        sure = self.almost_surely(goal, every=maximize, mask=mask)     # ψ with probability 1 (graph algorithm)
+        V = np.where(sure | goal, 0.0, np.inf)
+        reduce = np.maximum.reduceat if maximize else np.minimum.reduceat
+        blocked = -np.inf if maximize else np.inf
+        solve = sure & ~goal
+        to_infinite = (self.matrix @ np.isinf(V).astype(float)) > 0      # choices that may reach an infinite state
+        for _ in range(MAX_ITERS):
+            q = np.where(to_infinite, np.inf, self.matrix @ np.where(np.isinf(V), 0.0, V))
+            if mask is not None:
+                q = np.where(mask, q, blocked)
+            best = reduce(q, self.choice_start[:-1])
+            new = np.where(solve, r + np.where(np.isfinite(best), best, 0.0), V)
+            if np.abs(new[solve] - V[solve]).max(initial=0.0) <= TOL:
+                return new
+            V = new
+        raise RuntimeError(f"value iteration did not converge in {MAX_ITERS} iterations")
+
+    def almost_surely(self, goal: np.ndarray, every: bool, mask: Optional[np.ndarray] = None) -> np.ndarray:
+        """Per state: is `goal` reached with probability 1 under every scheduler (`every`, PRISM's Prob1A) or under
+        some scheduler (Prob1E)? Graph algorithms on the choices `mask` keeps (a state left without one keeps a
+        self-loop), exact where value iteration only approaches 1."""
+        keep = np.ones(self.C, dtype=bool) if mask is None else mask
+        state = self.choice_state
+        succ = sp.csr_matrix((np.ones(self.target.size), (np.repeat(np.arange(self.C), np.diff(self.trans_start)),
+                                                         self.target)), shape=(self.C, self.S))
+        has_choice = np.zeros(self.S, dtype=bool)
+        has_choice[state[keep]] = True
+
+        def some_choice(ok_choice: np.ndarray) -> np.ndarray:
+            out = np.zeros(self.S, dtype=bool)
+            out[state[ok_choice & keep]] = True
+            return out
+
+        if every:
+            # avoid: states where some scheduler avoids `goal` forever (greatest fixpoint: some choice stays inside)
+            avoid = ~goal
+            while True:
+                inside = (succ @ (~avoid).astype(float)) == 0                  # every successor in avoid
+                nxt = avoid & (some_choice(inside) | ~has_choice)              # no choice: a self-loop stays
+                if (nxt == avoid).all():
+                    break
+                avoid = nxt
+            # can reach `avoid` with positive probability while not in `goal`: then not almost sure
+            bad = avoid.copy()
+            while True:
+                hits = (succ @ bad.astype(float)) > 0
+                nxt = bad | (~goal & some_choice(hits))
+                if (nxt == bad).all():
+                    break
+                bad = nxt
+            return ~bad
+        U = np.ones(self.S, dtype=bool)
+        while True:                                                            # Prob1E: nested fixpoint
+            stays = (succ @ (~U).astype(float)) == 0
+            R = goal.copy()
+            while True:
+                hits = (succ @ R.astype(float)) > 0
+                nxt = R | (U & some_choice(stays & hits))
+                if (nxt == R).all():
+                    break
+                R = nxt
+            if (R == U).all():
+                return U
+            U = R
+
+    def requirement_value(self, requirement: Requirement, worst: bool, mask: Optional[np.ndarray] = None) -> float:
+        """The requirement's worst (or best) value in the initial state, for the kinds `value` leaves out: `G φ`
+        (1 minus the opposite optimum of `F !φ`), `F<=k ψ` (`bounded_reach`) and expected rewards until `F ψ`
+        (`reward_until`); `F` / `U` as `reach`. Labels only, as everywhere here."""
+        op = requirement.worst_op() if worst else requirement.best_op()
+        maximize = op.endswith("max")
+        f = requirement.formula.strip()
+        if requirement.reward is not None:
+            if requirement.reward not in self.state_rewards:
+                raise NotImplementedError(f"reward structure {requirement.reward!r}: state rewards only")
+            return float(self.reward_until(requirement.reward, f, maximize, mask)[self.initial])
+        bounded = _BOUNDED.match(f)
+        if bounded:
+            _, goal = self.path_sets("F " + bounded.group(2))
+            return float(self.bounded_reach(goal, int(bounded.group(1)), maximize, mask)[self.initial])
+        globally = _GLOBALLY.match(f)
+        if globally:
+            return 1.0 - float(self.reach(f"F !({globally.group(1)})", maximize=not maximize, mask=mask)[self.initial])
+        return float(self.reach(f, maximize=maximize, mask=mask)[self.initial])
+
     def value(self, requirement: Requirement, worst: bool) -> float:
         """The requirement's worst (or best) value in the initial state."""
         if requirement.reward is not None:
@@ -225,13 +337,18 @@ class ExplicitMDP(Model):
             cmd = [self.runner.prism_path, str(base.with_suffix(".prism")), "-explicit",
                    "-exportstates", f"{base}.sta", "-exporttrans", f"{base}.tra", "-exportlabels", f"{base}.lab",
                    "-javamaxmem", self.runner.java_max_mem]
+            rewards = not objective and any(r.reward is not None for r in self.spec.requirements)
+            if rewards:     # state rewards per structure (the fast checker's expected-reward requirements)
+                cmd += ["-exportstaterewards", f"{base}.srew"]
             out = run_call(PrismCall(tuple(cmd), self.runner.timeout, self.runner.max_concurrent))
             if "Error" in out or not Path(f"{base}.tra").exists():
                 raise PrismError("\n".join(l for l in out.splitlines() if "rror" in l) or out[-2000:])
             self.variables, self.values = _read_states(f"{base}.sta")
             labels, initial = _read_labels(f"{base}.lab", len(self.values))
             parts = _read_transitions(f"{base}.tra", self.actions)
+            state_rewards = _read_state_rewards(base, len(self.values)) if rewards else {}
         super().__init__(*parts, labels=labels, initial=initial)
+        self.state_rewards = state_rewards
 
     # ------------------------------------------------------------ what the policy sees
 
@@ -448,7 +565,9 @@ class RuleChecker:
         mask = np.ones(m.C, dtype=bool)
         mask[self.mine] = allowed[m.choice_state[self.mine], m.choice_action[self.mine]]
         sub = masked_part(m, mask)
-        return {r.name: float(sub.reach(r.formula, maximize=r.worst_op() == "Pmax")[sub.initial])
+        return {r.name: (float(sub.reach(r.formula, maximize=r.worst_op() == "Pmax")[sub.initial])
+                         if r.reward is None and not (_BOUNDED.match(r.formula) or _GLOBALLY.match(r.formula))
+                         else sub.requirement_value(r, worst=True))
                 for r in self.spec.requirements}
 
 
@@ -467,10 +586,13 @@ def masked_part(model: Model, mask: np.ndarray) -> Model:
     states = new[model.choice_state[choices]]
     S = int(keep.sum())
     empty = np.setdiff1d(np.arange(S), states)
-    return _build(S, np.r_[states, empty], np.r_[model.choice_action[choices], np.full(empty.size, -1)],
+    part = _build(S, np.r_[states, empty], np.r_[model.choice_action[choices], np.full(empty.size, -1)],
                   np.r_[np.repeat(np.arange(choices.size), lengths[choices]), choices.size + np.arange(empty.size)],
                   np.r_[new[model.target[tr]], empty], np.r_[model.prob[tr], np.ones(empty.size)],
                   {k: v[keep] for k, v in model.labels.items()}, new[model.initial])
+    if model.state_rewards:
+        part.state_rewards = {k: v[keep] for k, v in model.state_rewards.items()}
+    return part
 
 
 def optimal_strategy(domain: Domain, instance: Instance, config: Config, requirement: Optional[str] = None):
@@ -598,6 +720,24 @@ def _read_transitions(path: str, actions: Sequence[str]):
 # ---------------------------------------------------------------- path formulas over labels
 
 _TOKEN = re.compile(r'\s*("[^"]*"|[()!&|]|\w+)')
+_BOUNDED = re.compile(r"^\s*F\s*<=\s*(\d+)\s+(.+)$")       # F<=k ψ
+_GLOBALLY = re.compile(r"^\s*G\s+(.+)$")                     # G φ
+
+
+def _read_state_rewards(base: Path, S: int) -> Dict[str, np.ndarray]:
+    """Reward structure name -> state reward per state, from PRISM's `-exportstaterewards <base>.srew` (one file, or
+    one per structure as <base>1.srew, <base>2.srew, ..., each headed `# Reward structure "<name>"`)."""
+    out = {}
+    for path in sorted(base.parent.glob(base.name + "*.srew")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        name = next((re.search(r'"([^"]+)"', l).group(1) for l in lines if l.startswith("# Reward structure")), None)
+        rows = [l for l in lines if l.strip() and not l.startswith("#")]
+        r = np.zeros(S)
+        for line in rows[1:]:                         # rows[0]: states and non-zero entries
+            i, w = line.split()
+            r[int(i)] = float(w)
+        out[name or path.stem] = r
+    return out
 
 
 def _path_sets(formula: str, labels: Dict[str, np.ndarray], S: int) -> Tuple[np.ndarray, np.ndarray]:
