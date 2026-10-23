@@ -350,8 +350,40 @@ Evidence: `out/paper/rajan/item8/`.
   - **This comes from the objective, not the code.** Even the optimal controller for the objective, which can see
     `t` and `ok`, misses the safety threshold on 2 of 3 training members (member 0: 0.7703 against 0.7709). The
     objective trades a little safety for punctuality, and energy is not in it at all.
-- **Item 8 follow-up: Asher's UUV plan** (Oct 22, branch `rajanmaghera/uuv-2`). Steps 1-7 are prepared; no Fir job
-  has run.
+- **Item 8 follow-up: Asher's UUV plan** (Oct 22-23, branch `rajanmaghera/uuv-2`). Steps 1-6 are run on Fir (commit
+  `014ede0c`; every job `git_dirty: false`, no check inconclusive, timed out or by the fallback). Step 7 (sealed) waits.
+  - **Validation results** (`tab_rq1-coverage-uuv`, 27 held-out members; frozen = permissive, every list resolved):
+
+    | Controller | Frozen per list | Library | Calls / $ per run |
+    |---|---|---|---|
+    | Full (repair: capped sum) | 88.9% ± 3.7 | 88.9% | 67 / $0.14 (item 8's rounds) |
+    | Full, members_first | 91.4% ± 2.1 | 91.4% | (same rounds) |
+    | NoRepair (= item 8) | 91.4% ± 2.1 | 91.4% | |
+    | Restart | 91.4% ± 2.1 | 91.4% | 86 / $0.13 |
+    | Restart, members_first | 92.6% ± 0.0 | 92.6% | 86 / $0.13 |
+    | OneShot | 37.0% | 37.0% | |
+    | 3 training sets | 80.7% ± 30.4 | 92.6% | 174 / $0.38 |
+    | 3 training sets, members_first | 91.4% ± 4.1 | **100%** | 182 / $0.39 |
+    | 3 sets + words | 79.4% ± 30.0 | 93.8% ± 5.7 | 176 / $0.38 |
+    | 3 sets + words, members_first | 90.9% ± 4.6 | **100%** | 169 / $0.38 |
+    | PPO, features (refit, nets saved) | 92.6% ± 0.0 | | |
+    | PPO, raw | 82.7% ± 4.3 | | |
+    | Best of 1000 random policies | 18.5% | | |
+    | Strategy of one instance (id 6) | 55.6% | | |
+    | Uniform / `always_med` / `stay` | 0% / 88.9% / 85.2% | | |
+    | Hand (reference) | 100% | | |
+    | DT-raw / DT-voc (CSV only) | 55.6% / 0% | | |
+
+    - Repair with the capped sum hurts on UUV: Full is below NoRepair (run 1 loses its 3-of-3 list), and the 3-set
+      arms' per-list coverage drops to about 80% with an sd of 30, because some repaired lists fail the safety
+      requirement nearly everywhere. With `members_first`, Full equals NoRepair and the 3-set arms reach 91% per list.
+    - With three training sets, a run's library certifies every held-out member under `members_first` (all 6 runs).
+    - Words do not change coverage (90.9% against 91.4% per list; both libraries 100%).
+    - Every 3-set run under `members_first` solves all 3 training sets (18 of 18). Under the capped sum, 10 of 18.
+    - The members missed most are 3, 4 (W 7 at 12 and 14 m, safety) and 7-9 (W 8 at 10-14 m, energy), as in item 8.
+  - *Spend.* About $5.30 of Haiku for both variants (18 runs). The first attempt stopped at the OpenRouter key's weekly
+    limit ($90, shared): 403s on every call of 12 runs and some calls of 4. Those runs were deleted (a copy was
+    pulled first) and rerun on Oct 23 after the limit was raised; the rerun has no error.
   - *Step 1, done* (`a3b355f9`). 12 sealed test members, ids 30-41 (W 7-12 at inspection 16 and 18 m), each bound
     by interval iteration. Rows 0-29 are byte-identical; `configs/transfer/default.yaml` seals 30-41.
   - *Step 2, done* (`d7d826c8`). The fast checker equals PRISM within 1e-7 on members 0-29 for every list the plan
