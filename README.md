@@ -1,22 +1,22 @@
 # Verified Reuse of LLM-Written Controllers for Self-Adaptive Systems
 
-This repository contains the implementation, configurations and results of the paper.
+This replication package contains the implementation, configurations and results of the paper.
 
 ## Requirements
 
 - Python 3.11+ with the packages in `requirements.txt`
 - Java 11+ (needed by PRISM)
-- PRISM Model Checker 4.10
-- An OpenRouter API key (the LLM runs: Claude Haiku 5.5 / Sonnet 5.5, GPT-6 Luna, Gemini 3.8 Flash)
+- PRISM Model Checker 4.10.1
+- An OpenRouter API key (the LLM runs: Claude Haiku 5.5, GPT-6 Luna, Gemini 3.8 Flash)
 - Optional: Docker, only for the Storm stage of `src/certs.py` (image `movesrwth/storm:stable`). Nothing else uses
   Storm.
 
 ## Installation
 
-1. Download the repository
+1. Download the replication package
 2. Install the Python packages: `pip install -r requirements.txt`
-3. Install PRISM 4.10 (https://www.prismmodelchecker.org/download.php). On Linux:
-   `tar xf prism-4.10-linux64-x86.tar.gz && cd prism-4.10-linux64-x86 && ./install.sh`
+3. Install PRISM 4.10.1 (https://www.prismmodelchecker.org/download.php). On Linux:
+   `tar xf prism-4.10.1-linux64-x86.tar.gz && cd prism-4.10.1-linux64-x86 && ./install.sh`
 4. Put PRISM's `bin/` on `PATH`, or set `PRISM_PATH` to the `prism` executable
 5. Set `OPENROUTER_API_KEY` to your OpenRouter key: `export OPENROUTER_API_KEY=...`
 
