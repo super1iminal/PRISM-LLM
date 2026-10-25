@@ -4,7 +4,14 @@ There is no endpoint that takes a list of chats, so a batch is sent as concurren
 runs them in parallel. `llm.model` is an OpenRouter model id (e.g. `qwen/qwen3-14b`), not an Ollama tag.
 Providers serve their own weights (FP8 or BF16, not Ollama's q4_K_M), so runs are a condition of their
 own. `llm.openrouter.providers` pins the providers to use, in order, with no fallback to others.
+With `llm.openrouter.structured: false` (models without structured outputs) the schema goes at the end of the
+prompt instead, and the reply's JSON object is cut out of any surrounding text or code fence.
+`llm.openrouter.schema_adapter` rewrites the answer schema for providers whose strict JSON-schema mode needs another
+form (`adapt_schema`; empty by default: the schema is sent as the planner builds it). Whatever the schema sent, the
+planner validates every answer against its own model (`core.planner.rule_schema`), so the limits hold either way.
 """
+import copy
+import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +20,47 @@ from typing import Any, Dict, List
 from config import LLMConfig
 from core.backends.base import BackendInfo, LLMBackend
 from core.tasks import LLMResult, LLMTask
+
+
+SCHEMA_IN_PROMPT = ("\n\nAnswer with one JSON object and nothing else (no code fence, no text around it). "
+                    "It must follow this JSON schema:\n")
+
+
+def json_object(text: str) -> str:
+    """The JSON object in a reply: from its first `{` to its last `}` (the reply unchanged if it has none)."""
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if 0 <= start < end else text
+
+
+def adapt_schema(schema: Dict[str, Any], adapter: List[str]) -> Dict[str, Any]:
+    """`schema` rewritten by each step of `adapter`, in order (a copy; the planner's schema is never changed):
+    - `no_additional_properties`: `additionalProperties: false` on every object (OpenAI's strict mode requires it);
+    - `inline_refs`: every `$ref` to `#/$defs/<name>` replaced by that definition, and `$defs` dropped;
+    - `drop:<keyword>`: that keyword removed everywhere (e.g. `drop:maxLength` for a provider that rejects it)."""
+    out = copy.deepcopy(schema)
+    defs = out.get("$defs", {})
+
+    def walk(node: Any, step: str) -> Any:
+        if isinstance(node, list):
+            return [walk(x, step) for x in node]
+        if not isinstance(node, dict):
+            return node
+        if step == "inline_refs" and "$ref" in node:
+            return walk(copy.deepcopy(defs[node["$ref"].rsplit("/", 1)[1]]), step)
+        node = {k: walk(v, step) for k, v in node.items()
+                if not (step.startswith("drop:") and k == step[len("drop:"):])}
+        if step == "no_additional_properties" and node.get("type") == "object":
+            node["additionalProperties"] = False
+        return node
+
+    for step in adapter:
+        if step not in ("no_additional_properties", "inline_refs") and not step.startswith("drop:"):
+            raise ValueError(f"unknown llm.openrouter.schema_adapter step: {step}")
+        out = walk(out, step)
+        if step == "inline_refs":
+            out.pop("$defs", None)
+        defs = out.get("$defs", {})
+    return out
 
 
 class OpenRouterBackend(LLMBackend):
@@ -36,6 +84,8 @@ class OpenRouterBackend(LLMBackend):
         if settings.quantizations:
             provider["quantizations"] = list(settings.quantizations)
         self._provider = provider
+        self._structured = settings.structured
+        self._adapter = list(settings.schema_adapter)
 
     def execute_batch(self, tasks: List[LLMTask]) -> List[LLMResult]:
         if len(tasks) <= 1:
@@ -46,13 +96,18 @@ class OpenRouterBackend(LLMBackend):
     def request(self, task: LLMTask) -> Dict[str, Any]:
         """The chat-completions arguments for `task`. `num_ctx` is not sent: the provider sets the context."""
         params = task.params
-        kwargs: Dict[str, Any] = {"model": task.model, "messages": task.messages, "max_tokens": params["num_predict"]}
+        messages = task.messages
+        if task.schema is not None and not self._structured:
+            *head, last = messages
+            messages = [*head, {**last, "content": last["content"] + SCHEMA_IN_PROMPT + json.dumps(task.schema)}]
+        kwargs: Dict[str, Any] = {"model": task.model, "messages": messages, "max_tokens": params["num_predict"]}
         for key in ("temperature", "seed"):
             if key in params:
                 kwargs[key] = params[key]
-        if task.schema is not None:
+        if task.schema is not None and self._structured:
+            schema = adapt_schema(task.schema, self._adapter) if self._adapter else task.schema
             kwargs["response_format"] = {"type": "json_schema",
-                                         "json_schema": {"name": "answer", "strict": True, "schema": task.schema}}
+                                         "json_schema": {"name": "answer", "strict": True, "schema": schema}}
         kwargs["extra_body"] = {"provider": self._provider, "reasoning": {"enabled": bool(params.get("think"))}}
         return kwargs
 
@@ -63,6 +118,8 @@ class OpenRouterBackend(LLMBackend):
             if not response.choices:
                 raise RuntimeError("the response has no choices")
             text = response.choices[0].message.content or ""
+            if task.schema is not None and not self._structured:
+                text = json_object(text)
         except Exception as e:
             return LLMResult(task.id, None, error=f"{type(e).__name__}: {e}", seconds=time.time() - start)
         usage = response.usage

@@ -43,6 +43,8 @@ class OpenRouterConfig:
     quantizations: List[str]                  # accepted weight precisions, e.g. [fp8, bf16]; [] = any
     timeout_s: float                          # per request
     max_retries: int                          # the client's retries on rate limits and server errors
+    structured: bool                          # send the answer schema as response_format; false: in the prompt
+    schema_adapter: List[str]                 # rewrites of the schema sent (core/backends/openrouter.adapt_schema)
 
 
 @dataclass
