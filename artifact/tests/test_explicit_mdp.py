@@ -1,11 +1,11 @@
-"""src/baselines/explicit_mdp.py: a domain's model as PRISM exports it, its optimum, and the PRISM certificate of a
+"""src/core/explicit.py: a domain's model as PRISM exports it, its optimum, and the PRISM certificate of a
 per-state policy."""
 import shutil
 
 import numpy as np
 import pytest
 
-from baselines.explicit_mdp import ExplicitMDP, per_state_rules
+from core.explicit import ExplicitMDP, per_state_rules
 from baselines.gridworld_mdp import ACTIONS, GridMDP, optimal_actions
 from config import load_config
 from core.domain import Instance, load_domain
@@ -86,9 +86,9 @@ def test_a_randomized_policy_is_the_mixture_of_its_actions(pac8):
 
 
 def test_optimal_strategy_is_the_trees_optimal_actions(pac8):
-    """explicit_mdp.optimal_strategy (`feedback.optimal`, `prompt.demonstration` on Pac-Man and MER): per state the
+    """core.explicit.optimal_strategy (`feedback.optimal`, `prompt.demonstration` on Pac-Man and MER): per state the
     trees' optimal actions and the chance of not crashing."""
-    from baselines.explicit_mdp import optimal_strategy
+    from core.explicit import optimal_strategy
     strategy = optimal_strategy(pac8.domain, pac8.instance, CFG)
     crash, actions = pac8.spec.requirements[0], pac8.actions
     value, optimal = pac8.optimal_actions(crash)
@@ -101,7 +101,7 @@ def test_optimal_strategy_is_the_trees_optimal_actions(pac8):
 
 
 def test_only_reachability_and_until_over_labels():
-    from baselines.explicit_mdp import _path_sets
+    from core.explicit import _path_sets
     labels = {"a": np.array([True, False, False]), "b": np.array([False, True, False])}
     stay, goal = _path_sets('!"a" U ("b" | "a")', labels, 3)
     assert stay.tolist() == [False, True, True] and goal.tolist() == [True, True, False]

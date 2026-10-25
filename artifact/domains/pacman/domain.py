@@ -42,11 +42,6 @@ class PacMan(Domain):
                         "cells, so compare positions with each other (e.g. `xG0 < xP`, `yG1 = yP`) and use the "
                         "features."}
 
-    def fast_checker(self, instance: Instance, config, vocabulary):
-        """The explicit model's numpy checker (baselines/explicit_mdp.RuleChecker)."""
-        from baselines.explicit_mdp import RuleChecker
-        return RuleChecker(self, instance, config, vocabulary)
-
     def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
         """The default and comparisons of Pac-Man's position with the ghosts', headings and removed ghosts."""
         return super().repair_literals(instance, vocabulary) + [
@@ -56,7 +51,7 @@ class PacMan(Domain):
 
     def optimal_strategy(self, instance: Instance, config):
         """The crash requirement's optimal actions on the explicit model, what 1-2-3-Go!'s trees learn from."""
-        from baselines.explicit_mdp import optimal_strategy
+        from core.explicit import optimal_strategy
         return optimal_strategy(self, instance, config)
 
     def context(self, instance: Instance) -> Dict[str, Any]:

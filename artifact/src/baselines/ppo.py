@@ -338,7 +338,7 @@ def train_explicit(env: _Env, steps: int, envs: int, seed: int, gamma: float, lo
 
 class ExplicitPPO(PPO):
     """PPO on any domain (`params.model: explicit`), sampling the training instances' explicit models
-    (explicit_mdp.py, `_Env`): remaining nondeterminism, such as Pac-Man's idle step, is resolved uniformly in
+    (core/explicit.py, `_Env`): remaining nondeterminism, such as Pac-Man's idle step, is resolved uniformly in
     training. Observations at decision states: `raw`, the policy-visible variables scaled by their declared
     ranges over the training instances (fixed, so longer horizons extrapolate); or `features`, the named
     rule-language features (core evaluator), integer ones scaled by their largest value in training. Frozen as
@@ -372,7 +372,7 @@ class ExplicitPPO(PPO):
         self.scale = None
 
     def observe(self, mdp, states: np.ndarray) -> np.ndarray:
-        """The network's input on `states` of `mdp` (an explicit_mdp.ExplicitMDP)."""
+        """The network's input on `states` of `mdp` (an core.explicit.ExplicitMDP)."""
         if self.kind == "raw":
             x = mdp.obs[states].astype(np.float32)
         else:
@@ -383,7 +383,7 @@ class ExplicitPPO(PPO):
 
     def fit(self, train: Sequence[Instance]) -> None:
         from baselines.base import named_sets
-        from baselines.explicit_mdp import ExplicitMDP
+        from core.explicit import ExplicitMDP
         from config import load_config
         by_id = {int(i.id): i for i in train}
         config = self.config or load_config()
@@ -418,8 +418,8 @@ class ExplicitPPO(PPO):
         return out
 
     def rules(self, target: Instance) -> Dict[str, Rules]:
-        """One rule per decision state (explicit_mdp.per_state_rules): small targets only."""
-        from baselines.explicit_mdp import ExplicitMDP, per_state_rules
+        """One rule per decision state (core.explicit.per_state_rules): small targets only."""
+        from core.explicit import ExplicitMDP, per_state_rules
         from config import load_config
         mdp = ExplicitMDP(self.domain, target, self.config or load_config())
         return {s: per_state_rules(mdp, p) for s, p in self.policies(mdp).items()}

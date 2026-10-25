@@ -128,7 +128,7 @@ class Column(NamedTuple):
 
 class ExplicitDecisionTree(DecisionTree):
     """1-2-3-Go! on any domain (`params.model: explicit`), from the training instances' explicit models
-    (explicit_mdp.py).
+    (core/explicit.py).
 
     Training data: every decision state of each training instance (PRISM's model holds only reachable states) with
     every optimal action for one requirement (`requirement`, default the first) over all schedulers, one sample
@@ -170,7 +170,7 @@ class ExplicitDecisionTree(DecisionTree):
         self.info: Dict[str, Dict[str, Any]] = {}
 
     def fit(self, train: Sequence[Instance]) -> None:
-        from baselines.explicit_mdp import ExplicitMDP
+        from core.explicit import ExplicitMDP
         by_id = {int(i.id): i for i in train}
         config = self.config or load_config()
         for name, ids in named_sets(self.sets, list(by_id)).items():
@@ -197,7 +197,7 @@ class ExplicitDecisionTree(DecisionTree):
                   flush=True)
 
     def inputs(self, mdp, states: np.ndarray) -> Tuple[np.ndarray, List[Column]]:
-        """The tree's inputs on `states` of `mdp` (an explicit_mdp.ExplicitMDP), and their columns."""
+        """The tree's inputs on `states` of `mdp` (an core.explicit.ExplicitMDP), and their columns."""
         if self.kind == "raw":
             return mdp.obs[states], [Column(v.name, None, v.type == "bool") for v in mdp.spec.variables]
         table, columns = mdp.features(states, self.feature_names or [f.name for f in mdp.spec.features])

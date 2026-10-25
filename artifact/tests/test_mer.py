@@ -95,7 +95,7 @@ def test_baseline_optimal_actions_make_progress(domain, instances):
     """A disabled action is a self-loop, so its value equals the state's; the baselines' optimal actions (maximizing)
     must still lead to the error, so the strategy of first optimal actions reaches the optimum."""
     import numpy as np
-    from baselines.explicit_mdp import ExplicitMDP
+    from core.explicit import ExplicitMDP
     mdp = ExplicitMDP(domain, instances["n1_x0.01"], load_config("mer_baseline"))
     _, optimal = mdp.optimal_actions(mdp.spec.requirements[0])
     policy = np.where(optimal.any(axis=1), optimal.argmax(axis=1), -1)
@@ -105,7 +105,7 @@ def test_baseline_optimal_actions_make_progress(domain, instances):
 def test_a_demonstration_takes_the_shortcut(domain, instances):
     """`prompt.demonstration` on n = 1: the optimal strategy's run, along the outcomes most likely to succeed, asks for
     comm while user 2 holds drive and takes the arbiter's shortcut (k becomes 1), which ends in the error."""
-    from baselines.explicit_mdp import optimal_strategy
+    from core.explicit import optimal_strategy
     from core.optimal import demonstration
     config = load_config("mer_baseline")
     steps = demonstration(PolicyVerifier(domain, instances["n1_x0.01"], config),

@@ -91,7 +91,7 @@ def test_an_explicit_tree_compiles_into_rules_that_pick_its_action(inputs):
     """1-2-3-Go! on the explicit model: trained on Pac-Man horizon 8, its rules (one per action, the tree as an
     if-then-else) pick the tree's action in every decision state of horizon 10, and its leaves are as many rules."""
     from baselines.decision_tree import ExplicitDecisionTree
-    from baselines.explicit_mdp import ExplicitMDP
+    from core.explicit import ExplicitMDP
     cfg = load_config("pacman_baseline")
     domain = load_domain("pacman")
     inst = {int(i.id): i for i in domain.load_instances("pacman_transfer.csv")}
@@ -120,7 +120,7 @@ def _pacman():
 @needs_prism
 def test_the_ppo_sampler_follows_the_explicit_model():
     """A fixed policy's simulated crash rate on Pac-Man horizon 10 is its exact value."""
-    from baselines.explicit_mdp import ExplicitMDP
+    from core.explicit import ExplicitMDP
     from baselines.ppo import _Env
     cfg, domain, inst = _pacman()
     mdp = ExplicitMDP(domain, inst[1], cfg)
@@ -144,7 +144,7 @@ def test_the_ppo_sampler_follows_the_explicit_model():
 
 @needs_prism
 def test_explicit_ppo_freezes_a_policy_for_every_decision_state():
-    from baselines.explicit_mdp import ExplicitMDP
+    from core.explicit import ExplicitMDP
     from baselines.ppo import PPO, ExplicitPPO
     cfg, domain, inst = _pacman()
     ppo = PPO(domain, {"model": "explicit", "observation": "features", "features": ["moves_left", "wall"],
@@ -170,7 +170,7 @@ def test_hashed_policies_are_fixed_by_their_seed():
 @needs_prism
 def test_one_instance_keeps_its_optimum_and_leaves_unseen_states_open():
     from baselines import load_method
-    from baselines.explicit_mdp import ExplicitMDP
+    from core.explicit import ExplicitMDP
     cfg, domain, inst = _pacman()
     seen = ["xP", "yP", "dP", "xG0", "yG0", "dG0", "xG1", "yG1", "dG1"]
     one = load_method("one_instance")(domain, {"instance": 0, "keys": {"by_steps": seen + ["steps"],

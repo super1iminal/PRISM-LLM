@@ -170,11 +170,15 @@ class Domain:
         return {"hide": [], "literal_sums": True, "note": ""}
 
     def fast_checker(self, instance: Instance, config, vocabulary) -> Optional[Any]:
-        """Optional fast exact checker of `instance` for rule lists parsed with `vocabulary` (`planner.repair`,
+        """Fast exact checker of `instance` for rule lists parsed with `vocabulary` (`planner.repair`,
         `planner.pick: candidates`): its `worst(rules, order=None)` gives each requirement's worst-case value of the
         `(condition, action)` pairs (with `any` taking the first allowed action of `order` if given), and raises
-        `core.rules.RuleError` if they do not parse. None if the domain has none."""
-        return None
+        `core.rules.RuleError` if they do not parse. By default core/checker.py on the instance's exported model; None
+        where a requirement is outside what it solves (rewards, step bounds)."""
+        from core.checker import RuleChecker, supported
+        if not supported(self.spec(instance).requirements):
+            return None
+        return RuleChecker(self, instance, config, vocabulary)
 
     def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
         """Conjuncts `planner.repair` may add to conditions: by default each boolean policy variable and each feature

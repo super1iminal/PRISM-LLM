@@ -7,7 +7,7 @@ out/results/baselines/<name>/transfer_<dataset stem>.csv in src/transfer.py's fo
 target, `trained` marking the instances that source was fitted on) plus `method`, `fit.json` for methods that
 report what their fit produced (e.g. a tree's size and rules), and prints certified targets per source. Methods
 whose policies are per-state (`Baseline.explicit`) are certified through each target's explicit model
-(baselines/explicit_mdp.py), the others through their rules. Rows
+(core/explicit.py), the others through their rules. Rows
 of an existing CSV for targets this run does not check are kept. `--rules open` certifies the same lists with their
 action orders left open (core.rules.open_ties), into transfer_<dataset stem>_open.csv: certified however ties are
 broken.
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from baselines import load_method
-from baselines.explicit_mdp import ExplicitMDP
+from core.explicit import ExplicitMDP
 from config import load_config, load_file
 from core.domain import load_domain
 from core.prism import PrismRunner
@@ -90,7 +90,7 @@ def run(config_path: Path, overrides=(), out_root: Path = BASELINES_PATH, rules:
 
 
 def certify_explicit(domain, cfg, baseline, targets) -> List[dict]:
-    """Per-state policies certified through each target's explicit model (baselines/explicit_mdp.py), one target at
+    """Per-state policies certified through each target's explicit model (core/explicit.py), one target at
     a time, since a model of millions of states takes gigabytes."""
     rows = []
     for t in targets:

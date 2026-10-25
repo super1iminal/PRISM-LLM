@@ -21,7 +21,7 @@ class Baseline(ABC):
     """Fitted once on the training instances (`fit`), then asked for its policies on each target (`rules`).
 
     Methods whose policies have no compact rules (`explicit = True`: a network, a table, a randomized policy) give
-    per-state policies on the target's explicit model instead (`policies`), which explicit_mdp.ExplicitMDP.certify
+    per-state policies on the target's explicit model instead (`policies`), which core.explicit.ExplicitMDP.certify
     hands to PRISM; their `rules` are the same policies as one rule per state, for small targets only.
     """
     explicit = False
@@ -39,7 +39,7 @@ class Baseline(ABC):
         """Source name -> the frozen rule list to certify on `target`."""
 
     def policies(self, mdp) -> Dict[str, np.ndarray]:
-        """Source name -> its per-state policy on `mdp` (an explicit_mdp.ExplicitMDP of the target), for `explicit`
+        """Source name -> its per-state policy on `mdp` (an core.explicit.ExplicitMDP of the target), for `explicit`
         methods."""
         raise NotImplementedError
 

@@ -446,7 +446,7 @@ def ii_check(row) -> dict:
     runner = PrismRunner(prism, extra_args=args)
     try:
         if isinstance(ctl, tuple) and ctl[0] == "explicit":
-            from baselines.explicit_mdp import ExplicitMDP
+            from core.explicit import ExplicitMDP
             mdp = ExplicitMDP(domain, inst, cfg)
             spec = mdp.spec
             model = mdp.under(ctl[1].policies(mdp)[str(row.list_id)])
@@ -754,7 +754,7 @@ def export_model(row, tmp: Path):
     domain, cfg, insts, ctl = context(row)
     inst = insts[int(row.instance)]
     if isinstance(ctl, tuple) and ctl[0] == "explicit":
-        from baselines.explicit_mdp import ExplicitMDP
+        from core.explicit import ExplicitMDP
         mdp = ExplicitMDP(domain, inst, cfg)
         m = mdp.under(ctl[1].policies(mdp)[str(row.list_id)])
         m = m.part(m.reachable())
