@@ -1,8 +1,7 @@
 """Gridworld case study: sequential goals, static obstacles, a moving obstacle and slippery moves.
 
 Dataset rows (CSV): n, goals {k: (row, col)}, static [(row, col)], moving [(row, col)] (optional),
-BFS_steps. Mirrors the legacy model in src/legacy/prism_model.py, but as a PRISM MDP whose
-actions are left open for the policy.
+BFS_steps. A PRISM MDP whose actions are left open for the policy.
 """
 import ast
 import heapq
@@ -27,7 +26,7 @@ AVOID_THRESHOLD = 0.7
 
 
 def expand_cycle(path: List) -> List:
-    """Moving obstacle path -> repeating cycle (same rule as legacy GridWorld._expand_path)."""
+    """Moving obstacle path -> repeating cycle."""
     if len(path) <= 1:
         return list(path)
     if path[-1] == path[0]:

@@ -20,7 +20,7 @@ stopped early (solved) has no rows after its last round and keeps its last list 
 
 A run with `planner.chains` > 1 and `planner.pick: candidates` (the core loop) has no single kept list per round: its
 final list is the pick over every round of every chain. Its curve (`chain_budget_table`) is, per round budget R, that
-pick (with repair, as src/equal_spend.py does at one budget) over every chain cut to its first R rounds, with `any`
+pick (with repair) over every chain cut to its first R rounds, with `any`
 resolved by the pick's order (determinized.json's list), the LLM calls and tokens of those rounds, and its
 certification on each target by src/transfer.py's own check. Round R = the last round is the run's own final list.
 Writes <run dir>/budget_transfer_chains.csv.
@@ -187,7 +187,7 @@ def budget_table(run_dir: Path, targets: Optional[str] = None, dataset: Optional
 
 def chain_picks(run_dir: Path, log: Callable[[str], None] = print) -> List[dict]:
     """Per training set of a `planner.chains` run and round budget R: the pick over its chains cut to their first R
-    rounds (src/equal_spend.py's re-pick), its list with `any` resolved by the pick's order, the LLM calls and tokens
+    rounds, its list with `any` resolved by the pick's order, the LLM calls and tokens
     of those rounds, and whether the list passes every member (the pick's exact check). No LLM calls."""
     from core.planner import SymbolicPlanner
     from core.rules import fixed_order

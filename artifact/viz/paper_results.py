@@ -77,7 +77,7 @@ def write_table(label: str, tex: List[str], rows: List[dict]) -> None:
 
 def save_figure(fig, label: str) -> None:
     (OUT / "figures").mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT / "figures" / f"{label}.pdf", bbox_inches="tight")
+    fig.savefig(OUT / "figures" / f"{label}.pdf", bbox_inches="tight", metadata={"CreationDate": None})
     plt.close(fig)
     print(f"wrote figures/{label}.pdf")
 

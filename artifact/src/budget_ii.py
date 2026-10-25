@@ -1,6 +1,6 @@
 """Budget and chain-count curves of finished multi-chain runs (no LLM calls), certified by the paper's rule.
 
-Two replays of a run's own pick with repair (src/equal_spend.py's re-pick), each list with `any` resolved by the
+Two replays of a run's own pick with repair, each list with `any` resolved by the
 pick's order and certified on held-out targets by src/recertify.py (interval iteration on every check; inconclusive
 within the band):
   * rounds: every chain cut to its first R rounds, R = 1 .. the run's rounds (as budget_transfer.chain_picks);

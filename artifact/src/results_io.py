@@ -9,7 +9,7 @@ from typing import Dict, List, Sequence, Tuple
 from core.domain import Requirement, load_domain
 
 SYMBOLIC_RESULTS = "SYMBOLIC_results.parquet"
-LEGACY_RESULTS = "LEGACY_FEEDBACK_SIMPLIFIED_results.parquet"
+LEGACY_RESULTS = "LEGACY_results.parquet"
 RESULT_FILES = {"symbolic": SYMBOLIC_RESULTS, "legacy": LEGACY_RESULTS}
 
 # What every run made before runs recorded config.json used (older runs). A historical record, not a setting.
