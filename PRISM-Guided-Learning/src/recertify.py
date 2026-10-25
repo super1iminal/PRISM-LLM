@@ -42,7 +42,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from baselines import load_method
-from baselines.explicit_mdp import ExplicitMDP
+from core.explicit import ExplicitMDP
 from config import load_config, load_file, load_run_config
 from core.domain import load_domain
 from core.prism import PrismCall, PrismError, PrismRunner, run_call, run_now

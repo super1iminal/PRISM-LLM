@@ -105,11 +105,6 @@ class GridWorld(Domain):
                         "obstacle's phase alone, which is what makes them carry over to every instance. Write "
                         "`obs_idx = 1 + 1` for phase 2."}
 
-    def fast_checker(self, instance: Instance, config, vocabulary):
-        """The exact numpy checker (baselines/gridworld_check.py)."""
-        from baselines.gridworld_check import GridChecker
-        return GridChecker(instance.data, self.spec(instance), vocabulary)
-
     def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
         """The default (flags, features and their negations) and, if the obstacle's phase is visible, each phase."""
         out = super().repair_literals(instance, vocabulary)

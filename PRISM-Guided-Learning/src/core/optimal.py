@@ -5,7 +5,7 @@ the initial prompt (`prompt.demonstration`).
 The domain supplies the strategy (`Domain.optimal_strategy`): per state, its optimal actions and the chance of
 success from there. It is the information 1-2-3-Go! learns from (gridworld: one objective for every requirement
 at once, the trees' `gridworld_mdp.optimal_actions`; Pac-Man and MER: their requirement's optimal actions,
-`explicit_mdp.ExplicitMDP.optimal_actions`), computed on a training member only.
+`core.explicit.ExplicitMDP.optimal_actions`), computed on a training member only.
 """
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple

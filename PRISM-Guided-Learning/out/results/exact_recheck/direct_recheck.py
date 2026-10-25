@@ -63,7 +63,7 @@ class Explicit:
         return cls(cstart, tstart, t, p, labels, init)
 
     @classmethod
-    def from_model(cls, m) -> "Explicit":       # baselines.explicit_mdp.Model
+    def from_model(cls, m) -> "Explicit":       # core.explicit.Model
         return cls(m.choice_start, m.trans_start, m.target, m.prob, m.labels, m.initial)
 
 
@@ -227,7 +227,7 @@ def main():
             domain, cfg, inst, controller = ctx(row.file)
             instance = inst[int(row.target)]
             if isinstance(controller, tuple):          # per-state policy on the explicit model
-                from baselines.explicit_mdp import ExplicitMDP
+                from core.explicit import ExplicitMDP
                 mdp = ExplicitMDP(domain, instance, cfg)
                 spec = mdp.spec
                 m = mdp.under(controller[1].policies(mdp)[str(row.source)])

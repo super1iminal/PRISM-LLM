@@ -21,8 +21,8 @@ Predecessor paper: [LLM-Based Grid-World Path Planning With Probabilistic Model 
 PRISM-Guided-Learning/
   src/
     core/              the domain-agnostic approach: rules, PRISM runner, verifier (exact solvers), planner (the
-                       loop), failure feedback, the pick and repair, prompts (core/templates/), LLM tasks, backends,
-                       schedulers
+                       loop), failure feedback, the pick and repair with their fast checker (checker.py, on the
+                       exported model explicit.py), prompts (core/templates/), LLM tasks, backends, schedulers
     baselines/         1-2-3-Go! trees, PPO, the hand-written template, rule-list search, random policies
     experiments/       the run store and the RQ1 comparison / RQ2 ablation harnesses
     legacy/            the predecessor's gridworld model (read by tests and old result files)

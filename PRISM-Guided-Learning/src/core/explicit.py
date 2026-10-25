@@ -1,6 +1,6 @@
-"""Any domain's instance as an explicit MDP in numpy arrays, for the baselines that need the whole model: optimal
-actions (1-2-3-Go!'s training data), simulation (PPO), the value of a per-state policy, and the PRISM certificate of a
-policy that has no compact rules.
+"""Any domain's instance as an explicit MDP in numpy arrays, for what needs the whole model: the fast checker
+(core/checker.py), optimal actions (`feedback.optimal`, 1-2-3-Go!'s training data), simulation (PPO), the value of a
+per-state policy, and the PRISM certificate of a policy that has no compact rules.
 
 The model is the domain's PRISM model of the instance as PRISM builds and exports it (explicit engine): every
 reachable state's valuation, its choices with their action labels and successors, and the state labels. Nothing here
@@ -406,39 +406,6 @@ class ExplicitMDP(Model):
                 if "Error" not in out and "did not converge" not in out and len(results) == len(reqs):
                     return {r.name: float(v) for r, v in zip(reqs, results)}
         raise PrismError("\n".join(l for l in out.splitlines() if "rror" in l or "converge" in l) or out[-2000:])
-
-
-class RuleChecker:
-    """Worst-case values of rule lists on one instance's explicit model, in numpy: the fast checker the loop uses where
-    it scores many candidate lists without PRISM (`planner.repair`, `planner.pick: candidates`), for domains whose
-    requirements are `F` / `U` over labels (Pac-Man, MER). The rules' allowed actions per state come from
-    core.vector (the PRISM encoding's semantics); the policy's choices they exclude are masked, and each requirement's
-    worst case is the opposite optimum over the rest (`Model.reach`)."""
-
-    def __init__(self, domain: Domain, instance: Instance, config: Config, vocabulary):
-        from core.vector import allowed_actions
-        self._allowed_actions = allowed_actions
-        self.mdp = ExplicitMDP(domain, instance, config)
-        self.spec, self.vocabulary = self.mdp.spec, vocabulary
-        self.values = {v.name: (self.mdp.obs[:, i] != 0) if v.type == "bool" else self.mdp.obs[:, i]
-                       for i, v in enumerate(self.spec.variables)}
-        self.cache: Dict = {}
-        self.mine = self.mdp.choice_action >= 0
-
-    def allowed(self, rules, order: Optional[Sequence[str]] = None):
-        policy = self.spec.policy(rules, self.vocabulary)
-        return self._allowed_actions(policy, self.values, self.mdp.S, self.cache, order)
-
-    def worst(self, rules, order: Optional[Sequence[str]] = None) -> Dict[str, float]:
-        """Each requirement's worst-case value from the initial state (`core.rules.RuleError` if the rules do not
-        parse), on the part of the model the rules' choices reach."""
-        allowed, _ = self.allowed(rules, order)
-        m = self.mdp
-        mask = np.ones(m.C, dtype=bool)
-        mask[self.mine] = allowed[m.choice_state[self.mine], m.choice_action[self.mine]]
-        sub = masked_part(m, mask)
-        return {r.name: float(sub.reach(r.formula, maximize=r.worst_op() == "Pmax")[sub.initial])
-                for r in self.spec.requirements}
 
 
 def masked_part(model: Model, mask: np.ndarray) -> Model:

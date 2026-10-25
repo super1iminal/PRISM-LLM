@@ -1,5 +1,5 @@
 """The cheap baselines of 1-2-3-Go!'s evaluation and the strategy of one instance applied to the others (Marsha's
-baseline), on any domain's explicit model (explicit_mdp.py). Their policies are per-state, certified through each
+baseline), on any domain's explicit model (core/explicit.py). Their policies are per-state, certified through each
 target's explicit model.
 
 - `Uniform`: every policy action with equal probability in every decision state (a randomized policy; other
@@ -31,11 +31,11 @@ class _Explicit(Baseline):
     explicit = True
 
     def _mdp(self, instance: Instance):
-        from baselines.explicit_mdp import ExplicitMDP
+        from core.explicit import ExplicitMDP
         return ExplicitMDP(self.domain, instance, self.config or load_config())
 
     def rules(self, target: Instance) -> Dict[str, Rules]:
-        from baselines.explicit_mdp import per_state_rules
+        from core.explicit import per_state_rules
         mdp = self._mdp(target)
         return {s: per_state_rules(mdp, p) for s, p in self.policies(mdp).items()}
 

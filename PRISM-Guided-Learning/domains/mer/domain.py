@@ -38,11 +38,6 @@ class Mer(Domain):
         return {"hide": [], "literal_sums": False,
                 "note": "Number literals may not be added or subtracted (no `1 + 1`): use the named codes."}
 
-    def fast_checker(self, instance: Instance, config, vocabulary):
-        """The explicit model's numpy checker (baselines/explicit_mdp.RuleChecker)."""
-        from baselines.explicit_mdp import RuleChecker
-        return RuleChecker(self, instance, config, vocabulary)
-
     def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
         """The default and the arbiter's and users' states by their codes."""
         return super().repair_literals(instance, vocabulary) + [
@@ -53,7 +48,7 @@ class Mer(Domain):
 
     def optimal_strategy(self, instance: Instance, config):
         """The err requirement's optimal actions on the explicit model, what 1-2-3-Go!'s trees learn from."""
-        from baselines.explicit_mdp import optimal_strategy
+        from core.explicit import optimal_strategy
         return optimal_strategy(self, instance, config)
 
 

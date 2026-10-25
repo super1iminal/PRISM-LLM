@@ -237,7 +237,7 @@ These numbers exist only for the previous loop, or the pre-fix version of the ne
   - **Inside the loop** ("fast"): Gauss–Seidel value iteration (`prism.method: gaussseidel`, PRISM's default convergence criterion), falling back to modified policy iteration. This is *not* plain value iteration, which fails on periodic chains.
   - **Exact checks** (final check of each run's lists, every held-out check in the tables, the sequential study): the certification rule above (`prism.exact_methods: [intervaliter, lp]`, `prism.ii_max_iters`, `prism.lp_tolerance`, `prism.exact_fallback_epsilon`). Its LP stage ran as Gauss–Seidel; those checks are replaced by the Oct 21 re-check (direct solves with an error bound, Storm 2.0.0 `--exact`).
   - **Timeout**: 900 s per PRISM call (`prism.timeout_s`).
-  - **Repair's "fast exact checker"** (`Domain.fast_checker`): a numpy model of the instance giving each requirement's worst-case value of a rule list. Gridworld: `baselines/gridworld_check.GridChecker`; MER and Pac-Man: the PRISM-exported explicit model in `baselines/explicit_mdp.RuleChecker`. Picked lists are re-checked with PRISM.
+  - **Repair's "fast exact checker"** (`Domain.fast_checker`): a numpy model of the instance giving each requirement's worst-case value of a rule list. Gridworld: `baselines/gridworld_check.GridChecker`; MER and Pac-Man: the PRISM-exported explicit model in `baselines/explicit_mdp.RuleChecker`. Picked lists are re-checked with PRISM. Since Oct 25 one checker serves every domain (`src/core/checker.py`); it gives the same values as both to 1.2e-12 (`tests/test_fast_checkers.py`, DECISIONS.md).
 - **Loop** (core configs):
 
   | | K (chains) | Rounds per chain | Stopping margin | Candidates (`pick_top`) | Repair (steps × neighbours) |

@@ -22,7 +22,7 @@ LOCK = threading.Lock()
 def export(domain, cfg, instance, controller, source, tmp: Path):
     """(spec, .tra, .lab) of the model the check certifies."""
     if isinstance(controller, tuple):
-        from baselines.explicit_mdp import ExplicitMDP
+        from core.explicit import ExplicitMDP
         import re
         mdp = ExplicitMDP(domain, instance, cfg)
         m = mdp.under(controller[1].policies(mdp)[source])

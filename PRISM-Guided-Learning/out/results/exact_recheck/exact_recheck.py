@@ -159,7 +159,7 @@ def exact_check(domain, cfg, instance, rules, timeout, **how):
 
 def exact_explicit(domain, cfg, instance, base, source, timeout, **how):
     """As exact_check for a per-state policy: the target's explicit model under it (as recertify.certify_explicit)."""
-    from baselines.explicit_mdp import ExplicitMDP
+    from core.explicit import ExplicitMDP
     mdp = ExplicitMDP(domain, instance, cfg)
     reqs = mdp.spec.requirements
     model = mdp.under(base.policies(mdp)[source])
