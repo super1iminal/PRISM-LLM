@@ -24,9 +24,19 @@ This replication package contains the implementation, configurations and results
 
 - `artifact/src`: source (`core/` the approach, `baselines/`, `experiments/`)
 - `artifact/configs`: run conditions, baselines, experiments, sequential studies
-- `artifact/domains`: case studies (gridworld, Pac-Man, MER, UUV, consensus)
-- `artifact/out/results`: results; `artifact/out/paper`: the paper's tables and figures
+- `artifact/domains`: case studies and their datasets
 - `artifact/tests`: tests
+- `artifact/out/paper`: the paper's tables and figures, and `certs.csv` (every verification verdict)
+- `artifact/out/results`: the stored runs
+  - `core/`: Full with Claude Haiku 5.5, with its NoRepair and OneShot lists (RQ1, RQ4)
+  - `ablations/`: GPT-6 Luna, Gemini 3.8 Flash, Restart and earlier loop variants (RQ1, RQ4); `B2`, `D7`, `R1`, `S1`
+    are replayed by the tests
+  - `baselines/`: DT-raw, DT-voc, RL and the other baselines (RQ1)
+  - `sequential/`: adaptation sequences (RQ3)
+  - `ceilings/`: the best any controller can do on each grid-world instance
+
+The paper's numbers come from `out/paper/`, built by `viz/paper_results.py` from `certs.csv` and the stored runs.
+Reports written by `src/run_experiment.py` use the loop's own solver and may differ slightly.
 
 ## Running (from `artifact/`)
 
@@ -45,6 +55,9 @@ python src/recertify.py run out/results/core/port_ts_history/seed_none_1 --rules
 
 # sequential study
 python src/sequential.py configs/sequential/shift_v0.yaml --mode frozen
+
+# synthesis vs. verification time (Fig. 7), measured again into a new file that viz/paper_results.py then reads
+python src/synthesis_time.py --out out/paper/tables/tab_rq2-synthesis-time.rerun.csv
 
 # the paper's tables and figures from the stored results
 python viz/paper_results.py
