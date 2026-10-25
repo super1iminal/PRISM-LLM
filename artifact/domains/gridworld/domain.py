@@ -1,0 +1,305 @@
+"""Gridworld case study: sequential goals, static obstacles, a moving obstacle and slippery moves.
+
+Dataset rows (CSV): n, goals {k: (row, col)}, static [(row, col)], moving [(row, col)] (optional),
+BFS_steps. Mirrors the legacy model in src/legacy/prism_model.py, but as a PRISM MDP whose
+actions are left open for the policy.
+"""
+import ast
+import heapq
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+import pandas as pd
+
+from core.domain import Domain, Instance
+
+PROB_FORWARD = 0.7
+PROB_SLIP_LEFT = 0.15
+PROB_SLIP_RIGHT = 0.15
+
+# Action label -> (row delta, col delta); slips are 90 degrees left/right of the intended move
+MOVES = {"up": (-1, 0), "right": (0, 1), "down": (1, 0), "left": (0, -1)}
+SLIP_LEFT = {"up": "left", "right": "up", "down": "right", "left": "down"}
+SLIP_RIGHT = {"up": "right", "right": "down", "down": "left", "left": "up"}
+
+GOAL_THRESHOLD = 0.8
+SEQUENCE_THRESHOLD = 0.8
+AVOID_THRESHOLD = 0.7
+
+
+def expand_cycle(path: List) -> List:
+    """Moving obstacle path -> repeating cycle (same rule as legacy GridWorld._expand_path)."""
+    if len(path) <= 1:
+        return list(path)
+    if path[-1] == path[0]:
+        return list(path[:-1])
+    return list(path) + list(path[-2:0:-1])
+
+
+def _parse(value, default):
+    if isinstance(value, str):
+        return ast.literal_eval(value)
+    return default if value is None or (isinstance(value, float) and pd.isna(value)) else value
+
+
+class GridWorld(Domain):
+
+    def load_instances(self, dataset: str) -> List[Instance]:
+        df = self.read_dataset(dataset)
+        instances = []
+        for idx, row in df.iterrows():
+            instances.append(Instance(id=str(idx), data={
+                "n": int(row["n"]),
+                "goals": _parse(row["goals"], {}),
+                "static": [tuple(o) for o in _parse(row["static"], [])],
+                "moving": [tuple(o) for o in _parse(row.get("moving"), [])],
+                "bfs_steps": int(row["BFS_steps"]),
+            }))
+        return instances
+
+    def context(self, instance: Instance) -> Dict[str, Any]:
+        d = instance.data
+        n = d["n"]
+        goal_nums = sorted(d["goals"])
+        goals = [{"k": k, "row": d["goals"][k][0], "col": d["goals"][k][1]} for k in goal_nums]
+        cycle = expand_cycle(d["moving"])
+
+        # Visual: S start, 1..K goals, X static obstacle, M moving obstacle path, . free
+        grid = [["." for _ in range(n)] for _ in range(n)]
+        for r, c in cycle:
+            grid[r][c] = "M"
+        for g in goals:
+            grid[g["row"]][g["col"]] = str(g["k"])
+        for r, c in d["static"]:
+            grid[r][c] = "X"
+        if grid[0][0] == ".":
+            grid[0][0] = "S"
+
+        return {
+            "n": n,
+            "goals": goals,
+            "static": d["static"],
+            "cycle": cycle,
+            "grid_rows": grid,
+            "prob_forward": PROB_FORWARD,
+            "prob_slip_left": PROB_SLIP_LEFT,
+            "prob_slip_right": PROB_SLIP_RIGHT,
+            "moves": [{"name": a, "dr": dr, "dc": dc} for a, (dr, dc) in MOVES.items()],
+            "outcomes": {a: [(a, PROB_FORWARD), (SLIP_LEFT[a], PROB_SLIP_LEFT), (SLIP_RIGHT[a], PROB_SLIP_RIGHT)]
+                         for a in MOVES},
+            "requirements": self._requirements(goal_nums, bool(cycle)),
+            **rule_vocabulary(n, goals, d["static"], cycle, phase_visible="obs_idx" in self.visible_extra),
+        }
+
+    def rule_scorer(self, instance: Instance):
+        """The numpy gridworld (src/baselines/gridworld_mdp.py, checked against PRISM in tests/test_gridworld_mdp.py)."""
+        from baselines.gridworld_mdp import RuleScorer
+        return RuleScorer(instance.data, self.spec(instance).variables)
+
+    def strict(self, instance: Instance) -> Dict[str, Any]:
+        """`rules.strict`: no coordinates and no grid or goal constants in conditions, only the features, the goal flags
+        and the obstacle's phase (written with 0, 1 and sums such as `obs_idx = 1 + 1`)."""
+        ks = sorted(instance.data["goals"])
+        return {"hide": ["x", "y", "N"] + [f"G{k}{rc}" for k in ks for rc in "RC"], "literal_sums": True,
+                "note": "The agent's coordinates (`x`, `y`) and the grid size and goal positions (`N`, `G1R`, ...) are "
+                        "not available to the rules: they must work from the features, the goal flags and the "
+                        "obstacle's phase alone, which is what makes them carry over to every instance. Write "
+                        "`obs_idx = 1 + 1` for phase 2."}
+
+    def fast_checker(self, instance: Instance, config, vocabulary):
+        """The exact numpy checker (baselines/gridworld_check.py)."""
+        from baselines.gridworld_check import GridChecker
+        return GridChecker(instance.data, self.spec(instance), vocabulary)
+
+    def repair_literals(self, instance: Instance, vocabulary) -> List[str]:
+        """The default (flags, features and their negations) and, if the obstacle's phase is visible, each phase."""
+        out = super().repair_literals(instance, vocabulary)
+        cycle = expand_cycle(instance.data.get("moving") or [])
+        if cycle and "obs_idx" in self.visible_extra:
+            phases = ["obs_idx = " + (" + ".join(["1"] * i) if i else "0") for i in range(len(cycle))]
+            out += phases + [f"!({p})" for p in phases]
+        return out
+
+    def optimal_strategy(self, instance: Instance, config):
+        """The optimal strategy the trees learn from (gridworld_mdp.optimal_actions): every goal in order, none
+        entered early, no collision, as one objective (each requirement's own optimum would mislead: avoiding the
+        obstacle alone is best done by never moving)."""
+        from baselines.gridworld_mdp import optimal_strategy
+        return optimal_strategy(instance.data)
+
+    def met(self, instance: Instance, requirement) -> Optional[Callable[[Dict[str, Any]], bool]]:
+        """The sequence requirements by the goal flags, which only turn true in order: `seq_a_before_b` is met once `ga`
+        holds, `complete_sequence` once the next-to-last goal's flag does (their formulas over goal cells are checked
+        from every state anew, so a goal entered in its turn reads as lost there)."""
+        name, goals = requirement.name, sorted(instance.data["goals"])
+        if name.startswith("seq_") and "_before_" in name:
+            flag = "g" + name[len("seq_"):name.index("_before_")]
+        elif name == "complete_sequence" and len(goals) > 1:
+            flag = f"g{goals[-2]}"
+        else:
+            return None
+        return lambda state: bool(state.get(flag))
+
+    def state_words(self, instance: Instance, valuation: Dict[str, Any]) -> Optional[str]:
+        """The agent's cell, the goal flags and where the moving obstacle is and goes next."""
+        flags = ", ".join(f"{k}={str(v).lower()}" for k, v in valuation.items() if k[:1] == "g" and k[1:].isdigit())
+        text = f"agent at ({valuation['x']},{valuation['y']}), {flags}"
+        cycle = expand_cycle(instance.data["moving"])
+        if cycle and "obs_idx" in valuation:
+            k = valuation["obs_idx"]
+            text += f", obs_idx={k} (obstacle at {tuple(cycle[k])}, next at {tuple(cycle[(k + 1) % len(cycle)])})"
+        return text
+
+    def loss_words(self, requirement) -> Optional[str]:
+        if requirement.name.startswith("seq_") or requirement.name == "complete_sequence":
+            return "enters a later goal early"
+        if requirement.name.startswith("avoid_moving"):
+            return "collision"
+        return None
+
+    @staticmethod
+    def _sequence_formula(before: List[int], exclude: int) -> str:
+        """Goals `before` reached in order, and `exclude` not reached until they all are."""
+        if len(before) == 1:
+            return f'!"at_goal{exclude}" U "at_goal{before[0]}"'
+        rest = GridWorld._sequence_formula(before[1:], exclude)
+        return f'!"at_goal{exclude}" U ("at_goal{before[0]}" & ({rest}))'
+
+    def _requirements(self, goal_nums: List[int], has_moving: bool) -> List[Dict[str, Any]]:
+        """Same requirements, names and thresholds as the legacy verifier."""
+        reqs = [{"name": f"goal{k}", "formula": f'F "at_goal{k}"', "threshold": GOAL_THRESHOLD,
+                 "description": f"The agent eventually reaches goal {k}."} for k in goal_nums]
+        sequences = []
+        for i in range(len(goal_nums) - 1):
+            before, nxt = goal_nums[:i + 1], goal_nums[i + 1]
+            formula = self._sequence_formula(before, nxt)
+            sequences.append(formula)
+            reqs.append({"name": f"seq_{goal_nums[i]}_before_{nxt}", "formula": formula,
+                         "threshold": SEQUENCE_THRESHOLD,
+                         "description": f"Goal{'s' if len(before) > 1 else ''} {', '.join(map(str, before))} "
+                                        f"{'are' if len(before) > 1 else 'is'} visited{' in order' if len(before) > 1 else ''} "
+                                        f"before goal {nxt} is ever entered."})
+        if len(goal_nums) > 1:
+            reqs.append({"name": "complete_sequence", "formula": " & ".join(f"({s})" for s in sequences),
+                         "threshold": SEQUENCE_THRESHOLD,
+                         "description": "All goals are visited in the correct order (all sequence requirements at once)."})
+        if has_moving:
+            for k in goal_nums:
+                reqs.append({"name": f"avoid_moving_seg{k}", "formula": f'G ("in_seg{k}" => !"at_moving_obs")',
+                             "threshold": AVOID_THRESHOLD,
+                             "description": f"While heading to goal {k}, the agent never shares a cell "
+                                            f"with the moving obstacle."})
+        return reqs
+
+
+# ---------------------------------------------------------------- extended rule vocabulary
+
+Cell = Tuple[int, int]
+OPTIONAL_FEATURES = ("collide",)   # left out unless a run names them (`rules.extra_features`), so older prompts stay
+
+
+def end_cell(n: int, static, r: int, c: int, d: str) -> Cell:
+    """Where moving `d` from (r, c) ends: clamped to the grid; a static obstacle leaves the agent in place."""
+    dr, dc = MOVES[d]
+    t = (min(max(r + dr, 0), n - 1), min(max(c + dc, 0), n - 1))
+    return (r, c) if t in static else t
+
+
+def _landing(n: int, static, a: str, target: Cell) -> str:
+    """Condition: some outcome of action `a` (forward or a slip) from (x, y) ends on `target`."""
+    cells = sorted((r, c) for r in range(n) for c in range(n) if (r, c) not in static
+                   and any(end_cell(n, static, r, c, d) == target for d in (a, SLIP_LEFT[a], SLIP_RIGHT[a])))
+    return " | ".join(f"(x = {r} & y = {c})" for r, c in cells) or "false"
+
+
+def _cells(cells, dr: int, dc: int) -> str:
+    """Condition: the move (dr, dc) from (x, y) lands on one of `cells`."""
+    return " | ".join(f"(x = {r - dr} & y = {c - dc})" for r, c in sorted(cells)) or "false"
+
+
+def _distances(n: int, target: Cell, blocked: Set[Cell], costly: Set[Cell] = frozenset()) -> Dict[Cell, int]:
+    """Cost of the cheapest route from each cell to `target` that avoids `blocked`: one per move, and n*n per move
+    into a `costly` cell, so routes through costly cells count only where no other route exists (Dijkstra)."""
+    dist, queue = {target: 0}, [(0, target)]
+    while queue:
+        d, (r, c) = heapq.heappop(queue)
+        if d > dist[(r, c)]:
+            continue
+        step = n * n if (r, c) in costly else 1   # the move from a neighbour into (r, c)
+        for dr, dc in MOVES.values():
+            nxt = (r + dr, c + dc)
+            if 0 <= nxt[0] < n and 0 <= nxt[1] < n and nxt not in blocked and d + step < dist.get(nxt, d + step + 1):
+                dist[nxt] = d + step
+                heapq.heappush(queue, (d + step, nxt))
+    return dist
+
+
+def rule_vocabulary(n: int, goals: List[Dict[str, int]], static, cycle, phase_visible: bool = True) -> Dict[str, Any]:
+    """Constants (grid size, goal coordinates) and per-action features for the extended rule vocabulary.
+    Most features look at the move's intended target cell; `risky` looks at the cells a slip would reach, and
+    `obstacle` (only when the obstacle's phase obs_idx is visible) at where the moving obstacle will be."""
+    static, patrol = {tuple(c) for c in static}, {tuple(c) for c in cycle}
+    ks = [g["k"] for g in goals]
+    where = {g["k"]: (g["row"], g["col"]) for g in goals}
+    segment = {k: " & ".join([f"g{j}" for j in ks[:i]] + [f"!g{k}"]) for i, k in enumerate(ks)}
+    border = {"up": "x = 0", "down": "x = N - 1", "left": "y = 0", "right": "y = N - 1"}
+    toward = {"up": "G{k}R < x", "down": "G{k}R > x", "left": "G{k}C < y", "right": "G{k}C > y"}
+    features = {"wall": {}, "hazard": {}, "risky": {}, "toward": {}, "closer": {}, "patrol": {}, "early": {}}
+    if cycle and phase_visible:
+        features["obstacle"] = {}
+        features["collide"] = {}
+
+    def early(dr: int, dc: int) -> str:
+        later = [f"({segment[k]} & ({_cells([where[j] for j in ks[i + 1:]], dr, dc)}))"
+                 for i, k in enumerate(ks) if ks[i + 1:]]
+        return " | ".join(later) or "false"
+
+    def hazard(dr: int, dc: int) -> str:
+        later = [f"({segment[k]} & ({_cells([where[j] for j in ks[i + 1:]], dr, dc)}))"
+                 for i, k in enumerate(ks) if ks[i + 1:]]
+        return " | ".join([_cells(patrol, dr, dc)] + later)
+
+    for a, (dr, dc) in MOVES.items():
+        features["wall"][a] = f"{border[a]} | {_cells(static, dr, dc)}"
+        features["hazard"][a] = hazard(dr, dc)
+        features["patrol"][a] = _cells(patrol, dr, dc)
+        features["early"][a] = early(dr, dc)
+        features["risky"][a] = " | ".join(f"({hazard(*MOVES[side])})" for side in (SLIP_LEFT[a], SLIP_RIGHT[a]))
+        if "obstacle" in features:
+            features["obstacle"][a] = " | ".join(
+                f"(obs_idx = {i} & ({_cells([cycle[(i + 1) % len(cycle)]], dr, dc)}))" for i in range(len(cycle)))
+            features["collide"][a] = " | ".join(
+                f"(obs_idx = {i} & ({_landing(n, static, a, cycle[(i + 1) % len(cycle)])}))" for i in range(len(cycle)))
+        features["toward"][a] = " | ".join(f"({segment[k]} & {toward[a].format(k=k)})" for k in ks)
+        closer = []
+        for i, k in enumerate(ks):
+            dist = _distances(n, where[k], static | {where[j] for j in ks[i + 1:]}, costly=patrol)
+            cells = [(r, c) for (r, c), d in dist.items()
+                     if (r + dr, c + dc) in dist and dist[(r + dr, c + dc)] < d]
+            closer.append(f"({segment[k]} & ({' | '.join(f'(x = {r} & y = {c})' for r, c in sorted(cells)) or 'false'}))")
+        features["closer"][a] = " | ".join(closer)
+    descriptions = {
+        "wall": "true if the move would leave the grid or hit a static obstacle (the agent then stays where it is)",
+        "hazard": "true if the move's target cell is on the moving obstacle's patrol path, or is a goal that must "
+                  "not be entered yet",
+        "risky": "true if a slip of this move (to either side) could land on a hazard: the patrol path, or a goal "
+                 "that must not be entered yet",
+        "obstacle": "true if the moving obstacle will be on the move's target cell right after this move",
+        "collide": "true if the move, or a slip of it to either side, could end on the cell the moving obstacle "
+                   "moves to next (a collision); unlike `obstacle`, it counts slips and moves that leave the agent "
+                   "in place",
+        "patrol": "true if the move's target cell is on the moving obstacle's patrol path (safe to enter when the "
+                  "obstacle will not be there: see `obstacle`)",
+        "early": "true if the move's target cell is a goal that must not be entered yet",
+        "toward": "true if the move goes towards the next goal not yet reached (fewer rows or columns away)",
+        "closer": "true if the move's target cell is closer to the next goal along a shortest path through free "
+                  "cells (avoiding static obstacles and later goals, and the patrol path unless every route "
+                  "crosses it)",
+    }
+    constants = [{"name": "N", "value": n, "description": "grid size: rows and columns are 0..N-1"}]
+    for k in ks:
+        constants += [{"name": f"G{k}R", "value": where[k][0], "description": f"goal {k}'s row"},
+                      {"name": f"G{k}C", "value": where[k][1], "description": f"goal {k}'s column"}]
+    return {"rule_constants": constants,
+            "rule_features": [{"name": name, "description": descriptions[name], "per_action": per_action,
+                               **({"optional": True} if name in OPTIONAL_FEATURES else {})}
+                              for name, per_action in features.items()]}
