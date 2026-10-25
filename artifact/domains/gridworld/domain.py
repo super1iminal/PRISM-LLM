@@ -164,7 +164,7 @@ class GridWorld(Domain):
         return f'!"at_goal{exclude}" U ("at_goal{before[0]}" & ({rest}))'
 
     def _requirements(self, goal_nums: List[int], has_moving: bool) -> List[Dict[str, Any]]:
-        """Same requirements, names and thresholds as the legacy verifier."""
+        """The gridworld requirements: reach each goal, in order, avoiding the moving obstacle."""
         reqs = [{"name": f"goal{k}", "formula": f'F "at_goal{k}"', "threshold": GOAL_THRESHOLD,
                  "description": f"The agent eventually reaches goal {k}."} for k in goal_nums]
         sequences = []

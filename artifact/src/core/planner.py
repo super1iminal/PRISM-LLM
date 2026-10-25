@@ -1,6 +1,6 @@
 """The refinement loop: LLM writes symbolic rules, PRISM checks best/worst case, feedback targets the gap.
 
-Each round, for the best rule set so far (keep-best, as in the legacy loop):
+Each round, for the best rule set so far (keep-best):
   * worst case meets every threshold   -> done (every completion of the partial policy is safe)
   * no completion can meet them all    -> refine: existing rules are bad; the LLM rewrites the list,
                                           guided by per-rule blame (probability mass)

@@ -163,13 +163,6 @@ class RulesConfig:
 
 
 @dataclass
-class LegacyConfig:
-    max_rounds: int
-    retry: str                                # never | stall:k (L1: blind retry with the initial prompt)
-    examples: bool                            # the two worked examples in the initial prompt (L2: off)
-
-
-@dataclass
 class RunConfig:
     workers: int                              # instances in flight (threads, lockstep batch size, event slots)
     limit: Optional[int]
@@ -181,7 +174,6 @@ class RunConfig:
 
 @dataclass
 class Config:
-    approach: str                             # symbolic | legacy
     domain: DomainConfig
     llm: LLMConfig
     planner: PlannerConfig
@@ -189,7 +181,6 @@ class Config:
     prompt: PromptConfig
     prism: PrismConfig
     rules: RulesConfig
-    legacy: LegacyConfig
     run: RunConfig
     condition: Optional[str] = None           # name of the applied condition (set by load_config, not a setting)
 
@@ -292,10 +283,9 @@ def load_run_config(run_dir) -> Config:
 
 
 def _resolve_scheduler(data: Dict[str, Any]) -> Dict[str, Any]:
-    """`run.scheduler: null` is the event scheduler for symbolic runs and threads for legacy runs (the only
-    scheduler legacy has)."""
+    """`run.scheduler: null` is the event scheduler."""
     if data["run"].get("scheduler") is None:
-        data["run"]["scheduler"] = "threads" if data.get("approach") == "legacy" else "event"
+        data["run"]["scheduler"] = "event"
     return data
 
 
@@ -304,9 +294,7 @@ def validate(cfg: Config) -> None:
     from core.scheduler import SCHEDULERS
     from core.retry import RetryPolicy
     RetryPolicy.parse(cfg.planner.retry)
-    RetryPolicy.parse(cfg.legacy.retry)
     checks = {
-        "approach": (cfg.approach, {"symbolic", "legacy"}),
         "planner.branch": (cfg.planner.branch, {"joint", "per_requirement"}),
         "planner.feedback": (cfg.planner.feedback, {"blame", "table", "failures"}),
         "planner.pick": (cfg.planner.pick, {"chain", "candidates"}),
@@ -343,9 +331,7 @@ def validate(cfg: Config) -> None:
         raise ValueError(f"planner.chains={chains!r} must be a number of chains (>= 1)")
     if cfg.planner.done_margin > 0 and cfg.planner.feedback != "failures":
         raise ValueError("planner.done_margin > 0 needs planner.feedback: failures (the others assume a failing member)")
-    if cfg.planner.pick == "candidates" and (cfg.approach != "symbolic" or not cfg.run.train_sets or cfg.run.pool_sets):
-        raise ValueError("planner.pick: candidates needs symbolic training sets (run.train_sets) without run.pool_sets")
-    if chains > 1 and (cfg.approach != "symbolic" or not cfg.run.train_sets or cfg.run.pool_sets):
-        raise ValueError("planner.chains > 1 needs symbolic training sets (run.train_sets) without run.pool_sets")
-    if cfg.approach == "legacy" and cfg.run.scheduler != "threads":
-        raise ValueError(f"run.scheduler={cfg.run.scheduler} drives the symbolic planner only; legacy runs use threads")
+    if cfg.planner.pick == "candidates" and (not cfg.run.train_sets or cfg.run.pool_sets):
+        raise ValueError("planner.pick: candidates needs training sets (run.train_sets) without run.pool_sets")
+    if chains > 1 and (not cfg.run.train_sets or cfg.run.pool_sets):
+        raise ValueError("planner.chains > 1 needs training sets (run.train_sets) without run.pool_sets")

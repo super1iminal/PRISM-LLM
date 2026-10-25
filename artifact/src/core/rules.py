@@ -664,7 +664,7 @@ def feature_values(variables: Sequence[Variable], actions: Sequence[str], vocabu
 
 
 def atomic_rules(assignments: Iterable[Tuple[Dict[str, Value], str]]) -> List[Tuple[str, str]]:
-    """Per-state assignments -> one exact-match rule each (how a legacy full policy is expressed)."""
+    """Per-state assignments -> one exact-match rule each (how a full per-state policy is expressed)."""
     rules = []
     for state, action in assignments:
         cond = " & ".join(f"{k}={str(v).lower() if isinstance(v, bool) else v}" for k, v in state.items())

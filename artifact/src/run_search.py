@@ -17,7 +17,7 @@ from pathlib import Path
 
 from config import load_config
 from experiments.base import transfer_done
-from results_io import RESULT_FILES
+from results_io import SYMBOLIC_RESULTS
 from run_ablation import run_dir_for
 from settings import PROJECT_ROOT
 from transfer import parse_ids
@@ -35,7 +35,7 @@ def job(condition: str, repeat: int, args, settings: dict) -> str:
     targets = parse_ids(args.targets)
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "a", encoding="utf-8") as out:
-        if not (run_dir / RESULT_FILES[settings["approach"]]).exists():
+        if not (run_dir / SYMBOLIC_RESULTS).exists():
             cmd = [PYTHON, "src/run_ablation.py", condition, "--unseeded", str(args.unseeded), "--repeat", str(repeat)]
             cmd += [x for s in args.set for x in ("--set", s)]
             if subprocess.run(cmd, cwd=PROJECT_ROOT, stdout=out, stderr=subprocess.STDOUT).returncode:
@@ -75,7 +75,7 @@ def main(argv=None):
     settings = {}
     for condition in args.conditions:              # also fails on a typo before anything runs
         cfg = load_config(condition, args.set)
-        settings[condition] = {"approach": cfg.approach, "dataset": cfg.domain.dataset}
+        settings[condition] = {"dataset": cfg.domain.dataset}
     jobs = [(c, k) for c in args.conditions for k in range(1, args.unseeded + 1) if not args.only or k in args.only]
     for c, k in jobs:
         print(f"[{c} {k}] -> {run_dir_for(c, f'none_{k}')}", flush=True)

@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from config import CONFIG_DIR, load_config, load_file
 from experiments.store import ABLATIONS_PATH, CORE_PATH
-from results_io import RESULT_FILES
+from results_io import SYMBOLIC_RESULTS
 
 DEFAULT_CONFIG = CONFIG_DIR / "ablation" / "default.yaml"
 
@@ -87,15 +87,13 @@ def main():
             plan.append((condition, label, cfg, run_dir_for(args.name or condition, label, args.out_root)))
 
     for condition, seed, cfg, run_dir in plan:
-        done = (run_dir / RESULT_FILES[cfg.approach]).exists()
+        done = (run_dir / SYMBOLIC_RESULTS).exists()
         status = "done, skipping" if done else ("would run" if args.dry_run else "running")
-        print(f"[{condition} seed {seed}] {cfg.approach}: {status} -> {run_dir}", flush=True)
+        print(f"[{condition} seed {seed}] {status} -> {run_dir}", flush=True)
         if done or args.dry_run:
             continue
         if run_dir.exists():
             shutil.rmtree(run_dir)   # a previous attempt that did not finish
-        if cfg.approach == "legacy":     # the legacy planner is not included
-            raise SystemExit(f"{condition}: the legacy planner is not included")
         from run_symbolic import run
         run(cfg, str(run_dir))
 

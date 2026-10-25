@@ -18,7 +18,7 @@ needs_prism = pytest.mark.skipif(not shutil.which("prism"), reason="PRISM not on
 
 def test_every_condition_loads_and_round_trips():
     names = conditions()   # one file per condition in configs/run/conditions/
-    assert {"B1", "B2", "R1", "R2", "R3", "R4", "R5", "S1", "S4", "S5", "V1", "V2", "L1", "L2", "D7", "U1",
+    assert {"B2", "R1", "R2", "R3", "R4", "R5", "S1", "S4", "S5", "V1", "V2", "D7", "U1",
             "pre_phase_a"} <= set(names)
     for name in names:
         cfg = load_config(name, ["llm.seed=3"])
@@ -40,17 +40,10 @@ def test_bad_config_is_rejected(override):
         load_config(overrides=[override])
 
 
-def test_scheduler_defaults_to_event_for_symbolic_and_threads_for_legacy():
+def test_scheduler_defaults_to_event():
     assert load_config().run.scheduler == "event"
-    assert load_config(overrides=["approach=legacy"]).run.scheduler == "threads"
-    assert load_config("L1").run.scheduler == "threads"
     assert load_config(overrides=["run.scheduler=threads"]).run.scheduler == "threads"
-
-
-def test_lockstep_is_symbolic_only():
     assert load_config(overrides=["run.scheduler=lockstep"]).run.scheduler == "lockstep"
-    with pytest.raises(ValueError, match="symbolic planner only"):
-        load_config(overrides=["approach=legacy", "run.scheduler=lockstep"])
 
 
 def test_defaults_live_only_in_default_yaml():

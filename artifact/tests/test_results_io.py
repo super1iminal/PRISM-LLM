@@ -1,35 +1,19 @@
-"""Reading finished runs: run facts from config.json (or the pre-config record)."""
+"""Reading finished runs: run facts from config.json."""
 import json
 
 import pytest
 
 from config import load_config
 from core.domain import Requirement, load_domain
-from results_io import (LEGACY_RESULTS, PRE_CONFIG_RUNS, met_and_shortfall, requirements_by_sample,
-                        run_facts, sample_records)
+from results_io import met_and_shortfall, requirements_by_sample, run_facts, sample_records
 
 
 def test_run_facts_come_from_the_recorded_config(tmp_path):
     cfg = load_config("U1", ["planner.max_rounds=3"])
     (tmp_path / "config.json").write_text(json.dumps(cfg.to_dict()), encoding="utf-8")
     facts = run_facts(tmp_path)
-    assert (facts.approach, facts.domain, facts.dataset, facts.max_rounds, facts.recorded) == \
-        ("symbolic", "uuv", "uuv_paper.csv", 3, True)
+    assert (facts.domain, facts.dataset, facts.max_rounds) == ("uuv", "uuv_paper.csv", 3)
     assert facts.model == cfg.llm.model
-
-
-def test_legacy_run_facts_use_the_legacy_round_budget(tmp_path):
-    cfg = load_config("B1", ["legacy.max_rounds=4"])
-    (tmp_path / "config.json").write_text(json.dumps(cfg.to_dict()), encoding="utf-8")
-    (tmp_path / LEGACY_RESULTS).write_bytes(b"")
-    facts = run_facts(tmp_path)
-    assert facts.approach == "legacy" and facts.max_rounds == 4
-
-
-def test_runs_without_config_json_read_as_the_pre_config_record(tmp_path):
-    facts = run_facts(tmp_path)
-    assert not facts.recorded and facts.domain == PRE_CONFIG_RUNS["domain"]
-    assert (facts.dataset, facts.max_rounds) == (PRE_CONFIG_RUNS["dataset"], PRE_CONFIG_RUNS["max_rounds"])
 
 
 def test_requirements_by_sample_follow_the_runs_domain_and_dataset(tmp_path):
@@ -38,7 +22,6 @@ def test_requirements_by_sample_follow_the_runs_domain_and_dataset(tmp_path):
     energy = {r.name: r for r in north_sea}["energy_budget"]
     assert (energy.bound, energy.threshold) == ("<=", 26.5)
     assert {r.name: r for r in caribbean}["energy_budget"].threshold == 62.5   # per-instance thresholds
-    assert [r.name for r in requirements_by_sample(tmp_path / "missing")[0]][:2] == ["goal1", "goal2"]
 
 
 def test_met_and_shortfall_use_each_requirements_bound():

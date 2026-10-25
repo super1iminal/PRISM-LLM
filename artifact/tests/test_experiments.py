@@ -11,7 +11,7 @@ from experiments import base
 from experiments.ablation import bootstrap_diff
 from experiments.metrics import transfer_numbers
 from experiments.store import RunStore, fingerprint, identity
-from results_io import RESULT_FILES
+from results_io import SYMBOLIC_RESULTS
 
 ACTIONS = ["up", "right", "down", "left"]
 GRID_ONLY_FEATURES = {"hazard", "risky", "toward", "closer", "obstacle", "patrol", "early"}
@@ -48,7 +48,7 @@ def _fake_run(root, name, cfg, done=True, fix=None):
     run.mkdir(parents=True)
     (run / "config.json").write_text(json.dumps(cfg.to_dict()), encoding="utf-8")
     if done:
-        (run / RESULT_FILES[cfg.approach]).write_text("", encoding="utf-8")
+        (run / SYMBOLIC_RESULTS).write_text("", encoding="utf-8")
     if fix:
         (run / "identity.json").write_text(json.dumps(fix), encoding="utf-8")
     return run

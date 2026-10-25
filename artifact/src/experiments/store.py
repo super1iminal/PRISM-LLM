@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from config import Config, _build, _merge, _resolve_scheduler, _read_yaml, RUN_CONFIG_DIR, validate
-from results_io import RESULT_FILES
+from results_io import SYMBOLIC_RESULTS
 from settings import RESULTS_PATH
 
 CORE_PATH = RESULTS_PATH / "core"
@@ -62,7 +62,7 @@ def recorded_config(run_dir: Path) -> Config:
 
 
 def finished(run_dir: Path, cfg: Config) -> bool:
-    return (run_dir / RESULT_FILES[cfg.approach]).exists()
+    return (run_dir / SYMBOLIC_RESULTS).exists()
 
 
 class RunStore:
