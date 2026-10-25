@@ -27,11 +27,11 @@ Rebuild a report: `python src/run_experiment.py configs/experiments/<experiment>
 - `exact_recheck/`: every check interval iteration did not decide, settled again (Oct 21). PRISM 4.10.1 runs
   Gauss-Seidel where `-lp` is asked for, so those checks had no error bound. `rechecks.csv` holds one verdict per
   check: a direct solve on PRISM's exported model with a rigorous error bound, or Storm 2.0.0 `--exact` where the
-  bound was too wide. `viz/paper_results.py` reads it. The scripts that made it are kept beside it.
+  bound was too wide. Superseded the same night by `out/paper/certs.csv` (`src/certs.py`), the one verdict file every table reads; kept for its validation against PRISM's exact engine.
 
 Held-out checks per run: `transfer_<dataset>[_<rules>].csv` (the loop's solver, `src/transfer.py`) and
 `transfer_exact_*.csv` (the exact solvers, `src/recertify.py`: interval iteration, then "linear programming" where it
-stalls, which PRISM actually solves by Gauss-Seidel, so those verdicts are replaced by `exact_recheck/`;
+stalls, which PRISM actually solves by Gauss-Seidel, so the verdicts the tables use come from `out/paper/certs.csv`;
 `transfer_ii_*` / `transfer_lp_*` are the one-method checks they were combined from) and `transfer_sealed_*.csv`
 (the same checks on the sealed test targets).
 

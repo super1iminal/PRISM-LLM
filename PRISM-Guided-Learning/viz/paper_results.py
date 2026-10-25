@@ -145,64 +145,55 @@ def baseline_csv(config: str, rules: str = "final", dataset: Optional[str] = Non
     return path.with_name(f"transfer_{Path(dataset).stem}{suffix}.csv")
 
 
-# Direct-solve re-check of every check interval iteration did not decide (Oct 21): PRISM 4.10.1 runs Gauss-Seidel
-# where `-lp` is asked for, so the rule's "linear programming" verdicts had no error bound. One row per such check.
-RECHECKS = RESULTS / "exact_recheck" / "rechecks.csv"
-_rechecks: Optional[Dict] = None
+# Every verdict the tables use (src/certs.py, Oct 21): one rule, one file. A check is found by the check file it
+# came from (`source_file`, the path src/recertify.py or src/sequential.py wrote or would write) and its split.
+CERTS = OUT / "certs.csv"
+_certs: Optional[pd.DataFrame] = None
 
 
-def apply_rechecks(df: pd.DataFrame, path: Path) -> pd.DataFrame:
-    """`df` (a recertify.py CSV at `path`) with each check interval iteration did not decide given the direct-solve
-    verdict of RECHECKS, or made inconclusive where there is none (only Gauss-Seidel finished)."""
-    global _rechecks
-    if "solver" not in df or "outcome" not in df:
-        return df
-    if _rechecks is None:
-        r = pd.read_csv(RECHECKS) if RECHECKS.exists() else pd.DataFrame(columns=["file", "source", "target"])
-        r = r[r.outcome.isin(["certified", "failed"])] if len(r) else r
-        _rechecks = {(f, str(s), int(t)): (o, m) for f, s, t, o, m in
-                     zip(r.file, r.source, r.target, r.get("outcome", []), r.get("margin", []))}
-    file = path.resolve().relative_to(ROOT).as_posix()
-    df = df.copy()
-    fallback = df.solver.notna() & (df.solver != "interval iteration") & df.outcome.isin(
-        ["certified", "failed", "inconclusive"])
-    for i in df.index[fallback]:
-        verdict = _rechecks.get((file, str(df.at[i, "source"]), int(df.at[i, "target"])))
-        df.at[i, "outcome"], df.at[i, "solver"] = (verdict[0], "direct solve") if verdict else ("inconclusive",
-                                                                                               df.at[i, "solver"])
-        if verdict:
-            df.at[i, "margin"] = verdict[1]
-    df["certified"] = df.outcome == "certified"
-    return df
+def certs() -> pd.DataFrame:
+    global _certs
+    if _certs is None:
+        _certs = pd.read_csv(CERTS, dtype={"list_id": str, "run": str})
+    return _certs
+
+
+def certified_checks(path: Optional[Path], split: Optional[str] = None) -> pd.DataFrame:
+    """certs.csv's rows of the check file `path` (any split, or `split`), with the columns of a transfer CSV:
+    source, target, outcome, certified, margin, binding, solver, states, seconds."""
+    if path is None:
+        return pd.DataFrame()
+    rel = Path(path).resolve().relative_to(ROOT).as_posix()
+    c = certs()
+    df = c[c.source_file == rel]
+    if split is not None:
+        df = df[df.split == split]
+    worst = pd.DataFrame([json.loads(w) if isinstance(w, str) else {} for w in df.worst], index=df.index)
+    df = pd.concat([df, worst.add_prefix("worst_")], axis=1)
+    return df.rename(columns={"list_id": "source", "instance": "target", "verdict": "outcome"}).assign(
+        certified=lambda d: d.outcome == "certified")
 
 
 def outcomes(path: Path, bench, approach: str, run: str = "", sources: Optional[List[str]] = None,
              source_groups: Optional[Dict[str, str]] = None, kind: Optional[str] = None) -> pd.DataFrame:
-    """One row per (rule list or controller, held-out target) of a transfer CSV (`path` as src/transfer.py names it;
-    read under CHECKS), on the list's own group's targets where the benchmark has groups (a source checked on every
-    group, "*", counts once per group). Columns certified, inconclusive, timeout (not certifiable within PRISM's
-    limits) and error_other (unparsed or another error)."""
+    """One row per (rule list or controller, held-out target) of a check file (`path` as src/transfer.py names it,
+    under CHECKS), from certs.csv, on the list's own group's targets where the benchmark has groups (a source checked
+    on every group, "*", counts once per group). Columns certified, inconclusive, timeout (not certifiable within
+    limits) and error_other."""
     path = checked(path, kind)
-    if path is None or not path.exists():
+    df = certified_checks(path)
+    df = df[df.split != "training"].copy() if len(df) else df
+    if df.empty:
         if path is not None:
-            print(f"  missing: {path.relative_to(ROOT)}")
+            print(f"  missing from certs.csv: {path.relative_to(ROOT)}")
         return pd.DataFrame()
-    df = apply_rechecks(pd.read_csv(path), path)
     df["source"] = df.source.astype(str)
     if sources is not None:
         df = df[df.source.isin(sources)]
-    trained = df.trained.astype(bool) if "trained" in df else False
-    df = df[df.target.isin(held_out(bench)) & ~trained].copy()
-    df["certified"] = df.certified.fillna(False).astype(bool)
-    errors = df["error"].fillna("").astype(str) if "error" in df else pd.Series("", index=df.index)
-    if "outcome" in df:            # recertify.py: the verdict of sequential.certify's rule
-        df["inconclusive"] = df.outcome == "inconclusive"
-        df["timeout"] = df.outcome == "not_certifiable"
-        df["error_other"] = df.outcome == "unparsed"
-    else:
-        df["inconclusive"] = np.nan
-        df["timeout"] = errors.str.contains("Timeout")
-        df["error_other"] = (errors != "") & ~df.timeout
+    df = df[df.target.isin(held_out(bench))].copy()
+    df["inconclusive"] = df.outcome == "inconclusive"
+    df["timeout"] = df.outcome == "timeout"
+    df["error_other"] = df.outcome == "error"
     parts = []
     for source, part in df.groupby("source"):
         if bench.groups:
@@ -254,7 +245,7 @@ def rq1_outcomes(exp, sealed: bool = False) -> Dict[str, pd.DataFrame]:
             frozen.append(outcomes(baseline_csv(config, dataset=other), bench, approach, "", src["sources"],
                                    src["source_groups"], kind=kind))
             opened = baseline_csv(config, "open", other)
-            permissive.append(outcomes(opened if checked(opened, kind).exists() else baseline_csv(config, dataset=other),
+            permissive.append(outcomes(opened if not certified_checks(checked(opened, kind)).empty else baseline_csv(config, dataset=other),
                                        bench, approach, "", src["sources"], src["source_groups"], kind=kind))
             if approach == "RL" and name in RL_SEEDS:     # P8: more PPO seeds per training set on the grid worlds
                 for seed in RL_SEEDS[name]:
@@ -377,9 +368,13 @@ def rq1_tables(data: Dict[str, pd.DataFrame], llms: Dict[str, pd.DataFrame]) -> 
     tex.append(r"\bottomrule")
     write_table("tab_rq1-coverage", tex, long.to_dict("records"))
 
-    # Per LLM (Full only): Haiku 5.5's core runs and the other LLMs' runs of the same conditions
+    llm_table(llms, "tab_rq1-coverage-llm")
+
+
+def llm_table(llms: Dict[str, pd.DataFrame], label: str, split: str = "validation") -> None:
+    """T1 per LLM (Full only): Haiku 5.5's core runs and the other LLMs' runs of the same conditions (Rajan's item 3)."""
     names = ["Claude Haiku 5.5"] + list(OTHER_LLMS)
-    per_llm = coverage_table(llms, list(RQ1_BENCHES), names)
+    per_llm = coverage_table(llms, list(RQ1_BENCHES), names).assign(split=split)
     tex = [r"\toprule", r"LLM & Permissive (\%) & Frozen (\%) & Inconclusive (\%) & Timeout (\%) \\"]
     for bench, title in RQ1_BENCHES.items():
         tex += [r"\midrule", rf"\multicolumn{{5}}{{l}}{{\emph{{{title}}}}} \\"]
@@ -390,7 +385,7 @@ def rq1_tables(data: Dict[str, pd.DataFrame], llms: Dict[str, pd.DataFrame]) -> 
     tex.append(r"\bottomrule")
     long = per_llm.rename(columns={"approach": "llm"}).melt(id_vars=["bench", "llm", "split", "checks"],
                                                              var_name="metric").dropna(subset=["value"])
-    write_table("tab_rq1-coverage-llm", tex, long.to_dict("records"))
+    write_table(label, tex, long.to_dict("records"))
 
 
 def _size_controllers(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -482,14 +477,11 @@ def solvability() -> None:
         stem = Path(dataset).stem
         wanted = set(parse_ids(ids))
         witnesses: Dict[int, set] = {i: set() for i in wanted}
-        files = [f for f in RESULTS.rglob(f"transfer_sealed_{stem}*.csv") if "_sonnet" not in str(f)]
-        for f in files:
-            df = apply_rechecks(pd.read_csv(f), f)
-            if "outcome" not in df:
-                continue
-            ok = df[(df.outcome == "certified") & df.target.isin(wanted)]
-            for t, s in zip(ok.target, ok.source.astype(str)):
-                witnesses[int(t)].add(f"{f.parent.relative_to(RESULTS)}/{f.name}:{s}")
+        c = certs()
+        ok = c[(c.split == "test") & (c.verdict == "certified") & c.source_file.str.contains(f"transfer_sealed_{stem}")
+               & c.instance.isin(wanted)]
+        for t, f, s in zip(ok.instance, ok.source_file, ok.list_id):
+            witnesses[int(t)].add(f"{f}:{s}")
         query = {}
         if query_csv and (RESULTS / "ceilings" / query_csv).exists():
             q = pd.read_csv(RESULTS / "ceilings" / query_csv)
@@ -560,12 +552,24 @@ def rq1_misses(data: Dict[str, pd.DataFrame]) -> None:
 LIBRARIES = {"core/port_fam_history run 2": "shift_v0_lib2", "core/port_fam_history run 3": "shift_v0_lib3"}
 
 
+def sequence_checks(study: str, mode: str, seq: str) -> pd.DataFrame:
+    """One sequence's certification checks from certs.csv, as its checks.csv lays them out: verdicts by the rule
+    (outcome, margin), the worst case per requirement (worst_<name>), and the manager's own run (seconds,
+    model_seconds, solver: what the study's certification took and used as it ran)."""
+    c = certs()
+    df = c[(c.run == f"{study}/{mode}/{seq}") & c.controller.str.startswith("Library")].copy()
+    worst = pd.DataFrame([json.loads(w) if isinstance(w, str) else {} for w in df.worst], index=df.index)
+    df = df.rename(columns={"list_id": "rule_list", "verdict": "outcome"}).assign(
+        seconds=df.old_seconds, solver=df.old_solver, episode=df.episode.astype(int))
+    return pd.concat([df, worst.add_prefix("worst_")], axis=1)
+
+
 def sequential(study: str) -> Dict[str, pd.DataFrame]:
     episodes, checks = [], []
     for mode, setting in (("growing", "Extended"), ("frozen", "Frozen")):
         for seq in sorted((RESULTS / "sequential" / study / mode).glob("s*")):
             e = pd.read_csv(seq / "episodes.csv").assign(setting=setting, sequence=seq.name)
-            c = pd.read_csv(seq / "checks.csv").assign(setting=setting, sequence=seq.name)
+            c = sequence_checks(study, mode, seq.name).assign(setting=setting, sequence=seq.name)
             c = c.merge(e[["episode", "n", "family", "decision"]], on="episode", how="left")
             lib = json.loads((seq / "library.json").read_text(encoding="utf-8")) if (seq / "library.json").exists() \
                 else None
@@ -711,7 +715,7 @@ def rq2_episodes(study: str, example: Tuple[str, int, int] = ("s1", 2, 3)) -> No
 
     name, ep_gen, ep_next = example
     seq = RESULTS / "sequential" / study / "growing" / name
-    checks = pd.read_csv(seq / "checks.csv")
+    checks = sequence_checks(study, "growing", name)
     library = {e["name"]: e for e in json.loads((seq / "library.json").read_text(encoding="utf-8"))}
     study_cfg = yaml.safe_load((ROOT / "configs" / "sequential" / f"{study}.yaml").read_text(encoding="utf-8"))
     domain = load_domain("gridworld", load_config(study_cfg["condition"]).domain.visible_extra)
@@ -820,10 +824,10 @@ def controller_sizes() -> None:
 
 # $ per M prompt and output tokens, as OpenRouter lists them on 2026-10-19 (provider pinned)
 PRICES = {"anthropic/claude-haiku-5.5": (0.10, 0.50), "anthropic/claude-sonnet-5.5": (2.00, 10.00),
-          "openai/gpt-6-luna": (0.10, 0.50)}
-# Condition suffixes of the other LLMs' core runs, e.g. {"Sonnet 5.5": "_sonnet"}. Empty for now (Asher, Oct 19): the
-# Sonnet 5.5 runs (ablations/port_*_sonnet) are incomplete and out of the tables; GPT-6 Luna never ran (strict schema).
-OTHER_LLMS: Dict[str, str] = {}
+          "openai/gpt-6-luna": (0.10, 0.50), "google/gemini-3.8-flash": (0.75, 3.75)}
+# Condition suffixes of the other LLMs' core runs (Rajan's item 3, Fir, Oct 19-20; Full only). Sonnet 5.5's runs
+# (ablations/port_*_sonnet) are incomplete and stay out (Asher, Oct 19).
+OTHER_LLMS: Dict[str, str] = {"GPT-6 Luna": "_luna", "Gemini 3.8 Flash": "_gemini"}
 
 
 def generation_cost(study: str) -> None:
@@ -889,19 +893,11 @@ RESTARTS = {"mer": "port_mer_resample", "families": "port_fam_history_resample",
             "pacman": "port_pacman_narrow_core_resample"}   # pure restarts of the core loop (planner.retry: always)
 
 
-def members_passed(run: Path, norepair: bool = False) -> List[float]:
-    """Per training set, the fraction of its members the final list passes (worst case), as the loop ends. A
-    no-repair pick back-filled after its run (norepair.json, MER) records only whether every member passes: 1 if so,
-    unknown otherwise."""
-    out = []
-    backfilled = json.loads((run / "norepair.json").read_text(encoding="utf-8")) if norepair else {}
-    for sid, record in sample_records(run).items():
-        if norepair and "norepair" not in record.get("pick", {}):
-            out.append(1.0 if backfilled[str(sid)]["success"] else np.nan)
-            continue
-        members = record["pick"]["norepair"]["members"] if norepair else record.get("members", [])
-        out.append(np.mean([bool(m.get("success")) for m in members]) if members else np.nan)
-    return out
+def training_passed(path: Path) -> List[float]:
+    """Per list of a check file: the share of its own training members it certifies (certs.csv, training split,
+    the same controller as the file: frozen lists for the frozen columns)."""
+    df = certified_checks(path, "training")
+    return [] if df.empty else df.groupby("source").certified.mean().tolist()
 
 
 def calls_per_set(run: Path) -> float:
@@ -940,7 +936,7 @@ def rq3_sealed_table() -> None:
         block = []
         for name, (runs, rules) in configs.items():
             path_of = (lambda r: oneshot_csv(r, dataset)) if rules == "oneshot" else                 (lambda r, rules=rules: csv_path(r, dataset, rules))
-            if not runs or not all(checked(path_of(r), "sealed").exists() for r in runs):
+            if not runs or not all(not certified_checks(checked(path_of(r), "sealed")).empty for r in runs):
                 continue
             cov = per_list(pd.concat([outcomes(path_of(r), sb, name, r.name, kind="sealed") for r in runs]))
             c = stats(cov.coverage)
@@ -991,12 +987,12 @@ def rq3_tables() -> None:
         block = []
         for name, (runs, rules, norepair) in configs.items():
             path_of = (lambda r: oneshot_csv(r, dataset)) if rules == "oneshot" else                 (lambda r, rules=rules: csv_path(r, dataset, rules))
-            if not runs or not all(checked(path_of(r)).exists() for r in runs):
+            if not runs or not all(not certified_checks(checked(path_of(r))).empty for r in runs):
                 continue
             cov = pd.concat([outcomes(path_of(r), b, name, r.name) for r in runs])
             cov = per_list(cov)
             # OneShot's list was never checked on the training members as the loop ends: no pass rate
-            passed = [] if rules == "oneshot" else [x for r in runs for x in members_passed(r, norepair)]
+            passed = [x for r in runs for x in training_passed(checked(path_of(r)))]
             c, p = stats(cov.coverage), stats(passed)
             calls = [oneshot_calls(r) if rules == "oneshot" else calls_per_set(r) for r in runs]
             rows += [{"bench": bench, "configuration": name, "metric": m, "value": v, "split": "validation",
@@ -1045,7 +1041,7 @@ def rq3_tables() -> None:
     # T4c: without `closer` on random grids, Full (port_ts_noclose, the core loop before the gridworld feedback fix)
     # against the hand-written template
     b = EXP.spec["benchmarks"]["grids_noclose"]
-    # not re-certified by src/recertify.py (outside P1's scope): the loop solver's checks, for both rows
+    # the loop solver's check files (never re-certified by src/recertify.py), certified under the rule by src/certs.py
     full = per_list(pd.concat([outcomes(csv_path(r, "grid_20_large.csv", "determinized"), b, "Full", r.name,
                                         kind="gs") for r in runs_of("port_ts_noclose")]))
     hand = per_list(outcomes(Comparison._csv("configs/baselines/template_grid_large.yaml"), b, "Hand", "",
@@ -1054,7 +1050,7 @@ def rq3_tables() -> None:
                    "certified_per_list": g.certified.mean(), "certified_sd": g.certified.std(ddof=1),
                    "targets_per_list": g.targets.mean(), "n_lists": len(g),
                    "runs": g.list.str.split("/").str[0].nunique(), "loop": loop, "split": "validation",
-                   "checks": "gs (loop solver, exact re-check within 0.03)"}
+                   "checks": "certs.csv"}
                   for n, g, loop in (("Full (NoSP)", full, "port_ts_noclose: core loop before the Oct 17 gridworld "
                                                           "feedback fix, no strategy hint"),
                                      ("Hand (NoSP)", hand, "not generated"))]) \
@@ -1148,7 +1144,7 @@ def rq3_budget_figure() -> None:
         cfg = load_config(b.base)
         dataset = (SEALED[bench].get("dataset") if sealed else None) or b.dataset or cfg.domain.dataset
         kind, tb = ("sealed", sealed_bench(b)) if sealed else (None, b)
-        shots = [r for r in runs_of(b.base) if checked(oneshot_csv(r, dataset), kind).exists()]
+        shots = [r for r in runs_of(b.base) if not certified_checks(checked(oneshot_csv(r, dataset), kind)).empty]
         if shots:
             cov = per_list(pd.concat([outcomes(oneshot_csv(r, dataset), tb, "OneShot", r.name, kind=kind)
                                       for r in shots]))
@@ -1172,6 +1168,244 @@ def rq3_budget_figure() -> None:
     pd.DataFrame(rows).to_csv(OUT / "figures" / "fig_rq3-budget.csv", index=False)
 
 
+# ---------------------------------------------------------------- Rajan's checklist (Fir runs, Oct 19-21)
+# The tables his viz/rajan_results.py wrote (merged here, Oct 21). Decisions come from each study's episodes.csv
+# (what the manager did as it ran); verdicts and margins from certs.csv. What each item ran: RESULTS-NOTES.md, "Rajan's items".
+
+SEQ = RESULTS / "sequential"
+DECISIONS = ["retain", "switch", "generate", "defer"]
+
+
+def episodes_of(study: str, mode: str) -> pd.DataFrame:
+    frames = [pd.read_csv(seq).assign(study=study, mode=mode, sequence=seq.parent.name)
+              for seq in sorted((SEQ / study / mode).glob("*/episodes.csv"))]     # a sequence that died early has none
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def per_sequence(ep: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for (study, mode, seq), g in ep.groupby(["study", "mode", "sequence"]):
+        counts = {d: int((g.decision == d).sum()) for d in DECISIONS}
+        rows.append({"study": study, "mode": mode, "sequence": seq, "episodes": len(g), **counts,
+                     "served": counts["retain"] + counts["switch"] + counts["generate"],
+                     "generations_attempted": int(g.get("generation_seconds", pd.Series(dtype=float)).notna().sum()),
+                     "final_library": int(g.library_size.iloc[-1]),
+                     "llm_calls": g.get("llm_calls", pd.Series(dtype=float)).sum(),
+                     "prompt_tokens": g.get("prompt_tokens", pd.Series(dtype=float)).sum(),
+                     "output_tokens": g.get("output_tokens", pd.Series(dtype=float)).sum()})
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        price = PRICES["anthropic/claude-haiku-5.5"]
+        df["llm_dollars"] = (df.prompt_tokens * price[0] + df.output_tokens * price[1]) / 1e6
+        df["split"] = "validation"
+    return df
+
+
+def served_by_earlier(ep: pd.DataFrame) -> pd.Series:
+    """Per episode of a growing run: served by a list generated earlier in the same sequence."""
+    gen_at = ep.deployed.astype(str).str.extract(r"^gen_t(\d+)$")[0].astype(float)
+    return ep.decision.isin(["retain", "switch"]) & gen_at.notna() & (gen_at < ep.episode)
+
+
+def synthesis_time() -> None:
+    """Item 1: synthesis (the joint query on the bare MDP) against certifying a stored list, per instance size, from
+    Rajan's timing parts (tab_rq2-synthesis-time.<part>.csv; timings, not certifications)."""
+    parts = sorted((OUT / "tables").glob("tab_rq2-synthesis-time.*.csv"))
+    final = OUT / "tables" / "tab_rq2-synthesis-time.csv"
+    if parts:
+        pd.concat([pd.read_csv(p) for p in parts], ignore_index=True).to_csv(final, index=False)
+    if not final.exists():
+        return
+    df = pd.read_csv(final)
+    df["kind"] = np.where(df.method == "synthesis", "synthesis", "certification")
+    df.groupby(["domain", "size", "kind"]).agg(
+        checks=("instance", "count"), states_median=("states", "median"),
+        construction_s_median=("construction_s", "median"), check_s_median=("check_s", "median"),
+        check_s_max=("check_s", "max"), not_done=("outcome", lambda s: int((s != "done").sum()))).reset_index() \
+        .to_csv(OUT / "tables" / "tab_rq2-synthesis-time-summary.csv", index=False)
+    print("wrote tables/tab_rq2-synthesis-time.csv, tab_rq2-synthesis-time-summary.csv")
+
+
+def sequence_tables() -> None:
+    """Items 2, 4, 5 and 6: random sequences (reuse only), long sequences (frozen against growing), growing mode
+    from the other seed libraries, and Pac-Man sequences with each generation attempt's verdict (certs.csv)."""
+    rows = []
+    for k, study in enumerate(["random_v0", "random_v0_lib2", "random_v0_lib3"], 1):
+        for seq, g in episodes_of(study, "frozen").groupby("sequence") if (SEQ / study).exists() else []:
+            c = {d: int((g.decision == d).sum()) for d in ("retain", "switch", "defer")}
+            rows.append({"sequence": seq, "library": f"seed_none_{k}", **c, "served": c["retain"] + c["switch"],
+                         "episodes": len(g), "split": "validation"})
+    if rows:
+        pd.DataFrame(rows).to_csv(OUT / "tables" / "tab_rq2-random-sequences.csv", index=False)
+
+    frozen, growing = episodes_of("long_v0", "frozen"), episodes_of("long_v0", "growing")
+    if not (frozen.empty or growing.empty):
+        per_ep = pd.concat([frozen.assign(served_by=frozen.deployed, generated_earlier_in_sequence=False),
+                            growing.assign(served_by=growing.deployed,
+                                           generated_earlier_in_sequence=served_by_earlier(growing))], ignore_index=True)
+        per_ep.to_csv(OUT / "tables" / "tab_rq2-long-episodes.rajan.csv", index=False)
+        summary = per_sequence(per_ep)
+        m = frozen[["sequence", "episode", "decision"]].merge(
+            growing.assign(earlier=served_by_earlier(growing))[["sequence", "episode", "decision", "earlier"]],
+            on=["sequence", "episode"], suffixes=("_frozen", "_growing"))
+        spared = m[(m.decision_frozen == "defer") & m.earlier].groupby("sequence").size()
+        summary["frozen_defer_growing_served_by_earlier"] = [int(spared.get(r.sequence, 0)) if r["mode"] == "growing"
+                                                             else np.nan for _, r in summary.iterrows()]
+        summary.to_csv(OUT / "tables" / "tab_rq2-long-sequences.rajan.csv", index=False)
+
+    frames = [f for f in (episodes_of(s, "growing") for s in ("shift_v0_lib2", "shift_v0_lib3")) if not f.empty]
+    if frames:
+        ep = pd.concat(frames, ignore_index=True)
+        ep.to_csv(OUT / "tables" / "tab_rq2-growing-libs-episodes.rajan.csv", index=False)
+        per_sequence(ep).to_csv(OUT / "tables" / "tab_rq2-growing-libs.rajan.csv", index=False)
+
+    frames = [f for f in (episodes_of("pacman_v0", m) for m in ("frozen", "growing")) if not f.empty]
+    if frames:
+        per_sequence(pd.concat(frames, ignore_index=True)).to_csv(OUT / "tables" / "tab_rq2-pacman-sequences.rajan.csv",
+                                                                   index=False)
+        attempts = []         # every generation attempt (lengths 25 and 30: ids 7 and 9) with its certs.csv verdict
+        for seq in sorted((SEQ / "pacman_v0" / "growing").glob("*")):
+            if not (seq / "episodes.csv").exists():
+                continue
+            e, c = pd.read_csv(seq / "episodes.csv"), sequence_checks("pacman_v0", "growing", seq.name)
+            for _, r in e[e.instance.isin([7, 9]) & e.get("generation_seconds", pd.Series(dtype=float)).notna()].iterrows():
+                new = c[(c.episode == r.episode) & (c.rule_list == f"gen_t{r.episode}")]
+                attempts.append({"sequence": seq.name, "episode": r.episode, "instance": r.instance,
+                                 "length": {7: 25, 9: 30}[int(r.instance)],
+                                 "verdict": new.outcome.iloc[0] if len(new) else r.get("new_outcome"),
+                                 "margin": new.margin.iloc[0] if len(new) else np.nan,
+                                 "llm_calls": r.get("llm_calls"), "output_tokens": r.get("output_tokens"),
+                                 "split": "validation"})
+        pd.DataFrame(attempts).to_csv(OUT / "tables" / "tab_rq2-pacman-generations.rajan.csv", index=False)
+    print("wrote tables/tab_rq2-random-sequences.csv and the .rajan sequence tables")
+
+
+def llm_spend() -> None:
+    """Item 3: tokens and dollars of every LLM's core runs, from the runs' LLM task logs (llm_tasks.jsonl): the
+    provider's reported cost where calls logged it, and tokens at the list price for all calls."""
+    rows = []
+    for llm, (suffix, root) in {"Claude Haiku 5.5": ("", "core"), **{k: (v, "ablations") for k, v in OTHER_LLMS.items()}}.items():
+        for bench in RQ1_BENCHES:
+            runs = runs_of(EXP.spec["benchmarks"][bench].base + suffix, root)
+            if not runs:
+                continue
+            model = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))["llm"]["model"]
+            price = PRICES.get(model, (np.nan, np.nan))
+            prompt = output = calls = n_rep = 0
+            reported = 0.0
+            for run in runs:
+                path = run / "llm_tasks.jsonl"
+                for line in path.read_text(encoding="utf-8").splitlines() if path.exists() else []:
+                    res = json.loads(line).get("result") or {}
+                    prompt += res.get("prompt_tokens") or 0
+                    output += res.get("output_tokens") or 0
+                    calls += 1
+                    cost = ((res.get("meta") or {}).get("usage") or {}).get("cost")
+                    if cost is not None:
+                        reported += cost
+                        n_rep += 1
+            rows.append({"llm": llm, "model": model, "bench": bench, "runs": len(runs), "calls": calls,
+                         "prompt_tokens": prompt, "output_tokens": output,
+                         "dollars_at_list_price": (prompt * price[0] + output * price[1]) / 1e6,
+                         "dollars_reported": reported if n_rep else np.nan, "calls_with_reported_cost": n_rep})
+    pd.DataFrame(rows).to_csv(OUT / "tables" / "tab_rq1-llm-spend.csv", index=False)
+    print("wrote tables/tab_rq1-llm-spend.csv")
+
+
+def llm_ablation(sealed: bool = False) -> None:
+    """Item 7: NoRepair for the other LLMs (Full and NoRepair, T4's layout), on the validation targets or, with
+    `sealed`, the sealed test targets (`tab_rq3-ablation-llm-sealed`; the training pass rate and calls are the
+    lists' own, the same in both)."""
+    kind, split = ("sealed", "sealed test") if sealed else (None, "validation")
+    rows, tex = [], [r"\toprule",
+                     r"LLM / configuration & Certified coverage (\%) & Training pass rate (\%) & LLM calls per set \\"]
+    for bench, title in RQ3_BENCHES.items():
+        b = EXP.spec["benchmarks"][bench]
+        dataset = train_data = b.dataset or load_config(b.base).domain.dataset
+        if sealed:
+            b, dataset = sealed_bench(b), SEALED[bench].get("dataset") or dataset
+        frozen = "final" if bench == "pacman" else "determinized"
+        block = []
+        for label, suffix in OTHER_LLMS.items():
+            full = runs_of(b.base + suffix, "ablations")
+            for name, rules in (("Full", frozen), ("NoRepair", "norepair_determinized")):
+                if not full or any(certified_checks(checked(csv_path(r, dataset, rules), kind)).empty for r in full):
+                    continue
+                cov = per_list(pd.concat([outcomes(csv_path(r, dataset, rules), b, name, r.name, kind=kind)
+                                          for r in full]))
+                passed = [x for r in full for x in training_passed(checked(csv_path(r, train_data, rules)))]
+                c, p = stats(cov.coverage), stats(passed)
+                calls = [calls_per_set(r) for r in full]
+                rows += [{"bench": bench, "llm": label, "configuration": name, "metric": m, "value": v,
+                          "split": split, "runs": len(full)}
+                         for m, v in (("coverage_mean", c["mean"]), ("coverage_sd", c["sd"]), ("coverage_n", c["n"]),
+                                      ("certified_per_list", cov.certified.mean()),
+                                      ("training_pass_mean", p["mean"]), ("training_pass_n", p["n"]),
+                                      ("llm_calls_per_set", np.mean(calls)),
+                                      ("inconclusive_share", cov.inconclusive.mean()),
+                                      ("timeout_share", cov.timeout.mean()))]
+                block.append(f"{label}, {name} & {pct(c['mean'], c['sd'], c['n'])} & {pct(p['mean'], p['sd'], p['n'])}"
+                             f" & ${np.mean(calls):.1f}$ \\\\")
+        if block:
+            tex += [r"\midrule", rf"\multicolumn{{4}}{{l}}{{\emph{{{title}}}}} \\"] + block
+    write_table("tab_rq3-ablation-llm" + ("-sealed" if sealed else ""), tex + [r"\bottomrule"], rows)
+
+
+def amortized_cost() -> None:
+    """Generation plus certification time per held-out instance solved, per LLM and benchmark (Full, frozen lists,
+    validation): per list (generation wall time of its training set + the seconds of every held-out check of it) /
+    held-out instances it certifies, and pooled (sums over lists / total certified). Certification seconds come from
+    certs.csv, replaced by Rajan's Fir measurement where he timed the same list on the same instance (item 1:
+    tab_rq2-synthesis-time.csv, wall_s); Rajan's times take precedence (Asher, Oct 21). Beside them, Rajan's synthesis
+    time per instance (the joint query on the bare MDP) for the same benchmark. `tab_rq2-amortized-cost.csv`."""
+    item1 = OUT / "tables" / "tab_rq2-synthesis-time.csv"
+    rajan = pd.read_csv(item1) if item1.exists() else pd.DataFrame(columns=["method", "domain", "instance", "wall_s"])
+    fir = {}                                             # (bench, run, list, instance) -> Rajan's certification seconds
+    for r in rajan[rajan.method != "synthesis"].itertuples(index=False):
+        m = re.match(r"(fam|pacman)(\d)_list(\d)", r.method)
+        if m and r.domain in ("families", "pacman"):
+            fir[(r.domain, f"seed_none_{m.group(2)}", m.group(3), int(r.instance))] = r.wall_s
+    synth = rajan[rajan.method == "synthesis"].groupby("domain").wall_s.median().to_dict()
+    rows = []
+    for bench in RQ1_BENCHES:
+        b = EXP.spec["benchmarks"][bench]
+        dataset = b.dataset or load_config(b.base).domain.dataset
+        frozen = "final" if bench == "pacman" else "determinized"
+        arms = {"Claude Haiku 5.5": (runs_of(b.base), "Asher (local)")}
+        arms.update({llm: (runs_of(b.base + s, "ablations"), "Rajan (Fir)") for llm, s in OTHER_LLMS.items()})
+        for llm, (runs, gen_source) in arms.items():
+            for run in runs:
+                records = sample_records(run)
+                checks = certified_checks(checked(csv_path(run, dataset, frozen)), "validation")
+                if checks.empty:
+                    continue
+                checks = checks[checks.target.isin(held_out(b))]
+                own = fir if llm == "Claude Haiku 5.5" else {}     # Rajan's item 1 timed the core (Haiku) lists only
+                for sid, g in checks.groupby("source"):
+                    record = records.get(int(sid), {})
+                    secs = [own.get((bench, run.name, str(sid), int(t)), s) for t, s in zip(g.target, g.seconds)]
+                    n_fir = sum((bench, run.name, str(sid), int(t)) in own for t in g.target)
+                    gen = record.get("total_time") or np.nan
+                    cert = float(np.nansum(secs))
+                    solved = int(g.certified.sum())
+                    rows.append({"bench": bench, "llm": llm, "run": run.name, "list": sid, "generation_s": gen,
+                                 "generation_source": gen_source, "certification_s": cert,
+                                 "certification_checks": len(g), "certification_from_rajan": n_fir,
+                                 "solved": solved, "amortized_s": (gen + cert) / solved if solved else np.nan,
+                                 "synthesis_s_per_instance_rajan": synth.get(bench), "split": "validation"})
+    df = pd.DataFrame(rows)
+    pooled = df.groupby(["bench", "llm"]).apply(lambda g: pd.Series({
+        "lists": len(g), "solved": g.solved.sum(), "generation_s": g.generation_s.sum(),
+        "certification_s": g.certification_s.sum(),
+        "pooled_amortized_s": (g.generation_s.sum() + g.certification_s.sum()) / g.solved.sum() if g.solved.sum() else np.nan,
+        "mean_amortized_s": g.amortized_s.mean(), "lists_solving_none": int((g.solved == 0).sum()),
+        "synthesis_s_per_instance_rajan": g.synthesis_s_per_instance_rajan.iloc[0]})).reset_index()
+    df.to_csv(OUT / "tables" / "tab_rq2-amortized-cost-per-list.csv", index=False)
+    pooled.assign(split="validation").to_csv(OUT / "tables" / "tab_rq2-amortized-cost.csv", index=False)
+    print("wrote tables/tab_rq2-amortized-cost.csv, -per-list.csv")
+    print(pooled.round(1).to_string(index=False))
+
+
 EXP = None
 
 
@@ -1180,14 +1414,17 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--study", default="shift_v0", help="out/results/sequential/<study>")
     parser.add_argument("--episodes", type=int, default=12, help="episodes per sequence (figure axis)")
-    parser.add_argument("--checks", choices=["exact", "ii", "lp", "gs"], default="exact",
-                        help="exact: src/recertify.py's verdicts (interval iteration, linear programming where it "
-                             "stalls); ii / lp: one method each; gs: the loop solver's")
     args = parser.parse_args(argv)
-    CHECKS = args.checks
     EXP = experiment(RQ1_SPEC)
     data = rq1_outcomes(EXP)
     rq1_tables(data, llm_outcomes(EXP))
+    llm_table(llm_outcomes(EXP, sealed=True), "tab_rq1-coverage-llm-sealed", "sealed test")
+    llm_spend()
+    llm_ablation()
+    llm_ablation(sealed=True)
+    synthesis_time()
+    amortized_cost()
+    sequence_tables()
     sealed = rq1_outcomes(EXP, sealed=True)
     rq1_sealed_table(sealed)
     rq1_size_figure(data, sealed)
