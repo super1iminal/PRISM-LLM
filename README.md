@@ -55,7 +55,8 @@ python src/run_experiment.py configs/experiments/rq1_comparison.yaml
 python src/recertify.py run out/results/core/port_ts_history/seed_none_1 --rules determinized --targets 12-19
 
 # sequential study; the study files defer an episode no rule list serves, as in the paper. With `fallback: synthesize`
-# the manager first synthesizes a strategy for the instance alone with PRISM and defers only if that fails
+# the manager first synthesizes a strategy for the instance alone and deploys it if certified (one requirement only:
+# PRISM cannot export a strategy for several, so on the grid worlds it records whether one exists and defers)
 python src/sequential.py configs/sequential/shift_v0.yaml --mode frozen
 
 # synthesis vs. verification time (Fig. 7), measured again into a new file that viz/paper_results.py then reads

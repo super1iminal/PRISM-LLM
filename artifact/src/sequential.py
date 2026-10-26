@@ -6,17 +6,19 @@ before every episode decides which rule list controls it (the policy of the pape
 3. otherwise (mode `growing` only) generate a new rule list for the instance together with the training instances
    of the library's rule list that came closest to being certified on it, and deploy and store it if it is
    certified on the instance;
-4. otherwise (study key `fallback: synthesize`, the default) synthesize a strategy for the instance alone with
-   PRISM (`synthesize`): it serves this episode only, so the current rule list and the library stay as they were;
+4. otherwise (study key `fallback: synthesize`, the default) synthesize a strategy for the instance alone
+   (`synthesize`) and deploy it if it is certified: it serves this episode only, so the current rule list and the
+   library stay as they were;
 5. otherwise adaptation fails and the episode is deferred.
 
 Mode `frozen` never generates, so it measures reuse alone (with synthesis as its only other way to serve an episode).
-Synthesis on an instance with one requirement is its best-case query with the exact solvers (whose optimal strategy
-PRISM can export with `-exportstrat`); it succeeds under the certification rule below, with the best case in place of
-the worst. With several requirements it is the multi-objective query (`PolicyVerifier.joint_query`, exact LP), which
-decides whether one strategy meets every threshold at once; PRISM cannot export that strategy, so the episode counts
-as served by the strategy whose existence the query proves. Neither strategy is stored: the same query yields it
-again. Certification uses the exact solvers
+Synthesis needs a strategy to deploy. With one requirement it takes an optimal action of that requirement in every
+decision state of the instance's explicit model (`ExplicitMDP.optimal_actions`, as the strategy-of-one-instance
+baseline) and certifies that per-state strategy like any controller (`recertify.certify_explicit`: the exact solvers
+and the certification rule below); it must depend only on the observable variables. With several requirements PRISM's
+multi-objective query (`PolicyVerifier.joint_query`, exact LP) decides whether one strategy meets every threshold at
+once, but PRISM cannot export that strategy: the episode records whether one exists and is deferred. A synthesized
+strategy is not stored: the same computation yields it again. Certification uses the exact solvers
 (`PolicyVerifier.verify_exact`) and the certification rule (`core.verifier.exact_verdict`): a rule list is certified
 only if an exact solver (`prism.exact_methods`: interval iteration, then linear programming where it stalls)
 finished and every worst case lies beyond its threshold by more than its band (`prism.exact_epsilon` for interval
@@ -35,27 +37,27 @@ import json
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import yaml
 
 from config import load_config
 from core.domain import load_domain
-from core.prism import PrismCall, PrismError, PrismRunner, run_call
+from core.prism import PrismError, PrismRunner
 from core.rules import RuleError
-from core.verifier import PolicyVerifier, exact_solvers, exact_verdict
+from core.verifier import PolicyVerifier, exact_verdict
+from recertify import certify_explicit
 from settings import PROJECT_ROOT
 from transfer import determinized_rules, guard_sealed, training_instances
 
 PYTHON = sys.executable
 OUT_ROOT = PROJECT_ROOT / "out" / "results" / "sequential"
 MODEL_TIME = re.compile(r"Time for model construction:\s*([\d.]+)")
-RESULT = re.compile(r"^Result: (\S+)", re.M)
 FALLBACKS = ("synthesize", "defer")
 Rules = List[Tuple[str, str]]
 
@@ -138,38 +140,35 @@ def certify(domain, cfg, runner, instance, entry: Entry) -> dict:
 
 
 def synthesize(domain, cfg, runner, instance) -> dict:
-    """Synthesize a strategy for `instance` alone (module docstring): `synthesis` is `synthesized` if one meets
-    every requirement, `failed` if none does, and `inconclusive` or `timeout` if the query decides neither. The
-    strategy is not kept (on Pac-Man it has millions of states): the same query synthesizes it again."""
-    verifier = PolicyVerifier(domain, instance, cfg, runner)
-    reqs = verifier.spec.requirements
+    """Synthesize a strategy for `instance` alone (module docstring). `synthesis`: `synthesized` (certified, deployed for
+    this episode), `failed`, `inconclusive` or `not_certifiable` (the certification's verdicts), `not_observable` (the
+    optimal strategy tells apart states the controller cannot), or, with several requirements, `exists` / `none` /
+    `inconclusive` (the joint query's answer; nothing to deploy)."""
+    reqs = domain.spec(instance).requirements
     start = time.time()
     if len(reqs) > 1:
-        feasible = verifier.jointly_feasible()
-        outcome = {True: "synthesized", False: "failed", None: "inconclusive"}[feasible]
-        return {"synthesis": outcome, "synthesis_method": "joint query", "synthesis_seconds": time.time() - start}
-    req = reqs[0]
-    exact = PrismRunner(replace(cfg.prism, method="", max_iters=cfg.prism.exact_max_iters),
-                        prism_path=runner.prism_path)
-    row = {"synthesis": "timeout", "synthesis_method": None}
-    with tempfile.TemporaryDirectory(prefix="synth_") as tmp:
-        paths = exact._write_inputs(tmp, verifier.model, [f"{req.best_op()}=? [ {req.formula} ]"])
-        for solver, args in exact_solvers(cfg.prism):
-            cmd = exact._command(*paths, ["-explicit"]) + args
-            try:
-                out = run_call(PrismCall(tuple(cmd), exact.timeout, exact.max_concurrent))
-            except subprocess.TimeoutExpired:
-                continue
-            result = RESULT.search(out)
-            if "Error" in out or "did not converge" in out or not result:
-                continue
-            value = float(result.group(1))
-            row = {"synthesis": exact_verdict({req.name: req.margin(value)}, solver, cfg.prism),
-                   "synthesis_method": solver, "synthesis_value": value}
-            if row["synthesis"] == "certified":
-                row["synthesis"] = "synthesized"
-            break
-    return {**row, "synthesis_seconds": time.time() - start}
+        feasible = PolicyVerifier(domain, instance, cfg, runner).jointly_feasible()
+        return {"synthesis": {True: "exists", False: "none", None: "inconclusive"}[feasible],
+                "synthesis_method": "joint query", "synthesis_seconds": time.time() - start}
+    observable = {}
+
+    def optimal(mdp) -> Dict[str, np.ndarray]:
+        _, best = mdp.optimal_actions(mdp.spec.requirements[0])
+        states = np.flatnonzero(mdp.decision)
+        policy = np.full(mdp.S, -1, dtype=np.int64)
+        policy[states] = best[states].argmax(axis=1)
+        pairs = np.unique(np.column_stack([mdp.obs[states], policy[states]]), axis=0)
+        observable["ok"] = len(pairs) == len(np.unique(mdp.obs[states], axis=0))   # one action per observation
+        return {"synthesis": policy}
+
+    check = certify_explicit(domain, cfg, instance, optimal)[0]
+    seconds = time.time() - start
+    if not observable.get("ok", True):
+        return {"synthesis": "not_observable", "synthesis_method": "optimal actions", "synthesis_seconds": seconds}
+    outcome = check["outcome"]
+    return {"synthesis": "synthesized" if outcome == "certified" else outcome, "synthesis_method": check.get("solver"),
+            "synthesis_value": check.get(f"worst_{reqs[0].name}"), "synthesis_states": check.get("states"),
+            "synthesis_seconds": seconds}
 
 
 def generate(study: Study, training: List[int], run_name: str, out_dir: Path) -> Tuple[Optional[Entry], dict]:

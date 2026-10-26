@@ -1,5 +1,6 @@
 """The adaptation manager of the sequential study (src/sequential.py): its synthesis fallback, which serves an episode no
-rule list serves by a strategy synthesized for the instance alone, and the decisions it leads to."""
+rule list serves by a certified strategy synthesized for the instance alone (one requirement; with several, PRISM cannot
+export one, so the episode is deferred), and the decisions it leads to."""
 import shutil
 from types import SimpleNamespace
 
@@ -21,29 +22,29 @@ def pacman(threshold: float) -> Instance:
 
 
 @needs_prism
-def test_synthesis_with_one_requirement_is_its_best_case():
-    """One requirement: the best-case query with the exact solvers, which a rerun repeats exactly. Below the optimum,
-    synthesis fails."""
+def test_synthesis_with_one_requirement_deploys_a_certified_optimal_strategy():
+    """One requirement: an optimal action in every decision state, certified on the instance like any controller. At
+    a threshold the optimum meets it is deployed; below the optimum no strategy is certified."""
     cfg = load_config("port_pacman_narrow_core")
     domain = load_domain("pacman")
     runner = sequential.PrismRunner(cfg.prism)
     row = synthesize(domain, cfg, runner, pacman(0.56))
     assert row["synthesis"] == "synthesized" and row["synthesis_method"] == "interval iteration"
-    assert row["synthesis_value"] <= 0.56
-    assert synthesize(domain, cfg, runner, pacman(0.56))["synthesis_value"] == row["synthesis_value"]
+    assert row["synthesis_value"] <= 0.56 and row["synthesis_states"] > 1
 
     row = synthesize(domain, cfg, runner, pacman(row["synthesis_value"] - 0.01))
     assert row["synthesis"] == "failed"
 
 
 @needs_prism
-def test_synthesis_with_several_requirements_is_the_joint_query():
-    """A grid world's requirements at once: decided by the multi-objective query."""
+def test_synthesis_with_several_requirements_only_decides_existence():
+    """A grid world's requirements at once: the multi-objective query says a strategy exists, but PRISM cannot export
+    it, so there is nothing to deploy."""
     cfg = load_config("port_fam_history")
     domain = load_domain("gridworld", cfg.domain.visible_extra)
     instance = domain.load_instances("families_v0.csv")[0]
     row = synthesize(domain, cfg, sequential.PrismRunner(cfg.prism), instance)
-    assert row["synthesis"] == "synthesized" and row["synthesis_method"] == "joint query"
+    assert row["synthesis"] == "exists" and row["synthesis_method"] == "joint query"
 
 
 @pytest.fixture
@@ -89,6 +90,17 @@ def test_manager_synthesizes_instead_of_deferring(manager, tmp_path, mode):
     assert calls["synthesize"] == [0, 1, 0]
     assert all(rule_list == "seed0" for _, rule_list in calls["certify"])     # no rule list became current
     assert ("generation_seconds" in episodes) == (mode == "growing")
+
+
+def test_existence_alone_does_not_serve_an_episode(manager, monkeypatch, tmp_path):
+    """Where synthesis only proves that a strategy exists (several requirements), the episode is still deferred."""
+    instances, calls = manager
+    monkeypatch.setattr(sequential, "synthesize", lambda *a: {"synthesis": "exists", "synthesis_method": "joint query",
+                                                              "synthesis_seconds": 2.0})
+    run_sequence(study(), Sequence("s", [0, 1]), "frozen", NO_CFG, None, instances, tmp_path)
+    episodes = pd.read_csv(tmp_path / "episodes.csv")
+    assert episodes.decision.tolist() == ["defer", "defer"] and episodes.deployed.isna().all()
+    assert episodes.synthesis.tolist() == ["exists", "exists"]
 
 
 def test_manager_defers_without_the_fallback(manager, tmp_path):

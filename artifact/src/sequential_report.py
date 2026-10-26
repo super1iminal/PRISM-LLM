@@ -73,7 +73,7 @@ def main(argv=None):
              f"`any` resolved). Generation: condition `{study.condition}` on `{study.dataset}`. Policy: retain the "
              "current rule list if certified, else switch to the certified library list with the largest smallest "
              "margin, else generate (mode `growing`) on the instance plus the closest list's training instances, "
-             f"else {'synthesize a strategy for the instance alone with PRISM, else ' if study.fallback == 'synthesize' else ''}"
+             f"else {'synthesize a strategy for the instance alone and deploy it if certified (one requirement only: PRISM cannot export a strategy for several), else ' if study.fallback == 'synthesize' else ''}"
              "defer (runs from before the synthesis fallback have no `synthesize` episodes). "
              "Certification: interval iteration; within `prism.exact_epsilon` of a threshold, or from "
              "the Gauss-Seidel fallback, is inconclusive. Validation instances only.", "",
