@@ -6,9 +6,17 @@ before every episode decides which rule list controls it (the policy of the pape
 3. otherwise (mode `growing` only) generate a new rule list for the instance together with the training instances
    of the library's rule list that came closest to being certified on it, and deploy and store it if it is
    certified on the instance;
-4. otherwise adaptation fails and the episode is deferred.
+4. otherwise (study key `fallback: synthesize`, the default) synthesize a strategy for the instance alone with
+   PRISM (`synthesize`): it serves this episode only, so the current rule list and the library stay as they were;
+5. otherwise adaptation fails and the episode is deferred.
 
-Mode `frozen` never generates, so it measures reuse alone. Certification uses the exact solvers
+Mode `frozen` never generates, so it measures reuse alone (with synthesis as its only other way to serve an episode).
+Synthesis on an instance with one requirement is its best-case query with the exact solvers (whose optimal strategy
+PRISM can export with `-exportstrat`); it succeeds under the certification rule below, with the best case in place of
+the worst. With several requirements it is the multi-objective query (`PolicyVerifier.joint_query`, exact LP), which
+decides whether one strategy meets every threshold at once; PRISM cannot export that strategy, so the episode counts
+as served by the strategy whose existence the query proves. Neither strategy is stored: the same query yields it
+again. Certification uses the exact solvers
 (`PolicyVerifier.verify_exact`) and the certification rule (`core.verifier.exact_verdict`): a rule list is certified
 only if an exact solver (`prism.exact_methods`: interval iteration, then linear programming where it stalls)
 finished and every worst case lies beyond its threshold by more than its band (`prism.exact_epsilon` for interval
@@ -27,25 +35,28 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import yaml
 
 from config import load_config
 from core.domain import load_domain
-from core.prism import PrismError, PrismRunner
+from core.prism import PrismCall, PrismError, PrismRunner, run_call
 from core.rules import RuleError
-from core.verifier import PolicyVerifier, exact_verdict
+from core.verifier import PolicyVerifier, exact_solvers, exact_verdict
 from settings import PROJECT_ROOT
 from transfer import determinized_rules, guard_sealed, training_instances
 
 PYTHON = sys.executable
 OUT_ROOT = PROJECT_ROOT / "out" / "results" / "sequential"
 MODEL_TIME = re.compile(r"Time for model construction:\s*([\d.]+)")
+RESULT = re.compile(r"^Result: (\S+)", re.M)
+FALLBACKS = ("synthesize", "defer")
 Rules = List[Tuple[str, str]]
 
 
@@ -61,10 +72,15 @@ class Study:
     name: str
     condition: str                       # run condition for generation (configs/run/conditions/)
     dataset: str                         # every instance id below refers to this dataset
-    seed_run: str                        # run dir whose determinized rule lists seed the library
+    seed_run: Union[str, List[str]]      # run dir(s) whose determinized rule lists seed the library
     sequences: List[Sequence]
     generation_set: List[str] = field(default_factory=list)   # extra overrides for generation runs
     max_training: int = 4                # training instances per generation run, the instance met included
+    fallback: str = "synthesize"         # when no rule list serves the episode: synthesize | defer
+
+    def __post_init__(self):
+        if self.fallback not in FALLBACKS:
+            raise ValueError(f"fallback must be one of {FALLBACKS}, not {self.fallback!r}")
 
 
 @dataclass
@@ -82,9 +98,16 @@ def load_study(path: Path) -> Study:
 
 
 def seed_library(study: Study) -> List[Entry]:
-    run_dir = PROJECT_ROOT / study.seed_run
-    rules, training = determinized_rules(run_dir), training_instances(run_dir)
-    return [Entry(f"seed{sid}", rules[sid], training[sid]) for sid in sorted(rules)]
+    """The library's seed entries: every determinized rule list of the seed run, named seed<sample id>; with several
+    seed runs (a list), every list of each, named seed<k>.<sample id> for the k-th run (1-based)."""
+    runs = [study.seed_run] if isinstance(study.seed_run, str) else list(study.seed_run)
+    entries = []
+    for k, run in enumerate(runs, 1):
+        run_dir = PROJECT_ROOT / run
+        rules, training = determinized_rules(run_dir), training_instances(run_dir)
+        prefix = "seed" if len(runs) == 1 else f"seed{k}."
+        entries += [Entry(f"{prefix}{sid}", rules[sid], training[sid]) for sid in sorted(rules)]
+    return entries
 
 
 def certify(domain, cfg, runner, instance, entry: Entry) -> dict:
@@ -112,6 +135,41 @@ def certify(domain, cfg, runner, instance, entry: Entry) -> dict:
     return {**row, "outcome": outcome, "solver": solver, "margin": smallest, "seconds": seconds,
             "model_seconds": model_seconds, "states": len(v.result.states),
             **{f"worst_{k}": v.worst[k] for k in margins}}
+
+
+def synthesize(domain, cfg, runner, instance) -> dict:
+    """Synthesize a strategy for `instance` alone (module docstring): `synthesis` is `synthesized` if one meets
+    every requirement, `failed` if none does, and `inconclusive` or `timeout` if the query decides neither. The
+    strategy is not kept (on Pac-Man it has millions of states): the same query synthesizes it again."""
+    verifier = PolicyVerifier(domain, instance, cfg, runner)
+    reqs = verifier.spec.requirements
+    start = time.time()
+    if len(reqs) > 1:
+        feasible = verifier.jointly_feasible()
+        outcome = {True: "synthesized", False: "failed", None: "inconclusive"}[feasible]
+        return {"synthesis": outcome, "synthesis_method": "joint query", "synthesis_seconds": time.time() - start}
+    req = reqs[0]
+    exact = PrismRunner(replace(cfg.prism, method="", max_iters=cfg.prism.exact_max_iters),
+                        prism_path=runner.prism_path)
+    row = {"synthesis": "timeout", "synthesis_method": None}
+    with tempfile.TemporaryDirectory(prefix="synth_") as tmp:
+        paths = exact._write_inputs(tmp, verifier.model, [f"{req.best_op()}=? [ {req.formula} ]"])
+        for solver, args in exact_solvers(cfg.prism):
+            cmd = exact._command(*paths, ["-explicit"]) + args
+            try:
+                out = run_call(PrismCall(tuple(cmd), exact.timeout, exact.max_concurrent))
+            except subprocess.TimeoutExpired:
+                continue
+            result = RESULT.search(out)
+            if "Error" in out or "did not converge" in out or not result:
+                continue
+            value = float(result.group(1))
+            row = {"synthesis": exact_verdict({req.name: req.margin(value)}, solver, cfg.prism),
+                   "synthesis_method": solver, "synthesis_value": value}
+            if row["synthesis"] == "certified":
+                row["synthesis"] = "synthesized"
+            break
+    return {**row, "synthesis_seconds": time.time() - start}
 
 
 def generate(study: Study, training: List[int], run_name: str, out_dir: Path) -> Tuple[Optional[Entry], dict]:
@@ -198,8 +256,8 @@ def run_sequence(study: Study, seq: Sequence, mode: str, cfg, domain, instances,
         row["model_seconds"] = sum(c.get("model_seconds", 0.0) for c in mine)
         row["checks"] = len(mine)
         if decision is None and mode == "growing":
-            near = closest(mine, library)
-            base = sorted(near.training, key=lambda i: instances[i].data.get("n", 0))[:study.max_training - 1] \
+            near = closest(mine, library)          # (`n` is None where the dataset has no size column, e.g. Pac-Man)
+            base = sorted(near.training, key=lambda i: instances[i].data.get("n") or 0)[:study.max_training - 1] \
                 if near else []
             training = base + [iid]
             entry, costs = generate(study, training, f"gen_t{t}", out_dir)
@@ -210,7 +268,12 @@ def run_sequence(study: Study, seq: Sequence, mode: str, cfg, domain, instances,
                 if c["outcome"] == "certified":
                     library.append(entry)
                     decision, deployed = "generate", entry
-        row.update(decision=decision or "defer", deployed=deployed.name if deployed else None,
+        if decision is None and study.fallback == "synthesize":
+            row.update(synthesize(domain, cfg, runner, instance))
+            if row["synthesis"] == "synthesized":
+                decision = "synthesize"
+        row.update(decision=decision or "defer", deployed=deployed.name if deployed else
+                   "synthesis" if decision == "synthesize" else None,
                    library_size=len(library), seconds=time.time() - start)
         episodes.append(row)
         current = deployed or current
@@ -232,6 +295,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     study = load_study(args.study)
     cfg = load_config(study.condition, [f"domain.dataset={study.dataset}"] + list(study.generation_set))
+    if cfg.rules.early_narrow:   # narrowings name places with numbers (as transfer.py and recertify.py); this config only
+        cfg = replace(cfg, rules=replace(cfg.rules, shared_literals=True))   # certifies: generation has its own process
     domain = load_domain(cfg.domain.name, cfg.domain.visible_extra)
     instances = {int(i.id): i for i in domain.load_instances(study.dataset)}
     rows = pd.read_csv(PROJECT_ROOT / "domains" / cfg.domain.name / "data" / study.dataset)

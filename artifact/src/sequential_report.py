@@ -1,5 +1,6 @@
 """Report page of a sequential adaptation study (src/sequential.py): per mode and sequence, the decisions taken, the
-episodes served by a certified rule list, generations and their outcomes, and what each decision cost.
+episodes served (by a certified rule list, or by a strategy synthesized for the instance alone), generations and their
+outcomes, and what each decision cost.
 
 Usage (from artifact/): python src/sequential_report.py configs/sequential/<study>.yaml
 Writes out/results/sequential/<study>/REPORT.md.
@@ -37,7 +38,8 @@ def summary(df: pd.DataFrame) -> pd.DataFrame:
         rows.append({"mode": mode, "sequence": seq, "episodes": len(g),
                      "served": int((g.decision != "defer").sum()),
                      "retain": int((g.decision == "retain").sum()), "switch": int((g.decision == "switch").sum()),
-                     "generate": int((g.decision == "generate").sum()), "defer": int((g.decision == "defer").sum()),
+                     "generate": int((g.decision == "generate").sum()),
+                     "synthesize": int((g.decision == "synthesize").sum()), "defer": int((g.decision == "defer").sum()),
                      "generations": len(gen), "generations certified": int((gen.get("new_outcome") == "certified").sum())
                      if len(gen) else 0,
                      "library at end": int(g.library_size.iloc[-1]),
@@ -71,7 +73,9 @@ def main(argv=None):
              f"`any` resolved). Generation: condition `{study.condition}` on `{study.dataset}`. Policy: retain the "
              "current rule list if certified, else switch to the certified library list with the largest smallest "
              "margin, else generate (mode `growing`) on the instance plus the closest list's training instances, "
-             "else defer. Certification: interval iteration; within `prism.exact_epsilon` of a threshold, or from "
+             f"else {'synthesize a strategy for the instance alone with PRISM, else ' if study.fallback == 'synthesize' else ''}"
+             "defer (runs from before the synthesis fallback have no `synthesize` episodes). "
+             "Certification: interval iteration; within `prism.exact_epsilon` of a threshold, or from "
              "the Gauss-Seidel fallback, is inconclusive. Validation instances only.", "",
              "## Decisions per sequence", "", md(summary(df)), "",
              "## Certification outcomes", "",
@@ -81,7 +85,7 @@ def main(argv=None):
              "## Episodes", ""]
     for (mode, seq), g in df.groupby(["mode", "sequence"]):
         cols = [c for c in ["episode", "instance", "family", "n", "decision", "deployed", "checks", "training",
-                            "new_outcome", "library_size", "seconds"] if c in g]
+                            "new_outcome", "synthesis", "library_size", "seconds"] if c in g]
         lines += [f"### {mode} {seq}", "", md(g[cols].round(1)), ""]
     (study_dir / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     print(study_dir / "REPORT.md")

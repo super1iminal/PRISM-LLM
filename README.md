@@ -32,7 +32,8 @@ This replication package contains the implementation, configurations and results
   - `ablations/`: GPT-6 Luna, Gemini 3.8 Flash, Restart and earlier loop variants (RQ1, RQ4); `B2`, `D7`, `R1`, `S1`
     are replayed by the tests
   - `baselines/`: DT-raw, DT-voc, RL and the other baselines (RQ1)
-  - `sequential/`: adaptation sequences (RQ3)
+  - `sequential/`: adaptation sequences (RQ3), run before the synthesis fallback: an episode no rule list served was
+    deferred (`fallback: defer` in a study file reproduces them)
   - `ceilings/`: the best any controller can do on each grid-world instance
 
 The paper's numbers come from `out/paper/`, built by `viz/paper_results.py` from `certs.csv` and the stored runs.
@@ -53,7 +54,8 @@ python src/run_experiment.py configs/experiments/rq1_comparison.yaml
 # certify a run's frozen lists with the exact solvers
 python src/recertify.py run out/results/core/port_ts_history/seed_none_1 --rules determinized --targets 12-19
 
-# sequential study
+# sequential study; where no stored or generated rule list is certified, the manager synthesizes a strategy for
+# the instance alone with PRISM (study key `fallback`, default synthesize) and defers only if that fails
 python src/sequential.py configs/sequential/shift_v0.yaml --mode frozen
 
 # synthesis vs. verification time (Fig. 7), measured again into a new file that viz/paper_results.py then reads
